@@ -164,6 +164,7 @@ class TypedPythonTranslator:
         self._module_ir = ModuleIR(name=module_name, c_name=self.c_name)
         self._current_class: ClassIR | None = None
         self._known_classes: dict[str, ClassIR] = {}
+        self._struct_code: list[str] = []
     
     def translate_source(self, source: str) -> str:
         tree = ast.parse(source)
@@ -323,10 +324,13 @@ class TypedPythonTranslator:
         
         self._forward_decls.extend(emitter.emit_forward_declarations())
         
+        struct_code = emitter.emit_struct()
+        self._struct_code.extend(struct_code)
+        
         for method_ir in class_ir.methods.values():
             self._emit_method(class_ir, method_ir)
         
-        class_code = emitter.emit_all()
+        class_code = emitter.emit_all_except_struct()
         self._class_code.append(class_code)
     
     def _emit_method(self, class_ir: ClassIR, method_ir: MethodIR) -> None:
@@ -519,18 +523,19 @@ class TypedPythonTranslator:
             attr_name = target.attr
             expr, expr_type = self._translate_method_expr(stmt.value, locals_, class_ir, native)
             
-            field = next((f for f in class_ir.get_all_fields() if f.name == attr_name), None)
-            if field:
+            field_with_path = next(((f, p) for f, p in class_ir.get_all_fields_with_path() if f.name == attr_name), None)
+            if field_with_path:
+                field, path = field_with_path
                 if native:
-                    return [f"    self->{attr_name} = {expr};"]
+                    return [f"    self->{path} = {expr};"]
                 else:
                     if field.c_type == CType.MP_INT_T and expr_type != "mp_int_t":
-                        return [f"    self->{attr_name} = mp_obj_get_int({expr});"]
+                        return [f"    self->{path} = mp_obj_get_int({expr});"]
                     elif field.c_type == CType.MP_FLOAT_T and expr_type != "mp_float_t":
-                        return [f"    self->{attr_name} = mp_obj_get_float({expr});"]
+                        return [f"    self->{path} = mp_obj_get_float({expr});"]
                     elif field.c_type == CType.BOOL and expr_type != "bool":
-                        return [f"    self->{attr_name} = mp_obj_is_true({expr});"]
-                    return [f"    self->{attr_name} = {expr};"]
+                        return [f"    self->{path} = mp_obj_is_true({expr});"]
+                    return [f"    self->{path} = {expr};"]
         
         if isinstance(target, ast.Name):
             var_name = target.id
@@ -548,12 +553,15 @@ class TypedPythonTranslator:
             attr_name = stmt.target.attr
             right, _ = self._translate_method_expr(stmt.value, locals_, class_ir, native)
             
+            field_with_path = next(((f, p) for f, p in class_ir.get_all_fields_with_path() if f.name == attr_name), None)
+            path = field_with_path[1] if field_with_path else attr_name
+            
             op_map = {
                 ast.Add: "+=", ast.Sub: "-=", ast.Mult: "*=", ast.Div: "/=",
                 ast.Mod: "%=", ast.BitAnd: "&=", ast.BitOr: "|=", ast.BitXor: "^=",
             }
             c_op = op_map.get(type(stmt.op), "+=")
-            return [f"    self->{attr_name} {c_op} {right};"]
+            return [f"    self->{path} {c_op} {right};"]
         
         return self._translate_aug_assign(stmt, locals_)
     
@@ -588,10 +596,12 @@ class TypedPythonTranslator:
     def _translate_method_expr(self, expr, locals_: list[str], class_ir: ClassIR, native: bool) -> tuple[str, str]:
         if isinstance(expr, ast.Attribute) and isinstance(expr.value, ast.Name) and expr.value.id == "self":
             attr_name = expr.attr
-            field = next((f for f in class_ir.get_all_fields() if f.name == attr_name), None)
-            if field:
+            # Look up field with path for proper inheritance access (e.g., super.x)
+            field_with_path = next(((f, p) for f, p in class_ir.get_all_fields_with_path() if f.name == attr_name), None)
+            if field_with_path:
+                field, path = field_with_path
                 c_type_str = field.c_type.to_c_type_str()
-                return f"self->{attr_name}", c_type_str
+                return f"self->{path}", c_type_str
             return f"self->{attr_name}", "mp_obj_t"
         
         if isinstance(expr, ast.Call):
@@ -1404,6 +1414,10 @@ class TypedPythonTranslator:
             "#endif",
             "",
         ])
+        
+        if self._struct_code:
+            lines.extend(self._struct_code)
+            lines.append("")
         
         for func_code in self._function_code:
             lines.append(func_code)

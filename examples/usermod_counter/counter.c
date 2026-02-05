@@ -17,6 +17,34 @@ static inline mp_float_t mp_get_float_checked(mp_obj_t obj) {
 }
 #endif
 
+struct _counter_Counter_vtable_t {
+    mp_int_t (*increment)(counter_Counter_obj_t *self);
+    mp_int_t (*decrement)(counter_Counter_obj_t *self);
+    void (*reset)(counter_Counter_obj_t *self);
+    mp_int_t (*get)(counter_Counter_obj_t *self);
+};
+
+struct _counter_Counter_obj_t {
+    mp_obj_base_t base;
+    const counter_Counter_vtable_t *vtable;
+    mp_int_t value;
+    mp_int_t step;
+};
+
+struct _counter_BoundedCounter_vtable_t {
+    mp_int_t (*increment)(counter_BoundedCounter_obj_t *self);
+    mp_int_t (*decrement)(counter_BoundedCounter_obj_t *self);
+    void (*reset)(counter_BoundedCounter_obj_t *self);
+    mp_int_t (*get)(counter_BoundedCounter_obj_t *self);
+};
+
+struct _counter_BoundedCounter_obj_t {
+    counter_Counter_obj_t super;
+    mp_int_t min_val;
+    mp_int_t max_val;
+};
+
+
 static mp_obj_t counter_Counter___init___mp(mp_obj_t self_in, mp_obj_t arg0_obj, mp_obj_t arg1_obj) {
     counter_Counter_obj_t *self = MP_OBJ_TO_PTR(self_in);
     mp_int_t start = mp_obj_get_int(arg0_obj);
@@ -113,20 +141,6 @@ static mp_obj_t counter_BoundedCounter_decrement_mp(mp_obj_t self_in) {
 }
 MP_DEFINE_CONST_FUN_OBJ_1(counter_BoundedCounter_decrement_obj, counter_BoundedCounter_decrement_mp);
 
-struct _counter_Counter_vtable_t {
-    mp_int_t (*increment)(counter_Counter_obj_t *self);
-    mp_int_t (*decrement)(counter_Counter_obj_t *self);
-    void (*reset)(counter_Counter_obj_t *self);
-    mp_int_t (*get)(counter_Counter_obj_t *self);
-};
-
-struct _counter_Counter_obj_t {
-    mp_obj_base_t base;
-    const counter_Counter_vtable_t *vtable;
-    mp_int_t value;
-    mp_int_t step;
-};
-
 typedef struct {
     qstr name;
     uint16_t offset;
@@ -206,19 +220,6 @@ MP_DEFINE_CONST_OBJ_TYPE(
     locals_dict, &counter_Counter_locals_dict
 );
 
-struct _counter_BoundedCounter_vtable_t {
-    mp_int_t (*increment)(counter_BoundedCounter_obj_t *self);
-    mp_int_t (*decrement)(counter_BoundedCounter_obj_t *self);
-    void (*reset)(counter_BoundedCounter_obj_t *self);
-    mp_int_t (*get)(counter_BoundedCounter_obj_t *self);
-};
-
-struct _counter_BoundedCounter_obj_t {
-    counter_Counter_obj_t super;
-    mp_int_t min_val;
-    mp_int_t max_val;
-};
-
 typedef struct {
     qstr name;
     uint16_t offset;
@@ -226,8 +227,8 @@ typedef struct {
 } counter_BoundedCounter_field_t;
 
 static const counter_BoundedCounter_field_t counter_BoundedCounter_fields[] = {
-    { MP_QSTR_value, offsetof(counter_BoundedCounter_obj_t, value), 1 },
-    { MP_QSTR_step, offsetof(counter_BoundedCounter_obj_t, step), 1 },
+    { MP_QSTR_value, offsetof(counter_BoundedCounter_obj_t, super.value), 1 },
+    { MP_QSTR_step, offsetof(counter_BoundedCounter_obj_t, super.step), 1 },
     { MP_QSTR_min_val, offsetof(counter_BoundedCounter_obj_t, min_val), 1 },
     { MP_QSTR_max_val, offsetof(counter_BoundedCounter_obj_t, max_val), 1 },
     { MP_QSTR_NULL, 0, 0 }

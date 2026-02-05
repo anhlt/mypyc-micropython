@@ -62,8 +62,8 @@ class ClassEmitter:
         return lines
     
     def emit_field_descriptors(self) -> list[str]:
-        all_fields = self.class_ir.get_all_fields()
-        if not all_fields:
+        fields_with_path = self.class_ir.get_all_fields_with_path()
+        if not fields_with_path:
             return []
         
         lines = []
@@ -76,9 +76,9 @@ class ClassEmitter:
         
         lines.append(f"static const {self.c_name}_field_t {self.c_name}_fields[] = {{")
         
-        for fld in all_fields:
+        for fld, path in fields_with_path:
             type_id = fld.c_type.to_field_type_id()
-            lines.append(f"    {{ MP_QSTR_{fld.name}, offsetof({self.c_name}_obj_t, {fld.name}), {type_id} }},")
+            lines.append(f"    {{ MP_QSTR_{fld.name}, offsetof({self.c_name}_obj_t, {path}), {type_id} }},")
         
         lines.append(f"    {{ MP_QSTR_NULL, 0, 0 }}")
         lines.append("};")
@@ -184,18 +184,18 @@ class ClassEmitter:
     
     def _emit_dataclass_make_new(self) -> list[str]:
         lines = []
-        all_fields = self.class_ir.get_all_fields()
+        fields_with_path = self.class_ir.get_all_fields_with_path()
         vtable_entries = self.class_ir.get_vtable_entries()
         
         lines.append(f"static mp_obj_t {self.c_name}_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args) {{")
         
         lines.append("    enum {")
-        for i, fld in enumerate(all_fields):
+        for fld, _ in fields_with_path:
             lines.append(f"        ARG_{fld.name},")
         lines.append("    };")
         
         lines.append("    static const mp_arg_t allowed_args[] = {")
-        for fld in all_fields:
+        for fld, _ in fields_with_path:
             if fld.c_type == CType.MP_INT_T:
                 if fld.has_default:
                     lines.append(f"        {{ MP_QSTR_{fld.name}, MP_ARG_INT, {{.u_int = {fld.default_value}}} }},")
@@ -220,8 +220,8 @@ class ClassEmitter:
         lines.append("    };")
         lines.append("")
         
-        lines.append(f"    mp_arg_val_t parsed[{len(all_fields)}];")
-        lines.append(f"    mp_arg_parse_all_kw_array(n_args, n_kw, args, {len(all_fields)}, allowed_args, parsed);")
+        lines.append(f"    mp_arg_val_t parsed[{len(fields_with_path)}];")
+        lines.append(f"    mp_arg_parse_all_kw_array(n_args, n_kw, args, {len(fields_with_path)}, allowed_args, parsed);")
         lines.append("")
         
         lines.append(f"    {self.c_name}_obj_t *self = mp_obj_malloc({self.c_name}_obj_t, type);")
@@ -229,15 +229,15 @@ class ClassEmitter:
         if vtable_entries and not self.class_ir.base:
             lines.append(f"    self->vtable = &{self.c_name}_vtable_inst;")
         
-        for fld in all_fields:
+        for fld, path in fields_with_path:
             if fld.c_type == CType.MP_INT_T:
-                lines.append(f"    self->{fld.name} = parsed[ARG_{fld.name}].u_int;")
+                lines.append(f"    self->{path} = parsed[ARG_{fld.name}].u_int;")
             elif fld.c_type == CType.MP_FLOAT_T:
-                lines.append(f"    self->{fld.name} = mp_obj_get_float(parsed[ARG_{fld.name}].u_obj);")
+                lines.append(f"    self->{path} = mp_obj_get_float(parsed[ARG_{fld.name}].u_obj);")
             elif fld.c_type == CType.BOOL:
-                lines.append(f"    self->{fld.name} = parsed[ARG_{fld.name}].u_bool;")
+                lines.append(f"    self->{path} = parsed[ARG_{fld.name}].u_bool;")
             else:
-                lines.append(f"    self->{fld.name} = parsed[ARG_{fld.name}].u_obj;")
+                lines.append(f"    self->{path} = parsed[ARG_{fld.name}].u_obj;")
         
         lines.append("")
         lines.append("    return MP_OBJ_FROM_PTR(self);")
@@ -251,25 +251,25 @@ class ClassEmitter:
             return []
         
         lines = []
-        all_fields = self.class_ir.get_all_fields()
+        fields_with_path = self.class_ir.get_all_fields_with_path()
         
         lines.append(f"static void {self.c_name}_print(const mp_print_t *print, mp_obj_t self_in, mp_print_kind_t kind) {{")
         lines.append(f"    {self.c_name}_obj_t *self = MP_OBJ_TO_PTR(self_in);")
         lines.append(f"    (void)kind;")
         lines.append(f'    mp_printf(print, "{self.class_ir.name}(");')
         
-        for i, fld in enumerate(all_fields):
+        for i, (fld, path) in enumerate(fields_with_path):
             separator = ", " if i > 0 else ""
             if fld.c_type == CType.MP_INT_T:
-                lines.append(f'    mp_printf(print, "{separator}{fld.name}=%d", (int)self->{fld.name});')
+                lines.append(f'    mp_printf(print, "{separator}{fld.name}=%d", (int)self->{path});')
             elif fld.c_type == CType.MP_FLOAT_T:
                 lines.append(f'    mp_printf(print, "{separator}{fld.name}=");')
-                lines.append(f"    mp_obj_print_helper(print, mp_obj_new_float(self->{fld.name}), PRINT_REPR);")
+                lines.append(f"    mp_obj_print_helper(print, mp_obj_new_float(self->{path}), PRINT_REPR);")
             elif fld.c_type == CType.BOOL:
-                lines.append(f'    mp_printf(print, "{separator}{fld.name}=%s", self->{fld.name} ? "True" : "False");')
+                lines.append(f'    mp_printf(print, "{separator}{fld.name}=%s", self->{path} ? "True" : "False");')
             else:
                 lines.append(f'    mp_printf(print, "{separator}{fld.name}=");')
-                lines.append(f"    mp_obj_print_helper(print, self->{fld.name}, PRINT_REPR);")
+                lines.append(f"    mp_obj_print_helper(print, self->{path}, PRINT_REPR);")
         
         lines.append('    mp_printf(print, ")");')
         lines.append("}")
@@ -282,7 +282,7 @@ class ClassEmitter:
             return []
         
         lines = []
-        all_fields = self.class_ir.get_all_fields()
+        fields_with_path = self.class_ir.get_all_fields_with_path()
         
         lines.append(f"static mp_obj_t {self.c_name}_binary_op(mp_binary_op_t op, mp_obj_t lhs_in, mp_obj_t rhs_in) {{")
         lines.append("    if (op != MP_BINARY_OP_EQUAL) {")
@@ -298,11 +298,11 @@ class ClassEmitter:
         lines.append("")
         
         conditions = []
-        for fld in all_fields:
+        for fld, path in fields_with_path:
             if fld.c_type == CType.MP_OBJ_T:
-                conditions.append(f"mp_obj_equal(lhs->{fld.name}, rhs->{fld.name})")
+                conditions.append(f"mp_obj_equal(lhs->{path}, rhs->{path})")
             else:
-                conditions.append(f"lhs->{fld.name} == rhs->{fld.name}")
+                conditions.append(f"lhs->{path} == rhs->{path}")
         
         if conditions:
             cond_str = " &&\n        ".join(conditions)
@@ -392,6 +392,20 @@ class ClassEmitter:
         sections = []
         
         sections.extend(self.emit_struct())
+        sections.extend(self.emit_field_descriptors())
+        sections.extend(self.emit_attr_handler())
+        sections.extend(self.emit_print_handler())
+        sections.extend(self.emit_binary_op_handler())
+        sections.extend(self.emit_vtable_instance())
+        sections.extend(self.emit_make_new())
+        sections.extend(self.emit_locals_dict())
+        sections.extend(self.emit_type_definition())
+        
+        return "\n".join(sections)
+    
+    def emit_all_except_struct(self) -> str:
+        sections = []
+        
         sections.extend(self.emit_field_descriptors())
         sections.extend(self.emit_attr_handler())
         sections.extend(self.emit_print_handler())

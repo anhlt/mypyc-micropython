@@ -17,6 +17,30 @@ static inline mp_float_t mp_get_float_checked(mp_obj_t obj) {
 }
 #endif
 
+struct _point_Point_vtable_t {
+    mp_int_t (*distance_squared)(point_Point_obj_t *self);
+    mp_int_t (*add)(point_Point_obj_t *self, mp_int_t other_x, mp_int_t other_y);
+};
+
+struct _point_Point_obj_t {
+    mp_obj_base_t base;
+    const point_Point_vtable_t *vtable;
+    mp_int_t x;
+    mp_int_t y;
+};
+
+struct _point_Point3D_vtable_t {
+    mp_int_t (*distance_squared)(point_Point3D_obj_t *self);
+    mp_int_t (*add)(point_Point3D_obj_t *self, mp_int_t other_x, mp_int_t other_y);
+    mp_int_t (*distance_squared_3d)(point_Point3D_obj_t *self);
+};
+
+struct _point_Point3D_obj_t {
+    point_Point_obj_t super;
+    mp_int_t z;
+};
+
+
 static mp_int_t point_Point_distance_squared_native(point_Point_obj_t *self) {
     return ((self->x * self->x) + (self->y * self->y));
 }
@@ -40,7 +64,7 @@ static mp_obj_t point_Point_add_mp(mp_obj_t self_in, mp_obj_t arg0_obj, mp_obj_t
 MP_DEFINE_CONST_FUN_OBJ_3(point_Point_add_obj, point_Point_add_mp);
 
 static mp_int_t point_Point3D_distance_squared_3d_native(point_Point3D_obj_t *self) {
-    return (((self->x * self->x) + (self->y * self->y)) + (self->z * self->z));
+    return (((self->super.x * self->super.x) + (self->super.y * self->super.y)) + (self->z * self->z));
 }
 
 static mp_obj_t point_Point3D_distance_squared_3d_mp(mp_obj_t self_in) {
@@ -48,18 +72,6 @@ static mp_obj_t point_Point3D_distance_squared_3d_mp(mp_obj_t self_in) {
     return mp_obj_new_int(point_Point3D_distance_squared_3d_native(self));
 }
 MP_DEFINE_CONST_FUN_OBJ_1(point_Point3D_distance_squared_3d_obj, point_Point3D_distance_squared_3d_mp);
-
-struct _point_Point_vtable_t {
-    mp_int_t (*distance_squared)(point_Point_obj_t *self);
-    mp_int_t (*add)(point_Point_obj_t *self, mp_int_t other_x, mp_int_t other_y);
-};
-
-struct _point_Point_obj_t {
-    mp_obj_base_t base;
-    const point_Point_vtable_t *vtable;
-    mp_int_t x;
-    mp_int_t y;
-};
 
 typedef struct {
     qstr name;
@@ -173,17 +185,6 @@ MP_DEFINE_CONST_OBJ_TYPE(
     locals_dict, &point_Point_locals_dict
 );
 
-struct _point_Point3D_vtable_t {
-    mp_int_t (*distance_squared)(point_Point3D_obj_t *self);
-    mp_int_t (*add)(point_Point3D_obj_t *self, mp_int_t other_x, mp_int_t other_y);
-    mp_int_t (*distance_squared_3d)(point_Point3D_obj_t *self);
-};
-
-struct _point_Point3D_obj_t {
-    point_Point_obj_t super;
-    mp_int_t z;
-};
-
 typedef struct {
     qstr name;
     uint16_t offset;
@@ -191,8 +192,8 @@ typedef struct {
 } point_Point3D_field_t;
 
 static const point_Point3D_field_t point_Point3D_fields[] = {
-    { MP_QSTR_x, offsetof(point_Point3D_obj_t, x), 1 },
-    { MP_QSTR_y, offsetof(point_Point3D_obj_t, y), 1 },
+    { MP_QSTR_x, offsetof(point_Point3D_obj_t, super.x), 1 },
+    { MP_QSTR_y, offsetof(point_Point3D_obj_t, super.y), 1 },
     { MP_QSTR_z, offsetof(point_Point3D_obj_t, z), 1 },
     { MP_QSTR_NULL, 0, 0 }
 };
@@ -231,8 +232,8 @@ static void point_Point3D_print(const mp_print_t *print, mp_obj_t self_in, mp_pr
     point_Point3D_obj_t *self = MP_OBJ_TO_PTR(self_in);
     (void)kind;
     mp_printf(print, "Point3D(");
-    mp_printf(print, "x=%d", (int)self->x);
-    mp_printf(print, ", y=%d", (int)self->y);
+    mp_printf(print, "x=%d", (int)self->super.x);
+    mp_printf(print, ", y=%d", (int)self->super.y);
     mp_printf(print, ", z=%d", (int)self->z);
     mp_printf(print, ")");
 }
@@ -250,8 +251,8 @@ static mp_obj_t point_Point3D_binary_op(mp_binary_op_t op, mp_obj_t lhs_in, mp_o
     point_Point3D_obj_t *rhs = MP_OBJ_TO_PTR(rhs_in);
 
     return mp_obj_new_bool(
-        lhs->x == rhs->x &&
-        lhs->y == rhs->y &&
+        lhs->super.x == rhs->super.x &&
+        lhs->super.y == rhs->super.y &&
         lhs->z == rhs->z
     );
 }
@@ -278,8 +279,8 @@ static mp_obj_t point_Point3D_make_new(const mp_obj_type_t *type, size_t n_args,
     mp_arg_parse_all_kw_array(n_args, n_kw, args, 3, allowed_args, parsed);
 
     point_Point3D_obj_t *self = mp_obj_malloc(point_Point3D_obj_t, type);
-    self->x = parsed[ARG_x].u_int;
-    self->y = parsed[ARG_y].u_int;
+    self->super.x = parsed[ARG_x].u_int;
+    self->super.y = parsed[ARG_y].u_int;
     self->z = parsed[ARG_z].u_int;
 
     return MP_OBJ_FROM_PTR(self);

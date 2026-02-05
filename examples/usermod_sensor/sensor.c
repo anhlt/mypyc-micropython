@@ -16,6 +16,30 @@ static inline mp_float_t mp_get_float_checked(mp_obj_t obj) {
 }
 #endif
 
+struct _sensor_SensorReading_obj_t {
+    mp_obj_base_t base;
+    mp_int_t sensor_id;
+    mp_float_t temperature;
+    mp_float_t humidity;
+    bool valid;
+};
+
+struct _sensor_SensorBuffer_vtable_t {
+    void (*add_reading)(sensor_SensorBuffer_obj_t *self, mp_float_t temp, mp_float_t humidity);
+    mp_float_t (*avg_temperature)(sensor_SensorBuffer_obj_t *self);
+    mp_float_t (*avg_humidity)(sensor_SensorBuffer_obj_t *self);
+    void (*reset)(sensor_SensorBuffer_obj_t *self);
+};
+
+struct _sensor_SensorBuffer_obj_t {
+    mp_obj_base_t base;
+    const sensor_SensorBuffer_vtable_t *vtable;
+    mp_int_t count;
+    mp_float_t sum_temp;
+    mp_float_t sum_humidity;
+};
+
+
 static mp_obj_t sensor_SensorBuffer___init___mp(mp_obj_t self_in) {
     sensor_SensorBuffer_obj_t *self = MP_OBJ_TO_PTR(self_in);
     self->count = 0;
@@ -80,14 +104,6 @@ static mp_obj_t sensor_SensorBuffer_reset_mp(mp_obj_t self_in) {
     return mp_const_none;
 }
 MP_DEFINE_CONST_FUN_OBJ_1(sensor_SensorBuffer_reset_obj, sensor_SensorBuffer_reset_mp);
-
-struct _sensor_SensorReading_obj_t {
-    mp_obj_base_t base;
-    mp_int_t sensor_id;
-    mp_float_t temperature;
-    mp_float_t humidity;
-    bool valid;
-};
 
 typedef struct {
     qstr name;
@@ -205,21 +221,6 @@ MP_DEFINE_CONST_OBJ_TYPE(
     print, sensor_SensorReading_print,
     binary_op, sensor_SensorReading_binary_op
 );
-
-struct _sensor_SensorBuffer_vtable_t {
-    void (*add_reading)(sensor_SensorBuffer_obj_t *self, mp_float_t temp, mp_float_t humidity);
-    mp_float_t (*avg_temperature)(sensor_SensorBuffer_obj_t *self);
-    mp_float_t (*avg_humidity)(sensor_SensorBuffer_obj_t *self);
-    void (*reset)(sensor_SensorBuffer_obj_t *self);
-};
-
-struct _sensor_SensorBuffer_obj_t {
-    mp_obj_base_t base;
-    const sensor_SensorBuffer_vtable_t *vtable;
-    mp_int_t count;
-    mp_float_t sum_temp;
-    mp_float_t sum_humidity;
-};
 
 typedef struct {
     qstr name;

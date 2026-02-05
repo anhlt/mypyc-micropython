@@ -196,6 +196,16 @@ class ClassIR:
             return self.base.get_all_fields() + self.fields
         return list(self.fields)
     
+    def get_all_fields_with_path(self) -> list[tuple[FieldIR, str]]:
+        """Get fields with their C access path (e.g., 'super.x' for inherited)."""
+        result: list[tuple[FieldIR, str]] = []
+        if self.base:
+            for fld, path in self.base.get_all_fields_with_path():
+                result.append((fld, f"super.{path}"))
+        for fld in self.fields:
+            result.append((fld, fld.name))
+        return result
+    
     def get_own_fields(self) -> list[FieldIR]:
         """Get only this class's fields (not inherited)."""
         return list(self.fields)
