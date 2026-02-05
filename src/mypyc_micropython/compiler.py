@@ -391,7 +391,10 @@ class TypedPythonTranslator:
             obj_def = f"MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN({c_name}_obj, {num_args}, {num_args}, {c_name}_mp);"
         
         lines = [sig + " {"]
-        lines.append(f"    {class_ir.c_name}_obj_t *self = MP_OBJ_TO_PTR(self_in);")
+        if num_args <= 3:
+            lines.append(f"    {class_ir.c_name}_obj_t *self = MP_OBJ_TO_PTR(self_in);")
+        else:
+            lines.append(f"    {class_ir.c_name}_obj_t *self = MP_OBJ_TO_PTR(args[0]);")
         
         for i, (param_name, param_type) in enumerate(method_ir.params):
             if num_args <= 3:
@@ -447,6 +450,8 @@ class TypedPythonTranslator:
             return self._translate_method_return(stmt, return_type, locals_, class_ir, native)
         elif isinstance(stmt, ast.Assign):
             return self._translate_method_assign(stmt, locals_, class_ir, native)
+        elif isinstance(stmt, ast.AnnAssign):
+            return self._translate_method_ann_assign(stmt, locals_, class_ir, native)
         elif isinstance(stmt, ast.If):
             return self._translate_method_if(stmt, return_type, locals_, class_ir, native)
         elif isinstance(stmt, ast.While):
@@ -459,6 +464,31 @@ class TypedPythonTranslator:
             expr, _ = self._translate_method_expr(stmt.value, locals_, class_ir, native)
             return [f"    (void){expr};"]
         return self._translate_statement(stmt, return_type, locals_)
+    
+    def _translate_method_ann_assign(self, stmt: ast.AnnAssign, locals_: list[str], class_ir: ClassIR, native: bool) -> list[str]:
+        if not isinstance(stmt.target, ast.Name):
+            return []
+        
+        var_name = stmt.target.id
+        c_type = self._annotation_to_c_type(stmt.annotation) if stmt.annotation else "mp_int_t"
+        
+        if stmt.value is not None:
+            expr, expr_type = self._translate_method_expr(stmt.value, locals_, class_ir, native)
+            if var_name not in locals_:
+                locals_.append(var_name)
+                return [f"    {c_type} {var_name} = {expr};"]
+            return [f"    {var_name} = {expr};"]
+        else:
+            if var_name not in locals_:
+                locals_.append(var_name)
+                if c_type == "mp_int_t":
+                    return [f"    {c_type} {var_name} = 0;"]
+                elif c_type == "mp_float_t":
+                    return [f"    {c_type} {var_name} = 0.0;"]
+                elif c_type == "bool":
+                    return [f"    {c_type} {var_name} = false;"]
+                return [f"    {c_type} {var_name} = mp_const_none;"]
+        return []
     
     def _translate_method_return(self, stmt: ast.Return, return_type: str, locals_: list[str], class_ir: ClassIR, native: bool) -> list[str]:
         if stmt.value is None:
@@ -578,6 +608,52 @@ class TypedPythonTranslator:
                     
                     ret_type = method.return_type.to_c_type_str()
                     return f"{method.c_name}_native({args_str})", ret_type
+        
+        if isinstance(expr, ast.BinOp):
+            left, left_type = self._translate_method_expr(expr.left, locals_, class_ir, native)
+            right, right_type = self._translate_method_expr(expr.right, locals_, class_ir, native)
+            
+            op_map = {
+                ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/",
+                ast.FloorDiv: "/", ast.Mod: "%", ast.BitAnd: "&", 
+                ast.BitOr: "|", ast.BitXor: "^", ast.LShift: "<<", ast.RShift: ">>"
+            }
+            c_op = op_map.get(type(expr.op), "+")
+            result_type = "mp_float_t" if (left_type == "mp_float_t" or right_type == "mp_float_t") else left_type
+            return f"({left} {c_op} {right})", result_type
+        
+        if isinstance(expr, ast.UnaryOp):
+            operand, op_type = self._translate_method_expr(expr.operand, locals_, class_ir, native)
+            if isinstance(expr.op, ast.USub):
+                return f"(-{operand})", op_type
+            elif isinstance(expr.op, ast.Not):
+                return f"(!{operand})", "bool"
+            elif isinstance(expr.op, ast.UAdd):
+                return f"(+{operand})", op_type
+            elif isinstance(expr.op, ast.Invert):
+                return f"(~{operand})", op_type
+            return operand, op_type
+        
+        if isinstance(expr, ast.Compare):
+            left, _ = self._translate_method_expr(expr.left, locals_, class_ir, native)
+            op_map = {
+                ast.Eq: "==", ast.NotEq: "!=", ast.Lt: "<",
+                ast.LtE: "<=", ast.Gt: ">", ast.GtE: ">="
+            }
+            parts = []
+            prev = left
+            for op, comparator in zip(expr.ops, expr.comparators):
+                right, _ = self._translate_method_expr(comparator, locals_, class_ir, native)
+                c_op = op_map.get(type(op), "==")
+                parts.append(f"({prev} {c_op} {right})")
+                prev = right
+            return ("(" + " && ".join(parts) + ")" if len(parts) > 1 else parts[0]), "bool"
+        
+        if isinstance(expr, ast.IfExp):
+            test, _ = self._translate_method_expr(expr.test, locals_, class_ir, native)
+            body, body_type = self._translate_method_expr(expr.body, locals_, class_ir, native)
+            orelse, _ = self._translate_method_expr(expr.orelse, locals_, class_ir, native)
+            return f"(({test}) ? ({body}) : ({orelse}))", body_type
         
         return self._translate_expr(expr, locals_)
     
