@@ -1463,3 +1463,300 @@ def inc_elem(lst: list, i: int) -> int:
         assert "mp_obj_get_int(mp_obj_subscr(" in result
         # The integer 1 should NOT be wrapped in mp_obj_get_int
         assert "mp_obj_get_int(1)" not in result
+
+
+class TestSimpleClass:
+    """Tests for simple class compilation."""
+
+    def test_class_with_fields(self):
+        source = """
+class Point:
+    x: int
+    y: int
+"""
+        result = compile_source(source, "test")
+        # Check struct definition
+        assert "struct _test_Point_obj_t" in result
+        assert "mp_obj_base_t base;" in result
+        assert "mp_int_t x;" in result
+        assert "mp_int_t y;" in result
+        # Check make_new constructor
+        assert "test_Point_make_new" in result
+        # Check type definition
+        assert "MP_DEFINE_CONST_OBJ_TYPE(" in result
+        assert "test_Point_type" in result
+        # Check module registration
+        assert "MP_QSTR_Point" in result
+
+    def test_class_with_init_method(self):
+        source = """
+class Counter:
+    value: int
+    
+    def __init__(self, start: int) -> None:
+        self.value = start
+"""
+        result = compile_source(source, "test")
+        # Check struct
+        assert "mp_int_t value;" in result
+        # Check __init__ wrapper
+        assert "test_Counter___init___mp" in result
+        # Check self field assignment
+        assert "self->value" in result
+        # Constructor should call __init__
+        assert "test_Counter___init___mp(" in result
+
+    def test_class_with_method(self):
+        source = """
+class Counter:
+    value: int
+    
+    def __init__(self, start: int) -> None:
+        self.value = start
+    
+    def increment(self) -> int:
+        self.value += 1
+        return self.value
+"""
+        result = compile_source(source, "test")
+        # Check native method (for vtable)
+        assert "test_Counter_increment_native" in result
+        # Check MP wrapper
+        assert "test_Counter_increment_mp" in result
+        # Check method obj definition
+        assert "test_Counter_increment_obj" in result
+        # Check locals dict entry
+        assert "MP_QSTR_increment" in result
+        # Check field augmented assignment
+        assert "self->value +=" in result
+
+    def test_class_with_method_parameters(self):
+        source = """
+class Calculator:
+    result: int
+    
+    def add(self, a: int, b: int) -> int:
+        return a + b
+"""
+        result = compile_source(source, "test")
+        # Check native method signature with typed params
+        assert "test_Calculator_add_native" in result
+        assert "mp_int_t a" in result
+        assert "mp_int_t b" in result
+        # Check MP wrapper
+        assert "test_Calculator_add_mp" in result
+        # Should have arg0_obj, arg1_obj
+        assert "arg0_obj" in result or "args[" in result
+
+
+class TestDataclass:
+    """Tests for @dataclass compilation."""
+
+    def test_simple_dataclass(self):
+        source = """
+from dataclasses import dataclass
+
+@dataclass
+class Point:
+    x: int
+    y: int
+"""
+        result = compile_source(source, "test")
+        # Check struct
+        assert "mp_int_t x;" in result
+        assert "mp_int_t y;" in result
+        # Check dataclass make_new with arg parsing
+        assert "mp_arg_parse_all_kw_array" in result
+        assert "ARG_x" in result
+        assert "ARG_y" in result
+        # Check print handler for __repr__
+        assert "test_Point_print" in result
+        assert 'mp_printf(print, "Point(")' in result
+        # Check binary_op for __eq__
+        assert "test_Point_binary_op" in result
+        assert "MP_BINARY_OP_EQUAL" in result
+
+    def test_dataclass_with_defaults(self):
+        source = """
+from dataclasses import dataclass
+
+@dataclass
+class Config:
+    name: str
+    value: int = 42
+    enabled: bool = True
+"""
+        result = compile_source(source, "test")
+        # Check default values in allowed_args
+        assert "u_int = 42" in result
+        assert "u_bool = true" in result
+        # Check required vs optional args
+        assert "MP_ARG_REQUIRED" in result  # for name
+
+    def test_dataclass_with_eq_false(self):
+        source = """
+from dataclasses import dataclass
+
+@dataclass(eq=False)
+class NoEq:
+    x: int
+"""
+        result = compile_source(source, "test")
+        # Should NOT have binary_op handler when eq=False
+        assert "NoEq_binary_op" not in result
+
+
+class TestClassInheritance:
+    """Tests for single inheritance."""
+
+    def test_simple_inheritance(self):
+        source = """
+class Animal:
+    name: str
+    
+    def speak(self) -> str:
+        return self.name
+
+class Dog(Animal):
+    breed: str
+"""
+        result = compile_source(source, "test")
+        # Check base class struct
+        assert "test_Animal_obj_t" in result
+        # Check derived struct embeds base
+        assert "test_Animal_obj_t super;" in result
+        # Check parent slot in type definition
+        assert "parent, &test_Animal_type" in result
+        # Both classes should be registered
+        assert "MP_QSTR_Animal" in result
+        assert "MP_QSTR_Dog" in result
+
+
+class TestMethodDispatch:
+    """Tests for method body translation and field access."""
+
+    def test_field_access_in_method(self):
+        source = """
+class Box:
+    width: int
+    height: int
+    
+    def area(self) -> int:
+        return self.width * self.height
+"""
+        result = compile_source(source, "test")
+        # Native method should access fields directly
+        assert "self->width" in result
+        assert "self->height" in result
+
+    def test_field_assignment_in_method(self):
+        source = """
+class Container:
+    items: int
+    
+    def add(self, n: int) -> None:
+        self.items += n
+"""
+        result = compile_source(source, "test")
+        # Should have augmented assignment to field
+        assert "self->items +=" in result
+
+    def test_method_with_local_variable(self):
+        source = """
+class Math:
+    base: int
+    
+    def square_plus(self, n: int) -> int:
+        result: int = n * n
+        return result + self.base
+"""
+        result = compile_source(source, "test")
+        # Should have local variable declaration
+        assert "result" in result
+        # Should access self.base
+        assert "self->base" in result
+
+    def test_method_with_if_statement(self):
+        source = """
+class Classifier:
+    threshold: int
+    
+    def classify(self, value: int) -> int:
+        if value > self.threshold:
+            return 1
+        return 0
+"""
+        result = compile_source(source, "test")
+        # Should have if statement
+        assert "if (" in result
+        # Should compare with self.threshold
+        assert "self->threshold" in result
+
+
+class TestClassFieldTypes:
+    """Tests for different field types in classes."""
+
+    def test_int_field(self):
+        source = """
+class IntHolder:
+    value: int
+"""
+        result = compile_source(source, "test")
+        assert "mp_int_t value;" in result
+
+    def test_float_field(self):
+        source = """
+class FloatHolder:
+    value: float
+"""
+        result = compile_source(source, "test")
+        assert "mp_float_t value;" in result
+
+    def test_bool_field(self):
+        source = """
+class BoolHolder:
+    flag: bool
+"""
+        result = compile_source(source, "test")
+        assert "bool flag;" in result
+
+    def test_object_field(self):
+        source = """
+class ObjectHolder:
+    data: object
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_t data;" in result
+
+
+class TestClassAttrHandler:
+    """Tests for attribute access handler generation."""
+
+    def test_attr_handler_generated(self):
+        source = """
+class Point:
+    x: int
+    y: int
+"""
+        result = compile_source(source, "test")
+        # Should have attr handler
+        assert "test_Point_attr" in result
+        # Should have field descriptor table
+        assert "test_Point_fields" in result
+        assert "MP_QSTR_x" in result
+        assert "MP_QSTR_y" in result
+        # Should have offset calculations
+        assert "offsetof(test_Point_obj_t, x)" in result
+
+    def test_attr_handler_type_dispatch(self):
+        source = """
+class Mixed:
+    i: int
+    f: float
+    b: bool
+"""
+        result = compile_source(source, "test")
+        # Should have different type handlers in switch
+        assert "mp_obj_new_int" in result
+        assert "mp_obj_new_float" in result
+        assert "mp_const_true" in result or "mp_const_false" in result
