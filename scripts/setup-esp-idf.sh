@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-ESP_IDF_VERSION="v5.2.3"
+ESP_IDF_VERSION="v5.2.2"
 ESP_IDF_DIR="${ESP_IDF_DIR:-$HOME/esp/esp-idf}"
 
 echo "=========================================="
