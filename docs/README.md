@@ -12,6 +12,7 @@ This directory contains documentation for the mypyc-micropython project - a comp
 | [04-feature-scope.md](04-feature-scope.md) | Feature scope definition (in-scope, partial, out-of-scope) |
 | [05-roadmap.md](05-roadmap.md) | 6-phase implementation roadmap |
 | [06-esp32-integration.md](06-esp32-integration.md) | Calling ESP32 MicroPython modules from compiled code |
+| [07-micropython-async-internals.md](07-micropython-async-internals.md) | Deep dive into MicroPython's async/await implementation |
 
 ## Quick Links
 
