@@ -32,3 +32,13 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# pyenv
+.python-version
+
+# Generated modules (keep examples for reference)
+modules/usermod_*
+
+# ESP-IDF build artifacts
+deps/micropython/ports/esp32/build-*
+deps/micropython/mpy-cross/build/
