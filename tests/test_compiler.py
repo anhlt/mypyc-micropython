@@ -65,13 +65,13 @@ def get_answer() -> int:
 
     def test_function_with_one_arg(self):
         source = """
-def double(x: int) -> int:
+def square(x: int) -> int:
     return x * 2
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
         
-        assert "static mp_obj_t test_double(mp_obj_t x_obj)" in result
+        assert "static mp_obj_t test_square(mp_obj_t x_obj)" in result
         assert "MP_DEFINE_CONST_FUN_OBJ_1" in result
 
     def test_function_with_three_args(self):
@@ -531,9 +531,9 @@ def sum_list(lst: list) -> int:
     return total
 """
         result = compile_source(source, "test")
-        assert "for (size_t" in result
-        assert "mp_obj_subscr" in result
-        assert "mp_obj_len" in result
+        assert "mp_getiter" in result
+        assert "mp_iternext" in result
+        assert "MP_OBJ_STOP_ITERATION" in result
 
     def test_break_statement(self):
         source = """
@@ -596,8 +596,175 @@ def sum_all(lst: list) -> int:
     return total
 """
         result = compile_source(source, "test")
+        assert "mp_getiter" in result
+        assert "mp_iternext" in result
+
+
+class TestDictOperations:
+
+    def test_empty_dict_literal(self):
+        source = """
+def get_empty() -> dict:
+    return {}
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_dict(0)" in result
+
+    def test_dict_literal_with_values(self):
+        source = """
+def get_config() -> dict:
+    return {"name": "test", "value": 42}
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_dict(2)" in result
+        assert "mp_obj_dict_store" in result
+        assert 'mp_obj_new_str("name"' in result
+        assert 'mp_obj_new_str("test"' in result
+        assert "mp_obj_new_int(42)" in result
+
+    def test_dict_subscript_get(self):
+        source = """
+def get_item(d: dict, key: str):
+    return d[key]
+"""
+        result = compile_source(source, "test")
         assert "mp_obj_subscr" in result
+        assert "MP_OBJ_SENTINEL" in result
+
+    def test_dict_subscript_set(self):
+        source = """
+def set_item(d: dict, key: str, val: int) -> None:
+    d[key] = val
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_subscr" in result
+        assert "mp_obj_new_int(val)" in result
+
+    def test_dict_len(self):
+        source = """
+def get_len(d: dict) -> int:
+    return len(d)
+"""
+        result = compile_source(source, "test")
         assert "mp_obj_len" in result
+        assert "mp_obj_get_int" in result
+
+    def test_dict_get_without_default(self):
+        source = """
+def get_value(d: dict, key: str):
+    return d.get(key)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_dict_get" in result
+
+    def test_dict_get_with_default(self):
+        source = """
+def get_value(d: dict, key: str, default_val: int):
+    return d.get(key, default_val)
+"""
+        result = compile_source(source, "test")
+        assert "mp_load_attr" in result
+        assert "MP_QSTR_get" in result
+        assert "mp_call_function_n_kw" in result
+
+    def test_dict_keys(self):
+        source = """
+def get_keys(d: dict):
+    return d.keys()
+"""
+        result = compile_source(source, "test")
+        assert "mp_load_attr" in result
+        assert "MP_QSTR_keys" in result
+        assert "mp_call_function_0" in result
+
+    def test_dict_values(self):
+        source = """
+def get_values(d: dict):
+    return d.values()
+"""
+        result = compile_source(source, "test")
+        assert "mp_load_attr" in result
+        assert "MP_QSTR_values" in result
+        assert "mp_call_function_0" in result
+
+    def test_dict_items(self):
+        source = """
+def get_items(d: dict):
+    return d.items()
+"""
+        result = compile_source(source, "test")
+        assert "mp_load_attr" in result
+        assert "MP_QSTR_items" in result
+        assert "mp_call_function_0" in result
+
+    def test_dict_constructor(self):
+        source = """
+def make_dict() -> dict:
+    return dict()
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_dict(0)" in result
+
+    def test_dict_type_annotation_generic(self):
+        source = """
+def process(d: dict[str, int]) -> int:
+    return len(d)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_t d" in result
+
+    def test_for_over_dict_keys(self):
+        source = """
+def sum_dict(d: dict) -> int:
+    total: int = 0
+    for key in d.keys():
+        total += 1
+    return total
+"""
+        result = compile_source(source, "test")
+        assert "mp_getiter" in result
+        assert "mp_iternext" in result
+        assert "MP_QSTR_keys" in result
+
+    def test_dict_int_keys(self):
+        source = """
+def create_counter(n: int) -> dict:
+    result: dict = {}
+    for i in range(n):
+        result[i] = i * i
+    return result
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_dict(0)" in result
+        assert "mp_obj_subscr" in result
+        assert "mp_obj_new_int(i)" in result
+
+
+class TestSanitizeReservedWords:
+
+    def test_reserved_word_default(self):
+        assert sanitize_name("default") == "default_"
+
+    def test_reserved_word_int(self):
+        assert sanitize_name("int") == "int_"
+
+    def test_reserved_word_return(self):
+        assert sanitize_name("return") == "return_"
+
+    def test_reserved_word_void(self):
+        assert sanitize_name("void") == "void_"
+
+    def test_non_reserved_word(self):
+        assert sanitize_name("myvar") == "myvar"
+
+    def test_function_with_default_param(self):
+        source = """
+def get_with_default(d: dict, key: str, default: int) -> int:
+    return d.get(key, default)
+"""
+        result = compile_source(source, "test")
+        assert "default_" in result
+        assert "mp_int_t default_" in result
 
 
 class TestBreakContinueValidation:
