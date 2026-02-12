@@ -50,3 +50,6 @@ select = ["E", "F", "I", "W"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+markers = [
+    "c_runtime: tests that compile generated C and execute it with the mock runtime",
+]

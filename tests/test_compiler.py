@@ -598,3 +598,131 @@ def sum_all(lst: list) -> int:
         result = compile_source(source, "test")
         assert "mp_obj_subscr" in result
         assert "mp_obj_len" in result
+
+
+class TestBreakContinueValidation:
+    """Tests for break/continue outside loop validation (Fix 3)."""
+
+    def test_break_outside_loop_emits_error_comment(self):
+        source = """
+def bad_break() -> int:
+    break
+    return 0
+"""
+        result = compile_source(source, "test")
+        assert "ERROR: break outside loop" in result
+        assert "break;" not in result
+
+    def test_continue_outside_loop_emits_error_comment(self):
+        source = """
+def bad_continue() -> int:
+    continue
+    return 0
+"""
+        result = compile_source(source, "test")
+        assert "ERROR: continue outside loop" in result
+        assert "continue;" not in result
+
+    def test_break_inside_loop_works(self):
+        source = """
+def ok_break() -> int:
+    for i in range(10):
+        break
+    return 0
+"""
+        result = compile_source(source, "test")
+        assert "break;" in result
+        assert "ERROR" not in result
+
+    def test_continue_inside_loop_works(self):
+        source = """
+def ok_continue() -> int:
+    for i in range(10):
+        continue
+    return 0
+"""
+        result = compile_source(source, "test")
+        assert "continue;" in result
+        assert "ERROR" not in result
+
+    def test_break_inside_while_loop_works(self):
+        source = """
+def ok_while_break() -> int:
+    while True:
+        break
+    return 0
+"""
+        result = compile_source(source, "test")
+        assert "break;" in result
+        assert "ERROR" not in result
+
+
+class TestListPopFix:
+    """Tests for list.pop() using method dispatch (mp_load_method + mp_call_method_n_kw)."""
+
+    def test_pop_no_args(self):
+        source = """
+def pop_last(lst: list):
+    return lst.pop()
+"""
+        result = compile_source(source, "test")
+        assert "mp_load_method(" in result
+        assert "MP_QSTR_pop" in result
+        assert "mp_call_method_n_kw(0, 0," in result
+
+    def test_pop_with_index(self):
+        source = """
+def pop_at(lst: list, i: int):
+    return lst.pop(i)
+"""
+        result = compile_source(source, "test")
+        assert "mp_load_method(" in result
+        assert "MP_QSTR_pop" in result
+        assert "mp_call_method_n_kw(1, 0," in result
+
+
+class TestSubscriptUnboxing:
+    """Tests for mp_obj_t unboxing when list subscripts are used in arithmetic/comparison."""
+
+    def test_subscript_in_comparison(self):
+        """lst[i] < 0 should unbox with mp_obj_get_int."""
+        source = """
+def check(lst: list, i: int) -> bool:
+    return lst[i] < 0
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_get_int(mp_obj_subscr(" in result
+
+    def test_subscript_in_aug_assign(self):
+        """total += lst[i] should unbox the subscript result."""
+        source = """
+def sum_list(lst: list) -> int:
+    total: int = 0
+    n: int = len(lst)
+    for i in range(n):
+        total += lst[i]
+    return total
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_get_int(mp_obj_subscr(" in result
+
+    def test_subscript_in_binop(self):
+        """lst[i] + lst[j] should unbox both sides."""
+        source = """
+def add_elems(lst: list, i: int, j: int) -> int:
+    return lst[i] + lst[j]
+"""
+        result = compile_source(source, "test")
+        # Both subscripts should be unboxed
+        assert result.count("mp_obj_get_int(mp_obj_subscr(") == 2
+
+    def test_subscript_with_int_no_double_unbox(self):
+        """lst[i] + 1 should only unbox the subscript, not the int literal."""
+        source = """
+def inc_elem(lst: list, i: int) -> int:
+    return lst[i] + 1
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_get_int(mp_obj_subscr(" in result
+        # The integer 1 should NOT be wrapped in mp_obj_get_int
+        assert "mp_obj_get_int(1)" not in result

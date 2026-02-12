@@ -154,6 +154,15 @@ class TypedPythonTranslator:
         self._temp_counter += 1
         return f"_tmp{self._temp_counter}"
     
+    def _unbox_if_needed(self, expr: str, expr_type: str, target_type: str = "mp_int_t") -> tuple[str, str]:
+        """Unbox mp_obj_t to a native C type when needed for arithmetic/comparison."""
+        if expr_type == "mp_obj_t" and target_type != "mp_obj_t":
+            if target_type == "mp_float_t":
+                return f"mp_get_float_checked({expr})", "mp_float_t"
+            else:
+                return f"mp_obj_get_int({expr})", "mp_int_t"
+        return expr, expr_type
+    
     def _translate_function(self, node: ast.FunctionDef) -> None:
         func_name = node.name
         c_func_name = f"{self.c_name}_{sanitize_name(func_name)}"
@@ -245,9 +254,13 @@ class TypedPythonTranslator:
         elif isinstance(stmt, ast.AugAssign):
             return self._translate_aug_assign(stmt, locals_)
         elif isinstance(stmt, ast.Break):
-            return ["    break;"]
+            if self._loop_depth > 0:
+                return ["    break;"]
+            return ["    /* ERROR: break outside loop */"]
         elif isinstance(stmt, ast.Continue):
-            return ["    continue;"]
+            if self._loop_depth > 0:
+                return ["    continue;"]
+            return ["    /* ERROR: continue outside loop */"]
         elif isinstance(stmt, ast.Expr):
             lines = self._flush_pending_list_temps()
             expr, _ = self._translate_expr(stmt.value, locals_)
@@ -497,7 +510,10 @@ class TypedPythonTranslator:
             return []
         
         var_name = stmt.target.id
-        right, _ = self._translate_expr(stmt.value, locals_)
+        right, right_type = self._translate_expr(stmt.value, locals_)
+        
+        # Unbox mp_obj_t for native C augmented assignment
+        right, right_type = self._unbox_if_needed(right, right_type)
         
         op_map = {
             ast.Add: "+=", ast.Sub: "-=", ast.Mult: "*=", ast.Div: "/=",
@@ -595,6 +611,13 @@ class TypedPythonTranslator:
         }
         
         c_op = op_map.get(type(expr.op), "+")
+        
+        # Unbox mp_obj_t operands for native C arithmetic
+        if left_type == "mp_obj_t" or right_type == "mp_obj_t":
+            target = right_type if right_type != "mp_obj_t" else (left_type if left_type != "mp_obj_t" else "mp_int_t")
+            left, left_type = self._unbox_if_needed(left, left_type, target)
+            right, right_type = self._unbox_if_needed(right, right_type, target)
+        
         result_type = "mp_float_t" if (left_type == "mp_float_t" or right_type == "mp_float_t") else "mp_int_t"
         
         if isinstance(expr.op, ast.Pow):
@@ -616,7 +639,7 @@ class TypedPythonTranslator:
         return operand, op_type
     
     def _translate_compare(self, expr: ast.Compare, locals_: list[str]) -> tuple[str, str]:
-        left, _ = self._translate_expr(expr.left, locals_)
+        left, left_type = self._translate_expr(expr.left, locals_)
         
         op_map = {
             ast.Eq: "==", ast.NotEq: "!=", ast.Lt: "<",
@@ -625,11 +648,18 @@ class TypedPythonTranslator:
         
         parts = []
         prev = left
+        prev_type = left_type
         for op, comparator in zip(expr.ops, expr.comparators):
-            right, _ = self._translate_expr(comparator, locals_)
+            right, right_type = self._translate_expr(comparator, locals_)
+            # Unbox mp_obj_t operands for native C comparison
+            if prev_type == "mp_obj_t" or right_type == "mp_obj_t":
+                target = right_type if right_type != "mp_obj_t" else (prev_type if prev_type != "mp_obj_t" else "mp_int_t")
+                prev, prev_type = self._unbox_if_needed(prev, prev_type, target)
+                right, right_type = self._unbox_if_needed(right, right_type, target)
             c_op = op_map.get(type(op), "==")
             parts.append(f"({prev} {c_op} {right})")
             prev = right
+            prev_type = right_type
         
         return ("(" + " && ".join(parts) + ")" if len(parts) > 1 else parts[0]), "bool"
     
@@ -687,11 +717,23 @@ class TypedPythonTranslator:
             return f"mp_obj_list_append({obj_expr}, {boxed_arg})", "mp_obj_t"
         
         if method_name == "pop":
+            # Use MicroPython method dispatch: mp_load_method + mp_call_method_n_kw
+            # list_pop is static in real MicroPython, so direct call won't link.
+            # mp_call_method_n_kw args layout: [method, self, arg0, ...]
             if len(args) == 0:
-                return f"mp_obj_list_pop({obj_expr}, 1, NULL)", "mp_obj_t"
+                return (
+                    f"({{ mp_obj_t __method[2]; "
+                    f"mp_load_method({obj_expr}, MP_QSTR_pop, __method); "
+                    f"mp_call_method_n_kw(0, 0, __method); }})"
+                ), "mp_obj_t"
             else:
                 idx_expr, _ = args[0]
-                return f"mp_obj_list_pop({obj_expr}, 1, (mp_obj_t[]){{mp_obj_new_int({idx_expr})}})", "mp_obj_t"
+                return (
+                    f"({{ mp_obj_t __method[3]; "
+                    f"mp_load_method({obj_expr}, MP_QSTR_pop, __method); "
+                    f"__method[2] = mp_obj_new_int({idx_expr}); "
+                    f"mp_call_method_n_kw(1, 0, __method); }})"
+                ), "mp_obj_t"
         
         return f"/* unsupported method: {method_name} */", "mp_obj_t"
     

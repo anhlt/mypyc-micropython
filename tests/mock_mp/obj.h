@@ -1,0 +1,6 @@
+#ifndef MYPYC_MICROPYTHON_FUNCTIONAL_OBJ_H
+#define MYPYC_MICROPYTHON_FUNCTIONAL_OBJ_H
+
+#include "runtime.h"
+
+#endif

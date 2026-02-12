@@ -16,13 +16,13 @@ def sum_list(lst: list) -> int:
     total: int = 0
     n: int = len(lst)
     for i in range(n):
-        total += 1
+        total += lst[i]
     return total
 
 
 def find_first_negative(lst: list) -> int:
     for i in range(len(lst)):
-        if i < 0:
+        if lst[i] < 0:
             return i
     return -1
 

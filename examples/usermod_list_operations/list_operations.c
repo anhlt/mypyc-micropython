@@ -44,7 +44,7 @@ static mp_obj_t list_operations_sum_list(mp_obj_t lst_obj) {
     mp_int_t i;
     mp_int_t _tmp3 = n;
     for (i = 0; i < _tmp3; i++) {
-        total += 1;
+        total += mp_obj_get_int(mp_obj_subscr(lst, mp_obj_new_int(i), MP_OBJ_SENTINEL));
     }
     return mp_obj_new_int(total);
 }
@@ -56,7 +56,7 @@ static mp_obj_t list_operations_find_first_negative(mp_obj_t lst_obj) {
     mp_int_t i;
     mp_int_t _tmp4 = mp_obj_get_int(mp_obj_len(lst));
     for (i = 0; i < _tmp4; i++) {
-        if ((i < 0)) {
+        if ((mp_obj_get_int(mp_obj_subscr(lst, mp_obj_new_int(i), MP_OBJ_SENTINEL)) < 0)) {
             return mp_obj_new_int(i);
         }
     }
