@@ -495,9 +495,10 @@ class TypedPythonTranslator:
         
         if stmt.value is not None:
             lines = self._flush_pending_list_temps()
-            expr, _ = self._translate_expr(stmt.value, locals_)
+            expr, expr_type = self._translate_expr(stmt.value, locals_)
             more_lines = self._flush_pending_list_temps()
             lines.extend(more_lines)
+            expr, expr_type = self._unbox_if_needed(expr, expr_type, c_type)
             locals_.append(var_name)
             lines.append(f"    {c_type} {var_name} = {expr};")
             return lines

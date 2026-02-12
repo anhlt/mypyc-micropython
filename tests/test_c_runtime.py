@@ -306,3 +306,97 @@ int main(void) {
 
     stdout = compile_and_run(source, "test", test_main_c)
     assert stdout.strip() == "6.28"
+
+
+def test_c_pop_all_elements_empties_list(compile_and_run):
+    source = """
+def pop_all(lst: list) -> int:
+    total: int = 0
+    n: int = len(lst)
+    for i in range(n):
+        total += lst.pop()
+    return total
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t items[] = {
+        mp_obj_new_int(10),
+        mp_obj_new_int(20),
+        mp_obj_new_int(30),
+    };
+    mp_obj_t list = mp_obj_new_list(3, items);
+    mp_obj_t result = test_pop_all(list);
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    printf("%ld\\n", (long)mp_obj_get_int(mp_obj_len(list)));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["60", "0"]
+
+
+def test_c_pop_at_index_removes_correct_element(compile_and_run):
+    source = """
+def pop_middle(lst: list) -> int:
+    return lst.pop(1)
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t items[] = {
+        mp_obj_new_int(100),
+        mp_obj_new_int(200),
+        mp_obj_new_int(300),
+        mp_obj_new_int(400),
+    };
+    mp_obj_t list = mp_obj_new_list(4, items);
+    mp_obj_t popped = test_pop_middle(list);
+    printf("%ld\\n", (long)mp_obj_get_int(popped));
+    printf("%ld\\n", (long)mp_obj_get_int(mp_obj_len(list)));
+    // remaining: [100, 300, 400]
+    printf("%ld\\n", (long)mp_obj_get_int(mp_obj_subscr(list, mp_obj_new_int(0), MP_OBJ_SENTINEL)));
+    printf("%ld\\n", (long)mp_obj_get_int(mp_obj_subscr(list, mp_obj_new_int(1), MP_OBJ_SENTINEL)));
+    printf("%ld\\n", (long)mp_obj_get_int(mp_obj_subscr(list, mp_obj_new_int(2), MP_OBJ_SENTINEL)));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["200", "3", "100", "300", "400"]
+
+
+def test_c_pop_and_append_interleaved(compile_and_run):
+    source = """
+def rotate_left(lst: list) -> int:
+    val: int = lst.pop(0)
+    lst.append(val)
+    return val
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t items[] = {
+        mp_obj_new_int(1),
+        mp_obj_new_int(2),
+        mp_obj_new_int(3),
+    };
+    mp_obj_t list = mp_obj_new_list(3, items);
+
+    printf("%ld\\n", (long)mp_obj_get_int(test_rotate_left(list)));
+    // after first rotate: [2, 3, 1]
+    printf("%ld\\n", (long)mp_obj_get_int(mp_obj_subscr(list, mp_obj_new_int(0), MP_OBJ_SENTINEL)));
+    printf("%ld\\n", (long)mp_obj_get_int(mp_obj_subscr(list, mp_obj_new_int(1), MP_OBJ_SENTINEL)));
+    printf("%ld\\n", (long)mp_obj_get_int(mp_obj_subscr(list, mp_obj_new_int(2), MP_OBJ_SENTINEL)));
+
+    printf("%ld\\n", (long)mp_obj_get_int(test_rotate_left(list)));
+    // after second rotate: [3, 1, 2]
+    printf("%ld\\n", (long)mp_obj_get_int(mp_obj_subscr(list, mp_obj_new_int(0), MP_OBJ_SENTINEL)));
+
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["1", "2", "3", "1", "2", "3"]
