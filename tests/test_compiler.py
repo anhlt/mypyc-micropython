@@ -740,6 +740,577 @@ def create_counter(n: int) -> dict:
         assert "mp_obj_new_int(i)" in result
 
 
+class TestDictLiteralsEdgeCases:
+    """Edge cases for dict literal construction."""
+
+    def test_dict_literal_single_entry(self):
+        source = """
+def get_single() -> dict:
+    return {"key": 1}
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_dict(1)" in result
+        assert "mp_obj_dict_store" in result
+        assert 'mp_obj_new_str("key"' in result
+        assert "mp_obj_new_int(1)" in result
+
+    def test_dict_literal_with_float_values(self):
+        source = """
+def get_floats() -> dict:
+    return {"pi": 3.14, "e": 2.71}
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_dict(2)" in result
+        assert "mp_obj_new_float(3.14)" in result
+        assert "mp_obj_new_float(2.71)" in result
+
+    def test_dict_literal_with_bool_values(self):
+        source = """
+def get_flags() -> dict:
+    return {"enabled": True, "debug": False}
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_dict(2)" in result
+        assert "mp_const_true" in result
+        assert "mp_const_false" in result
+
+    def test_dict_literal_mixed_value_types(self):
+        source = """
+def get_mixed() -> dict:
+    return {"name": "test", "count": 42, "rate": 3.14}
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_dict(3)" in result
+        assert 'mp_obj_new_str("name"' in result
+        assert 'mp_obj_new_str("test"' in result
+        assert "mp_obj_new_int(42)" in result
+        assert "mp_obj_new_float(3.14)" in result
+
+    def test_dict_literal_many_entries(self):
+        source = """
+def get_big() -> dict:
+    return {"a": 1, "b": 2, "c": 3, "d": 4, "e": 5}
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_dict(5)" in result
+        assert result.count("mp_obj_dict_store") == 5
+
+
+class TestDictSubscriptEdgeCases:
+    """Edge cases for dict subscript operations."""
+
+    def test_dict_subscript_set_with_float(self):
+        source = """
+def set_float(d: dict, key: str, val: float) -> None:
+    d[key] = val
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_subscr" in result
+        assert "mp_obj_new_float(val)" in result
+
+    def test_dict_subscript_set_with_string(self):
+        source = """
+def set_str(d: dict, key: str, val: str) -> None:
+    d[key] = val
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_subscr" in result
+
+    def test_dict_subscript_with_int_key(self):
+        source = """
+def get_by_int(d: dict, i: int):
+    return d[i]
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_subscr" in result
+        assert "mp_obj_new_int(i)" in result
+
+    def test_dict_subscript_in_expression(self):
+        source = """
+def double_value(d: dict, key: str) -> int:
+    x: int = d[key]
+    return x * 2
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_subscr" in result
+        assert "x * 2" in result
+
+    def test_dict_nested_subscript_set(self):
+        """Setting value from another dict lookup."""
+        source = """
+def copy_value(src: dict, dst: dict, key: str) -> None:
+    dst[key] = src[key]
+"""
+        result = compile_source(source, "test")
+        # Should have two subscr calls (one get, one set)
+        assert result.count("mp_obj_subscr") == 2
+
+
+class TestDictWithControlFlow:
+    """Tests for dict operations combined with control flow."""
+
+    def test_dict_in_if_else(self):
+        source = """
+def conditional_dict(flag: bool) -> dict:
+    if flag:
+        return {"result": 1}
+    else:
+        return {"result": 0}
+"""
+        result = compile_source(source, "test")
+        assert "if (" in result
+        assert "} else {" in result
+        assert result.count("mp_obj_new_dict(1)") == 2
+
+    def test_dict_build_in_while_loop(self):
+        source = """
+def build_dict(n: int) -> dict:
+    result: dict = {}
+    i: int = 0
+    while i < n:
+        result[i] = i * i
+        i += 1
+    return result
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_dict(0)" in result
+        assert "while (" in result
+        assert "mp_obj_subscr" in result
+
+    def test_dict_iteration_with_conditional(self):
+        source = """
+def count_positive(d: dict) -> int:
+    count: int = 0
+    for key in d.keys():
+        if key > 0:
+            count += 1
+    return count
+"""
+        result = compile_source(source, "test")
+        assert "mp_getiter" in result
+        assert "mp_iternext" in result
+        assert "if (" in result
+
+    def test_for_over_dict_values(self):
+        source = """
+def sum_values(d: dict) -> int:
+    total: int = 0
+    for val in d.values():
+        total += 1
+    return total
+"""
+        result = compile_source(source, "test")
+        assert "mp_getiter" in result
+        assert "mp_iternext" in result
+        assert "MP_QSTR_values" in result
+
+    def test_for_over_dict_items(self):
+        source = """
+def process_items(d: dict) -> int:
+    count: int = 0
+    for item in d.items():
+        count += 1
+    return count
+"""
+        result = compile_source(source, "test")
+        assert "mp_getiter" in result
+        assert "mp_iternext" in result
+        assert "MP_QSTR_items" in result
+
+
+class TestDictWithFunctions:
+    """Tests for dict operations combined with functions."""
+
+    def test_dict_as_return_value(self):
+        source = """
+def make_pair(key: str, val: int) -> dict:
+    result: dict = {}
+    result[key] = val
+    return result
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_dict(0)" in result
+        assert "mp_obj_subscr" in result
+        assert "return result" in result or "return mp_obj" in result
+
+    def test_dict_as_parameter(self):
+        source = """
+def get_or_zero(d: dict, key: str) -> int:
+    return d.get(key)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_t d" in result
+        assert "mp_obj_dict_get" in result
+
+    def test_dict_len_in_condition(self):
+        source = """
+def is_empty(d: dict) -> bool:
+    return len(d) == 0
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_len" in result
+        assert "== 0" in result
+
+    def test_dict_len_in_while(self):
+        source = """
+def drain(d: dict) -> int:
+    count: int = 0
+    while len(d) > 0:
+        count += 1
+        break
+    return count
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_len" in result
+        assert "while (" in result
+
+    def test_multiple_dict_params(self):
+        source = """
+def merge_len(d1: dict, d2: dict) -> int:
+    return len(d1) + len(d2)
+"""
+        result = compile_source(source, "test")
+        assert result.count("mp_obj_len") == 2
+
+    def test_dict_method_chain_keys_iteration(self):
+        """Test iterating over dict keys and accessing values."""
+        source = """
+def sum_values_by_keys(d: dict) -> int:
+    total: int = 0
+    for key in d.keys():
+        total += 1
+    return total
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_keys" in result
+        assert "mp_getiter" in result
+        assert "mp_iternext" in result
+
+
+class TestDictGetVariants:
+    """Thorough tests for dict.get() method variants."""
+
+    def test_dict_get_with_int_key(self):
+        source = """
+def get_by_int(d: dict, key: int):
+    return d.get(key)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_dict_get" in result
+        assert "mp_obj_new_int(key)" in result
+
+    def test_dict_get_with_default_int(self):
+        source = """
+def get_or_default(d: dict, key: str) -> int:
+    return d.get(key, 0)
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_get" in result
+        assert "mp_obj_new_int(0)" in result
+
+    def test_dict_get_with_default_string(self):
+        source = """
+def get_or_unknown(d: dict, key: str):
+    return d.get(key, "unknown")
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_get" in result
+        assert 'mp_obj_new_str("unknown"' in result
+
+
+class TestDictModuleIntegration:
+    """Tests for dict operations in full module context."""
+
+    def test_dict_function_generates_module(self):
+        source = """
+def create() -> dict:
+    return {"x": 1}
+
+def lookup(d: dict, k: str):
+    return d[k]
+"""
+        translator = TypedPythonTranslator("dictmod")
+        result = translator.translate_source(source)
+        assert "MP_REGISTER_MODULE(MP_QSTR_dictmod" in result
+        assert "dictmod_create" in result
+        assert "dictmod_lookup" in result
+        assert "MP_QSTR_create" in result
+        assert "MP_QSTR_lookup" in result
+
+    def test_dict_function_arg_count(self):
+        """Dict param functions should have correct MP_DEFINE macro."""
+        source = """
+def get_len(d: dict) -> int:
+    return len(d)
+"""
+        result = compile_source(source, "test")
+        assert "MP_DEFINE_CONST_FUN_OBJ_1" in result
+
+    def test_dict_two_param_function(self):
+        source = """
+def get_item(d: dict, key: str):
+    return d[key]
+"""
+        result = compile_source(source, "test")
+        assert "MP_DEFINE_CONST_FUN_OBJ_2" in result
+
+    def test_dict_three_param_function(self):
+        source = """
+def set_item(d: dict, key: str, val: int) -> None:
+    d[key] = val
+"""
+        result = compile_source(source, "test")
+        assert "MP_DEFINE_CONST_FUN_OBJ_3" in result
+
+
+class TestDictAssignmentVariants:
+    """Tests for dict variable assignment and usage patterns."""
+
+    def test_dict_assigned_to_local(self):
+        source = """
+def make_dict() -> dict:
+    d: dict = {"a": 1}
+    return d
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_dict(1)" in result
+        assert "mp_obj_t d" in result
+
+    def test_dict_empty_assigned_then_populated(self):
+        source = """
+def build() -> dict:
+    d: dict = {}
+    d["x"] = 10
+    d["y"] = 20
+    return d
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_dict(0)" in result
+        assert result.count("mp_obj_subscr") == 2
+
+    def test_dict_overwrite_key(self):
+        source = """
+def overwrite(d: dict, key: str) -> None:
+    d[key] = 1
+    d[key] = 2
+"""
+        result = compile_source(source, "test")
+        assert result.count("mp_obj_subscr") == 2
+        assert "mp_obj_new_int(1)" in result
+        assert "mp_obj_new_int(2)" in result
+
+
+class TestDictMembership:
+
+    def test_in_operator(self):
+        source = """
+def has_key(d: dict) -> bool:
+    return "name" in d
+"""
+        result = compile_source(source, "test")
+        assert "mp_binary_op(MP_BINARY_OP_IN," in result
+        assert "mp_obj_is_true(" in result
+
+    def test_not_in_operator(self):
+        source = """
+def missing_key(d: dict) -> bool:
+    return "name" not in d
+"""
+        result = compile_source(source, "test")
+        assert "mp_binary_op(MP_BINARY_OP_IN," in result
+        assert "mp_obj_is_true(" in result
+        assert "!" in result
+
+    def test_in_with_int_key(self):
+        source = """
+def has_int_key(d: dict) -> bool:
+    return 42 in d
+"""
+        result = compile_source(source, "test")
+        assert "mp_binary_op(MP_BINARY_OP_IN," in result
+        assert "mp_obj_new_int(42)" in result
+
+    def test_in_with_variable_key(self):
+        source = """
+def has_var_key(d: dict, k: int) -> bool:
+    return k in d
+"""
+        result = compile_source(source, "test")
+        assert "mp_binary_op(MP_BINARY_OP_IN," in result
+
+    def test_in_inside_if(self):
+        source = """
+def check(d: dict) -> int:
+    if "x" in d:
+        return 1
+    return 0
+"""
+        result = compile_source(source, "test")
+        assert "mp_binary_op(MP_BINARY_OP_IN," in result
+        assert "if" in result
+
+
+class TestDictCopy:
+
+    def test_copy_basic(self):
+        source = """
+def dup(d: dict):
+    return d.copy()
+"""
+        result = compile_source(source, "test")
+        assert "mp_load_attr(" in result
+        assert "MP_QSTR_copy" in result
+        assert "mp_call_function_0(" in result
+
+    def test_copy_assigned(self):
+        source = """
+def dup(d: dict):
+    d2: dict = d.copy()
+    return d2
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_copy" in result
+
+
+class TestDictClear:
+
+    def test_clear_basic(self):
+        source = """
+def wipe(d: dict):
+    d.clear()
+"""
+        result = compile_source(source, "test")
+        assert "mp_load_attr(" in result
+        assert "MP_QSTR_clear" in result
+        assert "mp_call_function_0(" in result
+
+
+class TestDictSetdefault:
+
+    def test_setdefault_key_only(self):
+        source = """
+def get_or_none(d: dict):
+    return d.setdefault("key")
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_setdefault" in result
+        assert "mp_call_function_1(" in result
+
+    def test_setdefault_with_default_int(self):
+        source = """
+def get_or_zero(d: dict):
+    return d.setdefault("count", 0)
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_setdefault" in result
+        assert "mp_call_function_n_kw(" in result
+        assert "mp_obj_new_int(0)" in result
+
+    def test_setdefault_with_default_string(self):
+        source = """
+def get_or_empty(d: dict):
+    return d.setdefault("name", "unknown")
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_setdefault" in result
+        assert 'mp_obj_new_str("unknown"' in result
+
+
+class TestDictPop:
+
+    def test_pop_key_only(self):
+        source = """
+def remove_key(d: dict):
+    return d.pop("key")
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_pop" in result
+        assert "mp_call_method_n_kw(1, 0," in result
+
+    def test_pop_with_default(self):
+        source = """
+def remove_or_default(d: dict):
+    return d.pop("key", 0)
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_pop" in result
+        assert "mp_call_method_n_kw(2, 0," in result
+        assert "mp_obj_new_int(0)" in result
+
+    def test_pop_with_string_key(self):
+        source = """
+def remove_str(d: dict):
+    return d.pop("name")
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_pop" in result
+        assert 'mp_obj_new_str("name"' in result
+
+    def test_pop_with_int_key(self):
+        source = """
+def remove_int(d: dict):
+    return d.pop(42)
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_pop" in result
+        assert "mp_obj_new_int(42)" in result
+
+
+class TestDictPopitem:
+
+    def test_popitem_basic(self):
+        source = """
+def take_last(d: dict):
+    return d.popitem()
+"""
+        result = compile_source(source, "test")
+        assert "mp_load_attr(" in result
+        assert "MP_QSTR_popitem" in result
+        assert "mp_call_function_0(" in result
+
+
+class TestDictUpdate:
+
+    def test_update_basic(self):
+        source = """
+def merge(d1: dict, d2: dict):
+    d1.update(d2)
+"""
+        result = compile_source(source, "test")
+        assert "mp_load_attr(" in result
+        assert "MP_QSTR_update" in result
+        assert "mp_call_function_1(" in result
+
+    def test_update_with_return(self):
+        source = """
+def merge_and_return(d1: dict, d2: dict):
+    d1.update(d2)
+    return d1
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_update" in result
+
+
+class TestDictCopyConstructor:
+
+    def test_dict_copy_constructor(self):
+        source = """
+def dup(d: dict) -> dict:
+    return dict(d)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_dict_copy(" in result
+
+    def test_dict_copy_constructor_assigned(self):
+        source = """
+def dup(d: dict) -> dict:
+    d2: dict = dict(d)
+    return d2
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_dict_copy(" in result
+
+
 class TestSanitizeReservedWords:
 
     def test_reserved_word_default(self):

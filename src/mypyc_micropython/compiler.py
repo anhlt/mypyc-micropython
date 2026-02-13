@@ -711,6 +711,19 @@ class TypedPythonTranslator:
         prev_type = left_type
         for op, comparator in zip(expr.ops, expr.comparators):
             right, right_type = self._translate_expr(comparator, locals_)
+            
+            # Handle 'in' / 'not in' via MicroPython binary op
+            if isinstance(op, (ast.In, ast.NotIn)):
+                boxed_prev = self._box_value(prev, prev_type)
+                contains_expr = f"mp_obj_is_true(mp_binary_op(MP_BINARY_OP_IN, {boxed_prev}, {right}))"
+                if isinstance(op, ast.NotIn):
+                    parts.append(f"(!{contains_expr})")
+                else:
+                    parts.append(f"({contains_expr})")
+                prev = right
+                prev_type = right_type
+                continue
+            
             # Unbox mp_obj_t operands for native C comparison
             if prev_type == "mp_obj_t" or right_type == "mp_obj_t":
                 target = right_type if right_type != "mp_obj_t" else (prev_type if prev_type != "mp_obj_t" else "mp_int_t")
@@ -754,6 +767,9 @@ class TypedPythonTranslator:
         if func_name == "dict" and len(args) == 0:
             return "mp_obj_new_dict(0)", "mp_obj_t"
         
+        if func_name == "dict" and len(args) == 1:
+            return f"mp_obj_dict_copy({args[0]})", "mp_obj_t"
+        
         c_func = f"{self.c_name}_{sanitize_name(func_name)}"
         args_str = ", ".join(f"mp_obj_new_int({a})" for a in args)
         call_expr = f"{c_func}({args_str})"
@@ -773,22 +789,32 @@ class TypedPythonTranslator:
             return f"mp_obj_list_append({obj_expr}, {boxed_arg})", "mp_obj_t"
         
         if method_name == "pop":
-            # Use MicroPython method dispatch: mp_load_method + mp_call_method_n_kw
-            # list_pop is static in real MicroPython, so direct call won't link.
-            # mp_call_method_n_kw args layout: [method, self, arg0, ...]
             if len(args) == 0:
                 return (
                     f"({{ mp_obj_t __method[2]; "
                     f"mp_load_method({obj_expr}, MP_QSTR_pop, __method); "
                     f"mp_call_method_n_kw(0, 0, __method); }})"
                 ), "mp_obj_t"
-            else:
-                idx_expr, _ = args[0]
+            elif len(args) == 1:
+                arg_expr, arg_type = args[0]
+                boxed_arg = self._box_value(arg_expr, arg_type)
                 return (
                     f"({{ mp_obj_t __method[3]; "
                     f"mp_load_method({obj_expr}, MP_QSTR_pop, __method); "
-                    f"__method[2] = mp_obj_new_int({idx_expr}); "
+                    f"__method[2] = {boxed_arg}; "
                     f"mp_call_method_n_kw(1, 0, __method); }})"
+                ), "mp_obj_t"
+            else:
+                arg_expr, arg_type = args[0]
+                boxed_arg = self._box_value(arg_expr, arg_type)
+                default_expr, default_type = args[1]
+                boxed_default = self._box_value(default_expr, default_type)
+                return (
+                    f"({{ mp_obj_t __method[4]; "
+                    f"mp_load_method({obj_expr}, MP_QSTR_pop, __method); "
+                    f"__method[2] = {boxed_arg}; "
+                    f"__method[3] = {boxed_default}; "
+                    f"mp_call_method_n_kw(2, 0, __method); }})"
                 ), "mp_obj_t"
         
         if method_name == "get":
@@ -809,6 +835,32 @@ class TypedPythonTranslator:
         
         if method_name == "items":
             return f"mp_call_function_0(mp_load_attr({obj_expr}, MP_QSTR_items))", "mp_obj_t"
+        
+        if method_name == "copy":
+            return f"mp_call_function_0(mp_load_attr({obj_expr}, MP_QSTR_copy))", "mp_obj_t"
+        
+        if method_name == "clear":
+            return f"mp_call_function_0(mp_load_attr({obj_expr}, MP_QSTR_clear))", "mp_obj_t"
+        
+        if method_name == "popitem":
+            return f"mp_call_function_0(mp_load_attr({obj_expr}, MP_QSTR_popitem))", "mp_obj_t"
+        
+        if method_name == "setdefault":
+            if len(args) == 1:
+                key_expr, key_type = args[0]
+                boxed_key = self._box_value(key_expr, key_type)
+                return f"mp_call_function_1(mp_load_attr({obj_expr}, MP_QSTR_setdefault), {boxed_key})", "mp_obj_t"
+            elif len(args) >= 2:
+                key_expr, key_type = args[0]
+                boxed_key = self._box_value(key_expr, key_type)
+                default_expr, default_type = args[1]
+                boxed_default = self._box_value(default_expr, default_type)
+                return f"mp_call_function_n_kw(mp_load_attr({obj_expr}, MP_QSTR_setdefault), 2, 0, (mp_obj_t[]){{{boxed_key}, {boxed_default}}})", "mp_obj_t"
+        
+        if method_name == "update" and len(args) == 1:
+            arg_expr, arg_type = args[0]
+            boxed_arg = self._box_value(arg_expr, arg_type)
+            return f"mp_call_function_1(mp_load_attr({obj_expr}, MP_QSTR_update), {boxed_arg})", "mp_obj_t"
         
         return f"/* unsupported method: {method_name} */", "mp_obj_t"
     

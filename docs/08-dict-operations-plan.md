@@ -27,7 +27,7 @@ mypyc provides optimized native implementations for common dict operations. This
 | Operation | mypyc Native | mypyc-micropython | Notes |
 |-----------|--------------|-------------------|-------|
 | `d[key]` | ✅ | ✅ Implemented | Via `mp_obj_subscr()` |
-| `key in d` | ✅ | 📋 TODO | Membership test |
+| `key in d` | ✅ | ✅ Implemented | Membership test via `mp_binary_op(MP_BINARY_OP_IN, ...)` |
 
 ### Statements
 
@@ -45,15 +45,15 @@ mypyc provides optimized native implementations for common dict operations. This
 | `d.keys()` | ✅ | ✅ Implemented | Via `mp_load_attr()` + call |
 | `d.values()` | ✅ | ✅ Implemented | Via `mp_load_attr()` + call |
 | `d.items()` | ✅ | ✅ Implemented | Via `mp_load_attr()` + call |
-| `d.copy()` | ✅ | 📋 TODO | Shallow copy |
-| `d.clear()` | ✅ | 📋 TODO | Remove all items |
-| `d.setdefault(key)` | ✅ | 📋 TODO | Set if missing (None) |
-| `d.setdefault(key, value)` | ✅ | 📋 TODO | Set if missing |
-| `d1.update(d2: dict)` | ✅ | 📋 TODO | Update from dict |
-| `d.update(x: Iterable)` | ✅ | 📋 TODO | Update from iterable |
-| `d.pop(key)` | ✅ | 📋 TODO | Remove and return value |
-| `d.pop(key, default)` | ✅ | 📋 TODO | Remove with default |
-| `d.popitem()` | ✅ | 📋 TODO | Remove and return (key, value) pair |
+| `d.copy()` | ✅ | ✅ Implemented | Via `mp_load_attr()` + `mp_call_function_0()` |
+| `d.clear()` | ✅ | ✅ Implemented | Via `mp_load_attr()` + `mp_call_function_0()` |
+| `d.setdefault(key)` | ✅ | ✅ Implemented | Via `mp_call_function_1()` |
+| `d.setdefault(key, value)` | ✅ | ✅ Implemented | Via `mp_call_function_n_kw()` |
+| `d1.update(d2: dict)` | ✅ | ✅ Implemented | Via `mp_call_function_1()` |
+| `d.update(x: Iterable)` | ✅ | ✅ Implemented | Same impl, works for any iterable |
+| `d.pop(key)` | ✅ | ✅ Implemented | Via `mp_load_method()` + `mp_call_method_n_kw()` |
+| `d.pop(key, default)` | ✅ | ✅ Implemented | Via `mp_load_method()` + `mp_call_method_n_kw()` |
+| `d.popitem()` | ✅ | ✅ Implemented | Via `mp_load_attr()` + `mp_call_function_0()` |
 
 ### Functions
 
@@ -63,14 +63,14 @@ mypyc provides optimized native implementations for common dict operations. This
 
 ## Implementation Summary
 
-**Implemented: 10/21 operations (48%)**
+**Implemented: 18/21 operations (86%)**
 
 | Category | Implemented | TODO |
 |----------|-------------|------|
 | Construction | 3 | 4 |
-| Operators | 1 | 1 |
+| Operators | 2 | 0 |
 | Statements | 2 | 0 |
-| Methods | 5 | 8 |
+| Methods | 12 | 0 |
 | Functions | 1 | 0 |
 
 ## Implementation Tasks
@@ -89,53 +89,40 @@ Already implemented in `compiler.py`:
 - ✅ Iteration: `_translate_for_iterable()` → `mp_getiter()`/`mp_iternext()`
 - ✅ `len()`: `_translate_call()` → `mp_obj_len()`
 
-### Phase 2 - Essential Methods (HIGH PRIORITY)
+### Phase 2 - Essential Methods (DONE)
 
-**Task 2.1: Add `key in d` membership test**
+**Task 2.1: Add `key in d` membership test** ✅
 - Location: `_translate_compare()` in `compiler.py`
-- Handle `ast.In` and `ast.NotIn` operators for dict
-- C API: `mp_call_function_2(mp_load_attr(d, MP_QSTR___contains__), key)` or `mp_map_lookup()`
-- Example: `if "name" in my_dict:`
+- Handle `ast.In` and `ast.NotIn` operators
+- C API: `mp_obj_is_true(mp_binary_op(MP_BINARY_OP_IN, key, d))`
 
-**Task 2.2: Add `d.copy()`**
+**Task 2.2: Add `d.copy()`** ✅
 - Location: `_translate_method_call()` in `compiler.py`
 - C API: `mp_call_function_0(mp_load_attr(d, MP_QSTR_copy))`
-- Returns: new dict (mp_obj_t)
-- Example: `new_dict = my_dict.copy()`
 
-**Task 2.3: Add `d.clear()`**
+**Task 2.3: Add `d.clear()`** ✅
 - Location: `_translate_method_call()` in `compiler.py`
 - C API: `mp_call_function_0(mp_load_attr(d, MP_QSTR_clear))`
-- Returns: None
-- Example: `my_dict.clear()`
 
-**Task 2.4: Add `d.setdefault(key)` and `d.setdefault(key, value)`**
+**Task 2.4: Add `d.setdefault(key)` and `d.setdefault(key, value)`** ✅
 - Location: `_translate_method_call()` in `compiler.py`
-- C API: `mp_call_function_n_kw(mp_load_attr(d, MP_QSTR_setdefault), n_args, 0, args)`
-- Returns: value at key (existing or newly set)
-- Example: `val = my_dict.setdefault("key", [])`
+- C API: 1-arg uses `mp_call_function_1()`, 2-arg uses `mp_call_function_n_kw()`
 
-**Task 2.5: Add `d.pop(key)` and `d.pop(key, default)`**
+**Task 2.5: Add `d.pop(key)` and `d.pop(key, default)`** ✅
 - Location: `_translate_method_call()` in `compiler.py`
-- C API: `mp_call_function_n_kw(mp_load_attr(d, MP_QSTR_pop), n_args, 0, args)`
-- Returns: removed value
-- Example: `val = my_dict.pop("key")`
+- C API: `mp_load_method()` + `mp_call_method_n_kw()` with generic boxing
 
-**Task 2.6: Add `d.popitem()`**
+**Task 2.6: Add `d.popitem()`** ✅
 - Location: `_translate_method_call()` in `compiler.py`
 - C API: `mp_call_function_0(mp_load_attr(d, MP_QSTR_popitem))`
-- Returns: tuple (key, value)
-- Example: `key, val = my_dict.popitem()`
 
-### Phase 3 - Update Operations (MEDIUM PRIORITY)
+### Phase 3 - Update Operations (DONE)
 
-**Task 3.1: Add `d1.update(d2)`**
+**Task 3.1: Add `d1.update(d2)`** ✅
 - Location: `_translate_method_call()` in `compiler.py`
 - C API: `mp_call_function_1(mp_load_attr(d1, MP_QSTR_update), d2)`
-- Returns: None
-- Example: `my_dict.update(other_dict)`
 
-**Task 3.2: Add `d.update(iterable)`**
+**Task 3.2: Add `d.update(iterable)`** ✅
 - Same implementation as Task 3.1, works for any iterable of pairs
 
 **Task 3.3: Add `dict(d)` copy constructor**

@@ -33,3 +33,45 @@ def merge_dicts(d1: dict, d2: dict) -> dict:
     for key in d2.keys():
         result[key] = d2[key]
     return result
+
+
+def has_key(d: dict, key: str) -> bool:
+    return key in d
+
+
+def missing_key(d: dict, key: str) -> bool:
+    return key not in d
+
+
+def copy_dict(d: dict) -> dict:
+    return d.copy()
+
+
+def clear_dict(d: dict) -> dict:
+    d.clear()
+    return d
+
+
+def setdefault_key(d: dict, key: str, value: int):
+    return d.setdefault(key, value)
+
+
+def pop_key(d: dict, key: str):
+    return d.pop(key)
+
+
+def pop_key_default(d: dict, key: str, default_val: int):
+    return d.pop(key, default_val)
+
+
+def popitem_last(d: dict):
+    return d.popitem()
+
+
+def update_dict(d1: dict, d2: dict) -> dict:
+    d1.update(d2)
+    return d1
+
+
+def copy_constructor(d: dict) -> dict:
+    return dict(d)
