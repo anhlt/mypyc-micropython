@@ -415,3 +415,314 @@ class TestConstants:
         source = "def get_none():\n    return None\n"
         result = compile_source(source, "test")
         assert "mp_const_none" in result
+
+
+class TestListOperations:
+
+    def test_empty_list_literal(self):
+        source = """
+def get_empty() -> list:
+    return []
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_list(0, NULL)" in result
+
+    def test_list_literal_with_ints(self):
+        source = """
+def get_list() -> list:
+    return [1, 2, 3]
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_list(3" in result
+        assert "mp_obj_new_int(1)" in result
+        assert "mp_obj_new_int(2)" in result
+        assert "mp_obj_new_int(3)" in result
+
+    def test_list_indexing_get(self):
+        source = """
+def get_item(lst: list, i: int):
+    return lst[i]
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_subscr" in result
+        assert "MP_OBJ_SENTINEL" in result
+
+    def test_list_indexing_set(self):
+        source = """
+def set_item(lst: list, i: int, val: int) -> None:
+    lst[i] = val
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_subscr" in result
+        assert "mp_obj_new_int(val)" in result
+
+    def test_list_len(self):
+        source = """
+def get_len(lst: list) -> int:
+    return len(lst)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_len" in result
+        assert "mp_obj_get_int" in result
+
+    def test_list_append(self):
+        source = """
+def append_item(lst: list, val: int) -> None:
+    lst.append(val)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_list_append" in result
+
+    def test_list_type_annotation_generic(self):
+        source = """
+def process(lst: list[int]) -> int:
+    return len(lst)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_t lst" in result
+
+
+class TestForLoop:
+
+    def test_for_range_single_arg(self):
+        source = """
+def sum_range(n: int) -> int:
+    total: int = 0
+    for i in range(n):
+        total += i
+    return total
+"""
+        result = compile_source(source, "test")
+        assert "for (" in result
+        assert "i = 0" in result
+        assert "i <" in result
+        assert "i++" in result
+
+    def test_for_range_two_args(self):
+        source = """
+def sum_range(start: int, end: int) -> int:
+    total: int = 0
+    for i in range(start, end):
+        total += i
+    return total
+"""
+        result = compile_source(source, "test")
+        assert "for (" in result
+        assert "i = start" in result
+
+    def test_for_range_three_args(self):
+        source = """
+def sum_step(n: int) -> int:
+    total: int = 0
+    for i in range(0, n, 2):
+        total += i
+    return total
+"""
+        result = compile_source(source, "test")
+        assert "for (" in result
+        assert "+=" in result
+
+    def test_for_over_list(self):
+        source = """
+def sum_list(lst: list) -> int:
+    total: int = 0
+    for item in lst:
+        total += 1
+    return total
+"""
+        result = compile_source(source, "test")
+        assert "for (size_t" in result
+        assert "mp_obj_subscr" in result
+        assert "mp_obj_len" in result
+
+    def test_break_statement(self):
+        source = """
+def find_first(lst: list, target: int) -> int:
+    for i in range(10):
+        if i == target:
+            break
+    return i
+"""
+        result = compile_source(source, "test")
+        assert "break;" in result
+
+    def test_continue_statement(self):
+        source = """
+def skip_evens(n: int) -> int:
+    total: int = 0
+    for i in range(n):
+        if i % 2 == 0:
+            continue
+        total += i
+    return total
+"""
+        result = compile_source(source, "test")
+        assert "continue;" in result
+
+    def test_nested_for_loops(self):
+        source = """
+def nested(n: int) -> int:
+    total: int = 0
+    for i in range(n):
+        for j in range(n):
+            total += 1
+    return total
+"""
+        result = compile_source(source, "test")
+        assert result.count("for (") >= 2
+
+
+class TestListWithForLoop:
+
+    def test_build_list_with_for(self):
+        source = """
+def build_squares(n: int) -> list:
+    result: list = []
+    for i in range(n):
+        result.append(i * i)
+    return result
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_list(0, NULL)" in result
+        assert "mp_obj_list_append" in result
+        assert "for (" in result
+
+    def test_sum_list_elements(self):
+        source = """
+def sum_all(lst: list) -> int:
+    total: int = 0
+    for x in lst:
+        total += 1
+    return total
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_subscr" in result
+        assert "mp_obj_len" in result
+
+
+class TestBreakContinueValidation:
+    """Tests for break/continue outside loop validation (Fix 3)."""
+
+    def test_break_outside_loop_emits_error_comment(self):
+        source = """
+def bad_break() -> int:
+    break
+    return 0
+"""
+        result = compile_source(source, "test")
+        assert "ERROR: break outside loop" in result
+        assert "break;" not in result
+
+    def test_continue_outside_loop_emits_error_comment(self):
+        source = """
+def bad_continue() -> int:
+    continue
+    return 0
+"""
+        result = compile_source(source, "test")
+        assert "ERROR: continue outside loop" in result
+        assert "continue;" not in result
+
+    def test_break_inside_loop_works(self):
+        source = """
+def ok_break() -> int:
+    for i in range(10):
+        break
+    return 0
+"""
+        result = compile_source(source, "test")
+        assert "break;" in result
+        assert "ERROR" not in result
+
+    def test_continue_inside_loop_works(self):
+        source = """
+def ok_continue() -> int:
+    for i in range(10):
+        continue
+    return 0
+"""
+        result = compile_source(source, "test")
+        assert "continue;" in result
+        assert "ERROR" not in result
+
+    def test_break_inside_while_loop_works(self):
+        source = """
+def ok_while_break() -> int:
+    while True:
+        break
+    return 0
+"""
+        result = compile_source(source, "test")
+        assert "break;" in result
+        assert "ERROR" not in result
+
+
+class TestListPopFix:
+    """Tests for list.pop() using method dispatch (mp_load_method + mp_call_method_n_kw)."""
+
+    def test_pop_no_args(self):
+        source = """
+def pop_last(lst: list):
+    return lst.pop()
+"""
+        result = compile_source(source, "test")
+        assert "mp_load_method(" in result
+        assert "MP_QSTR_pop" in result
+        assert "mp_call_method_n_kw(0, 0," in result
+
+    def test_pop_with_index(self):
+        source = """
+def pop_at(lst: list, i: int):
+    return lst.pop(i)
+"""
+        result = compile_source(source, "test")
+        assert "mp_load_method(" in result
+        assert "MP_QSTR_pop" in result
+        assert "mp_call_method_n_kw(1, 0," in result
+
+
+class TestSubscriptUnboxing:
+    """Tests for mp_obj_t unboxing when list subscripts are used in arithmetic/comparison."""
+
+    def test_subscript_in_comparison(self):
+        """lst[i] < 0 should unbox with mp_obj_get_int."""
+        source = """
+def check(lst: list, i: int) -> bool:
+    return lst[i] < 0
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_get_int(mp_obj_subscr(" in result
+
+    def test_subscript_in_aug_assign(self):
+        """total += lst[i] should unbox the subscript result."""
+        source = """
+def sum_list(lst: list) -> int:
+    total: int = 0
+    n: int = len(lst)
+    for i in range(n):
+        total += lst[i]
+    return total
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_get_int(mp_obj_subscr(" in result
+
+    def test_subscript_in_binop(self):
+        """lst[i] + lst[j] should unbox both sides."""
+        source = """
+def add_elems(lst: list, i: int, j: int) -> int:
+    return lst[i] + lst[j]
+"""
+        result = compile_source(source, "test")
+        # Both subscripts should be unboxed
+        assert result.count("mp_obj_get_int(mp_obj_subscr(") == 2
+
+    def test_subscript_with_int_no_double_unbox(self):
+        """lst[i] + 1 should only unbox the subscript, not the int literal."""
+        source = """
+def inc_elem(lst: list, i: int) -> int:
+    return lst[i] + 1
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_get_int(mp_obj_subscr(" in result
+        # The integer 1 should NOT be wrapped in mp_obj_get_int
+        assert "mp_obj_get_int(1)" not in result
