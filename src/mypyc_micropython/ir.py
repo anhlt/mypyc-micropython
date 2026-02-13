@@ -1,9 +1,14 @@
 """
-Intermediate Representation (IR) for mypyc-style class compilation.
+Intermediate Representation (IR) for mypyc-micropython.
 
-This module defines the IR data structures used between AST parsing
-and C code generation. The design follows mypyc's approach but adapted
+This module defines IR data structures used between AST parsing and
+C code generation.  The design follows mypyc's approach but is adapted
 for MicroPython's simpler type system.
+
+Two IR layers coexist:
+  • Class IR  – ClassIR / FieldIR / MethodIR / ModuleIR  (struct-level)
+  • Expr IR   – ValueIR / InstrIR hierarchy  (expression/statement-level,
+                used for container operations: list, dict)
 """
 
 from __future__ import annotations
@@ -293,9 +298,143 @@ class FuncIR:
     docstring: str | None = None
 
 
+class IRType(Enum):
+    """Runtime type tag for expression-level IR values."""
+    OBJ = auto()       # mp_obj_t (boxed)
+    INT = auto()       # mp_int_t (unboxed integer)
+    FLOAT = auto()     # mp_float_t (unboxed float)
+    BOOL = auto()      # bool
+
+    def to_c_type_str(self) -> str:
+        mapping = {
+            IRType.OBJ: "mp_obj_t",
+            IRType.INT: "mp_int_t",
+            IRType.FLOAT: "mp_float_t",
+            IRType.BOOL: "bool",
+        }
+        return mapping[self]
+
+    @staticmethod
+    def from_c_type_str(c_type: str) -> IRType:
+        mapping = {
+            "mp_obj_t": IRType.OBJ,
+            "mp_int_t": IRType.INT,
+            "mp_float_t": IRType.FLOAT,
+            "bool": IRType.BOOL,
+        }
+        return mapping.get(c_type, IRType.OBJ)
+
+
+# ---------------------------------------------------------------------------
+# Expression-level IR values
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ValueIR:
+    """Base for IR values (temps, constants, names)."""
+    ir_type: IRType
+
+
+@dataclass
+class TempIR(ValueIR):
+    """A compiler-generated temporary variable."""
+    name: str
+
+
+@dataclass
+class ConstIR(ValueIR):
+    """A compile-time constant value."""
+    value: object  # int | float | bool | str | None
+
+
+@dataclass
+class NameIR(ValueIR):
+    """A reference to a Python local / argument."""
+    py_name: str
+    c_name: str
+
+
+# ---------------------------------------------------------------------------
+# Expression-level IR instructions
+# ---------------------------------------------------------------------------
+
+@dataclass
+class InstrIR:
+    """Base for IR instructions (each may produce an optional result)."""
+    pass
+
+
+@dataclass
+class ListNewIR(InstrIR):
+    """Create a new list from *items*."""
+    result: TempIR
+    items: list[ValueIR]
+
+
+@dataclass
+class DictNewIR(InstrIR):
+    """Create a new dict from key/value pairs."""
+    result: TempIR
+    entries: list[tuple[ValueIR, ValueIR]]
+
+
+@dataclass
+class GetItemIR(InstrIR):
+    """container[key]  →  result."""
+    result: TempIR
+    container: ValueIR
+    key: ValueIR
+
+
+@dataclass
+class SetItemIR(InstrIR):
+    """container[key] = value  (no result)."""
+    container: ValueIR
+    key: ValueIR
+    value: ValueIR
+
+
+@dataclass
+class MethodCallIR(InstrIR):
+    """receiver.method(args)  →  optional result."""
+    result: TempIR | None
+    receiver: ValueIR
+    method: str
+    args: list[ValueIR]
+
+
+@dataclass
+class BoxIR(InstrIR):
+    """Box a native value to mp_obj_t."""
+    result: TempIR
+    value: ValueIR
+
+
+@dataclass
+class UnboxIR(InstrIR):
+    """Unbox mp_obj_t to a native type."""
+    result: TempIR
+    value: ValueIR
+    target_type: IRType
+
+
+# ---------------------------------------------------------------------------
+# Lowered expression: prelude instructions + final value
+# ---------------------------------------------------------------------------
+
+@dataclass
+class LoweredExpr:
+    """Result of lowering an AST expression to IR.
+
+    ``prelude`` contains instructions that must be emitted *before* the
+    statement that uses ``value``.
+    """
+    value: ValueIR
+    prelude: list[InstrIR] = field(default_factory=list)
+
+
 @dataclass
 class ModuleIR:
-    """Module-level IR container."""
     name: str
     c_name: str
     classes: dict[str, ClassIR] = field(default_factory=dict)
