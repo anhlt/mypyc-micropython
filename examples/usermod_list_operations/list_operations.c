@@ -127,6 +127,64 @@ static mp_obj_t list_operations_reverse_sum(mp_obj_t n_obj) {
 }
 MP_DEFINE_CONST_FUN_OBJ_1(list_operations_reverse_sum_obj, list_operations_reverse_sum);
 
+static mp_obj_t list_operations_append_many(mp_obj_t n_obj) {
+    mp_int_t n = mp_obj_get_int(n_obj);
+
+    (void)mp_obj_new_str("Benchmark list.append() - build list then sum", 45);
+    mp_obj_t lst = mp_obj_new_list(0, NULL);
+    mp_int_t i;
+    mp_int_t _tmp10 = n;
+    for (i = 0; i < _tmp10; i++) {
+        (void)mp_obj_list_append(lst, mp_obj_new_int(i));
+    }
+    mp_int_t total = 0;
+    mp_int_t _tmp11 = mp_obj_get_int(mp_obj_len(lst));
+    for (i = 0; i < _tmp11; i++) {
+        total += mp_obj_get_int(mp_obj_subscr(lst, mp_obj_new_int(i), MP_OBJ_SENTINEL));
+    }
+    return mp_obj_new_int(total);
+}
+MP_DEFINE_CONST_FUN_OBJ_1(list_operations_append_many_obj, list_operations_append_many);
+
+static mp_obj_t list_operations_pop_all(mp_obj_t n_obj) {
+    mp_int_t n = mp_obj_get_int(n_obj);
+
+    (void)mp_obj_new_str("Benchmark list.pop() - build list then pop all elements", 55);
+    mp_obj_t lst = mp_obj_new_list(0, NULL);
+    mp_int_t i;
+    mp_int_t _tmp12 = n;
+    for (i = 0; i < _tmp12; i++) {
+        (void)mp_obj_list_append(lst, mp_obj_new_int(i));
+    }
+    mp_int_t total = 0;
+    while ((mp_obj_get_int(mp_obj_len(lst)) > 0)) {
+        total += mp_obj_get_int(({ mp_obj_t __method[2]; mp_load_method(lst, MP_QSTR_pop, __method); mp_call_method_n_kw(0, 0, __method); }));
+    }
+    return mp_obj_new_int(total);
+}
+MP_DEFINE_CONST_FUN_OBJ_1(list_operations_pop_all_obj, list_operations_pop_all);
+
+static mp_obj_t list_operations_append_pop_cycle(mp_obj_t n_obj) {
+    mp_int_t n = mp_obj_get_int(n_obj);
+
+    (void)mp_obj_new_str("Benchmark mixed append/pop - stack-like operations", 50);
+    mp_obj_t lst = mp_obj_new_list(0, NULL);
+    mp_int_t total = 0;
+    mp_int_t i;
+    mp_int_t _tmp13 = n;
+    for (i = 0; i < _tmp13; i++) {
+        (void)mp_obj_list_append(lst, mp_obj_new_int(i));
+        if ((mp_obj_get_int(mp_obj_len(lst)) > 10)) {
+            total += mp_obj_get_int(({ mp_obj_t __method[2]; mp_load_method(lst, MP_QSTR_pop, __method); mp_call_method_n_kw(0, 0, __method); }));
+        }
+    }
+    while ((mp_obj_get_int(mp_obj_len(lst)) > 0)) {
+        total += mp_obj_get_int(({ mp_obj_t __method[2]; mp_load_method(lst, MP_QSTR_pop, __method); mp_call_method_n_kw(0, 0, __method); }));
+    }
+    return mp_obj_new_int(total);
+}
+MP_DEFINE_CONST_FUN_OBJ_1(list_operations_append_pop_cycle_obj, list_operations_append_pop_cycle);
+
 static const mp_rom_map_elem_t list_operations_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_list_operations) },
     { MP_ROM_QSTR(MP_QSTR_sum_range), MP_ROM_PTR(&list_operations_sum_range_obj) },
@@ -137,6 +195,9 @@ static const mp_rom_map_elem_t list_operations_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_count_until_ten), MP_ROM_PTR(&list_operations_count_until_ten_obj) },
     { MP_ROM_QSTR(MP_QSTR_matrix_sum), MP_ROM_PTR(&list_operations_matrix_sum_obj) },
     { MP_ROM_QSTR(MP_QSTR_reverse_sum), MP_ROM_PTR(&list_operations_reverse_sum_obj) },
+    { MP_ROM_QSTR(MP_QSTR_append_many), MP_ROM_PTR(&list_operations_append_many_obj) },
+    { MP_ROM_QSTR(MP_QSTR_pop_all), MP_ROM_PTR(&list_operations_pop_all_obj) },
+    { MP_ROM_QSTR(MP_QSTR_append_pop_cycle), MP_ROM_PTR(&list_operations_append_pop_cycle_obj) },
 };
 MP_DEFINE_CONST_DICT(list_operations_module_globals, list_operations_module_globals_table);
 

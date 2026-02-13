@@ -58,3 +58,39 @@ def reverse_sum(n: int) -> int:
     for i in range(n, 0, -1):
         total += i
     return total
+
+
+def append_many(n: int) -> int:
+    """Benchmark list.append() - build list then sum"""
+    lst: list = []
+    for i in range(n):
+        lst.append(i)
+    total: int = 0
+    for i in range(len(lst)):
+        total += lst[i]
+    return total
+
+
+def pop_all(n: int) -> int:
+    """Benchmark list.pop() - build list then pop all elements"""
+    lst: list = []
+    for i in range(n):
+        lst.append(i)
+    total: int = 0
+    while len(lst) > 0:
+        total += lst.pop()
+    return total
+
+
+def append_pop_cycle(n: int) -> int:
+    """Benchmark mixed append/pop - stack-like operations"""
+    lst: list = []
+    total: int = 0
+    for i in range(n):
+        lst.append(i)
+        if len(lst) > 10:
+            total += lst.pop()
+    # drain remaining
+    while len(lst) > 0:
+        total += lst.pop()
+    return total
