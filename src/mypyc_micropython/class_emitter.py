@@ -18,6 +18,28 @@ class ClassEmitter:
         self.module_c_name = module_c_name
         self.c_name = class_ir.c_name
     
+    def _vtable_access_path(self) -> str:
+        """Compute the C access path for the vtable pointer.
+        
+        Base class: 'vtable'
+        Child class: 'super.vtable'
+        Grandchild: 'super.super.vtable'
+        """
+        depth = 0
+        cls = self.class_ir
+        while cls.base:
+            depth += 1
+            cls = cls.base
+        if depth == 0:
+            return "vtable"
+        return "super." * depth + "vtable"
+    
+    def _root_class_c_name(self) -> str:
+        cls = self.class_ir
+        while cls.base:
+            cls = cls.base
+        return cls.c_name
+    
     def emit_forward_declarations(self) -> list[str]:
         lines = []
         lines.append(f"typedef struct _{self.c_name}_obj_t {self.c_name}_obj_t;")
@@ -154,8 +176,13 @@ class ClassEmitter:
         lines.append("")
         lines.append(f"    {self.c_name}_obj_t *self = mp_obj_malloc({self.c_name}_obj_t, type);")
         
-        if vtable_entries and not self.class_ir.base:
-            lines.append(f"    self->vtable = &{self.c_name}_vtable_inst;")
+        if vtable_entries:
+            vtable_path = self._vtable_access_path()
+            if self.class_ir.base:
+                root_c = self._root_class_c_name()
+                lines.append(f"    self->{vtable_path} = (const {root_c}_vtable_t *)&{self.c_name}_vtable_inst;")
+            else:
+                lines.append(f"    self->{vtable_path} = &{self.c_name}_vtable_inst;")
         
         for fld in self.class_ir.fields:
             if fld.c_type == CType.MP_OBJ_T:
@@ -168,12 +195,21 @@ class ClassEmitter:
                 lines.append(f"    self->{fld.name} = false;")
         
         if init_method:
+            total_args = len(init_method.params) + 1
             lines.append("")
-            args_list = ["MP_OBJ_FROM_PTR(self)"]
-            for i in range(len(init_method.params)):
-                args_list.append(f"args[{i}]")
-            args_str = ", ".join(args_list)
-            lines.append(f"    {self.c_name}___init___mp({args_str});")
+            if total_args > 3:
+                # VAR_BETWEEN calling convention: (size_t n_args, const mp_obj_t *args)
+                lines.append(f"    mp_obj_t init_args[{total_args}];")
+                lines.append("    init_args[0] = MP_OBJ_FROM_PTR(self);")
+                for i in range(len(init_method.params)):
+                    lines.append(f"    init_args[{i + 1}] = args[{i}];")
+                lines.append(f"    {self.c_name}___init___mp({total_args}, init_args);")
+            else:
+                args_list = ["MP_OBJ_FROM_PTR(self)"]
+                for i in range(len(init_method.params)):
+                    args_list.append(f"args[{i}]")
+                args_str = ", ".join(args_list)
+                lines.append(f"    {self.c_name}___init___mp({args_str});")
         
         lines.append("")
         lines.append("    return MP_OBJ_FROM_PTR(self);")
@@ -226,8 +262,13 @@ class ClassEmitter:
         
         lines.append(f"    {self.c_name}_obj_t *self = mp_obj_malloc({self.c_name}_obj_t, type);")
         
-        if vtable_entries and not self.class_ir.base:
-            lines.append(f"    self->vtable = &{self.c_name}_vtable_inst;")
+        if vtable_entries:
+            vtable_path = self._vtable_access_path()
+            if self.class_ir.base:
+                root_c = self._root_class_c_name()
+                lines.append(f"    self->{vtable_path} = (const {root_c}_vtable_t *)&{self.c_name}_vtable_inst;")
+            else:
+                lines.append(f"    self->{vtable_path} = &{self.c_name}_vtable_inst;")
         
         for fld, path in fields_with_path:
             if fld.c_type == CType.MP_INT_T:
@@ -289,7 +330,7 @@ class ClassEmitter:
         lines.append("        return MP_OBJ_NULL;")
         lines.append("    }")
         lines.append("")
-        lines.append(f"    if (!mp_obj_is_type(rhs_in, &{self.c_name}_type)) {{")
+        lines.append(f"    if (!mp_obj_is_type(rhs_in, mp_obj_get_type(lhs_in))) {{")
         lines.append("        return mp_const_false;")
         lines.append("    }")
         lines.append("")
@@ -326,7 +367,20 @@ class ClassEmitter:
         lines.append(f"static const {self.c_name}_vtable_t {self.c_name}_vtable_inst = {{")
         
         for method_name, method_ir in vtable_entries:
-            lines.append(f"    .{method_name} = {method_ir.c_name}_native,")
+            # Check if method belongs to a parent class (needs cast)
+            method_belongs_to_parent = not method_ir.c_name.startswith(self.c_name + "_")
+            
+            if method_belongs_to_parent:
+                # Build cast to child's function pointer type
+                ret_type = method_ir.return_type.to_c_type_str()
+                params = [f"{self.c_name}_obj_t *"]
+                for _, param_type in method_ir.params:
+                    params.append(param_type.to_c_type_str())
+                params_str = ", ".join(params)
+                cast = f"({ret_type} (*)({params_str}))"
+                lines.append(f"    .{method_name} = {cast}{method_ir.c_name}_native,")
+            else:
+                lines.append(f"    .{method_name} = {method_ir.c_name}_native,")
         
         lines.append("};")
         lines.append("")
@@ -334,20 +388,18 @@ class ClassEmitter:
         return lines
     
     def emit_locals_dict(self) -> list[str]:
-        lines = []
-        
         method_names = [name for name in self.class_ir.methods.keys() 
                        if not name.startswith("__") or name in ("__len__", "__getitem__", "__setitem__")]
         
         if not method_names:
-            lines.append(f"static const mp_rom_map_elem_t {self.c_name}_locals_dict_table[] = {{")
-            lines.append("};")
-        else:
-            lines.append(f"static const mp_rom_map_elem_t {self.c_name}_locals_dict_table[] = {{")
-            for name in method_names:
-                method = self.class_ir.methods[name]
-                lines.append(f"    {{ MP_ROM_QSTR(MP_QSTR_{name}), MP_ROM_PTR(&{method.c_name}_obj) }},")
-            lines.append("};")
+            return []
+        
+        lines = []
+        lines.append(f"static const mp_rom_map_elem_t {self.c_name}_locals_dict_table[] = {{")
+        for name in method_names:
+            method = self.class_ir.methods[name]
+            lines.append(f"    {{ MP_ROM_QSTR(MP_QSTR_{name}), MP_ROM_PTR(&{method.c_name}_obj) }},")
+        lines.append("};")
         
         lines.append(f"static MP_DEFINE_CONST_DICT({self.c_name}_locals_dict, {self.c_name}_locals_dict_table);")
         lines.append("")

@@ -526,6 +526,7 @@ class TypedPythonTranslator:
         lines.extend(self._flush_ir_prelude())
         
         if native:
+            expr, expr_type = self._unbox_if_needed(expr, expr_type, return_type)
             lines.append(f"    return {expr};")
         else:
             if expr_type == "mp_int_t":
@@ -598,6 +599,7 @@ class TypedPythonTranslator:
         if isinstance(stmt.target, ast.Attribute) and isinstance(stmt.target.value, ast.Name) and stmt.target.value.id == "self":
             attr_name = stmt.target.attr
             right, _ = self._translate_method_expr(stmt.value, locals_, class_ir, native)
+            lines = self._flush_ir_prelude()
             
             field_with_path = next(((f, p) for f, p in class_ir.get_all_fields_with_path() if f.name == attr_name), None)
             path = field_with_path[1] if field_with_path else attr_name
@@ -607,7 +609,8 @@ class TypedPythonTranslator:
                 ast.Mod: "%=", ast.BitAnd: "&=", ast.BitOr: "|=", ast.BitXor: "^=",
             }
             c_op = op_map.get(type(stmt.op), "+=")
-            return [f"    self->{path} {c_op} {right};"]
+            lines.append(f"    self->{path} {c_op} {right};")
+            return lines
         
         if not isinstance(stmt.target, ast.Name):
             return self._translate_aug_assign(stmt, locals_)
@@ -1196,6 +1199,7 @@ class TypedPythonTranslator:
         
         var_name = stmt.target.id
         right, right_type = self._translate_expr(stmt.value, locals_)
+        lines = self._flush_ir_prelude()
         
         # Unbox mp_obj_t for native C augmented assignment
         right, right_type = self._unbox_if_needed(right, right_type)
@@ -1207,7 +1211,8 @@ class TypedPythonTranslator:
         }
         
         c_op = op_map.get(type(stmt.op), "+=")
-        return [f"    {var_name} {c_op} {right};"]
+        lines.append(f"    {var_name} {c_op} {right};")
+        return lines
     
     def _translate_expr(self, expr, locals_: list[str]) -> tuple[str, str]:
         if isinstance(expr, ast.Constant):
