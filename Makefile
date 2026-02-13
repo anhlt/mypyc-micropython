@@ -4,7 +4,7 @@
 
 # Configuration
 BOARD ?= ESP32_GENERIC
-PORT ?= /dev/cu.usbmodem101
+PORT ?= /dev/ttyACM0
 BAUD ?= 460800
 
 # Paths
@@ -78,10 +78,10 @@ setup: setup-idf setup-mpy
 	@echo "Then run: esp-env && make build"
 
 setup-idf:
-	@echo "Installing ESP-IDF v5.2.2..."
+	@echo "Installing ESP-IDF v5.4.2..."
 	@mkdir -p $(HOME)/esp
 	@if [ ! -d "$(ESP_IDF_DIR)" ]; then \
-		git clone -b v5.2.2 --recursive https://github.com/espressif/esp-idf.git $(ESP_IDF_DIR); \
+		git clone -b v5.4.2 --recursive https://github.com/espressif/esp-idf.git $(ESP_IDF_DIR); \
 	else \
 		echo "ESP-IDF already exists at $(ESP_IDF_DIR)"; \
 	fi
@@ -144,9 +144,7 @@ build: check-env
 	@echo "Building MicroPython firmware for $(BOARD)..."
 	@echo "User modules: $(USER_C_MODULES)"
 	@bash -c '\
-		source $(HOME)/.espressif/python_env/idf5.2_py3.10_env/bin/activate && \
-		export IDF_PATH=$(ESP_IDF_DIR) && \
-		export PATH="$(ESP_IDF_DIR)/components/espcoredump:$(ESP_IDF_DIR)/components/partition_table:$(ESP_IDF_DIR)/components/app_update:$(HOME)/.espressif/tools/xtensa-esp-elf-gdb/14.2_20240403/xtensa-esp-elf-gdb/bin:$(HOME)/.espressif/tools/riscv32-esp-elf-gdb/14.2_20240403/riscv32-esp-elf-gdb/bin:$(HOME)/.espressif/tools/xtensa-esp-elf/esp-13.2.0_20230928/xtensa-esp-elf/bin:$(HOME)/.espressif/tools/riscv32-esp-elf/esp-13.2.0_20230928/riscv32-esp-elf/bin:$(HOME)/.espressif/tools/esp32ulp-elf/2.35_20220830/esp32ulp-elf/bin:$(HOME)/.espressif/tools/openocd-esp32/v0.12.0-esp32-20240821/openocd-esp32/bin:$(ESP_IDF_DIR)/tools:$$PATH" && \
+		source $(ESP_IDF_DIR)/export.sh && \
 		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) USER_C_MODULES=$(USER_C_MODULES) \
 	'
 
