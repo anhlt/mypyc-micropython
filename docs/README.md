@@ -17,6 +17,13 @@ This directory contains documentation for the mypyc-micropython project - a comp
 | [esp-idf-setup-linux.md](esp-idf-setup-linux.md) | ESP-IDF + pyenv setup guide for Linux (Ubuntu/Debian) |
 | [esp-idf-setup-macos.md](esp-idf-setup-macos.md) | ESP-IDF + pyenv setup guide for macOS |
 
+### Blog Posts
+
+| Post | Description |
+|------|-------------|
+| [01-why-ir-matters.md](blog/01-why-ir-matters.md) | Why we use an Intermediate Representation for compiling Python |
+| [02-vtables-and-inheritance.md](blog/02-vtables-and-inheritance.md) | How we compile Python inheritance to C using vtables and pointers |
+
 ## Quick Links
 
 ### For Users
