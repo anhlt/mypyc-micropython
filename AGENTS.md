@@ -1,14 +1,14 @@
 # AGENTS.md — mypyc-micropython
 
-Typed Python → MicroPython C module compiler. Single-module codebase: `src/mypyc_micropython/compiler.py` (~900 LOC) is the core.
+Typed Python → MicroPython C module compiler.
 
 ## Build / Test / Lint Commands
 
 ```bash
 pip install -e ".[dev]"                          # Install deps (one-time)
-pytest                                           # All tests (167 tests, <1s)
+pytest                                           # All tests (195 tests, <1s)
 pytest -xvs -k "test_simple_function"            # Single test by name
-pytest -xvs tests/test_compiler.py::TestTypedPythonTranslator  # Single test class
+pytest -xvs tests/test_compiler.py::TestDictOperations  # Single test class
 pytest -xvs tests/test_compiler.py               # Single test file
 pytest -xvs -m c_runtime                         # C runtime tests only (compile+exec C via gcc)
 pytest -xvs -m "not c_runtime"                   # Skip C runtime tests
@@ -16,6 +16,8 @@ ruff check src/ tests/                           # Lint
 ruff check src/ tests/ --fix                     # Lint with auto-fix
 make compile SRC=examples/factorial.py           # Compile one Python file → C module
 make compile-all                                 # Compile all examples
+make build BOARD=ESP32_GENERIC_C3                # Build firmware for ESP32-C3
+make flash BOARD=ESP32_GENERIC_C3                # Flash to device
 ```
 
 ## Project Layout
@@ -24,17 +26,22 @@ make compile-all                                 # Compile all examples
 src/mypyc_micropython/
 ├── __init__.py          # Public API: compile_source, compile_to_micropython
 ├── cli.py               # CLI entry point (mpy-compile command)
-└── compiler.py          # ALL compiler logic — AST translator, code gen, file output
+├── compiler.py          # AST translator and code generation (~1200 LOC)
+├── ir.py                # IR definitions: ClassIR, MethodIR, FuncIR, etc.
+├── class_emitter.py     # C code generation for classes (structs, vtables, methods)
+└── container_emitter.py # IR emission for list/dict operations
 
 tests/
 ├── conftest.py          # compile_and_run fixture (gcc compile + execute)
-├── test_compiler.py     # Unit tests — AST→C translation (152 tests)
+├── test_compiler.py     # Unit tests — AST→C translation (180 tests)
 ├── test_c_runtime.py    # Integration — compile generated C & run binary (15 tests, marker: c_runtime)
 └── mock_mp/             # Minimal C stubs for MicroPython API
 
 examples/                # Sample Python input files
 modules/                 # Generated C output (gitignored except committed examples)
-docs/                    # ESP-IDF setup guides (Linux/macOS)
+docs/                    # Documentation and ESP-IDF setup guides
+blogs/                   # Technical blog posts
+Makefile                 # Build commands for firmware compilation and flashing
 ```
 
 ## Architecture
@@ -44,7 +51,16 @@ Pipeline: `Python source → ast.parse() → TypedPythonTranslator → C code st
 Key types in `compiler.py`:
 - **`TypedPythonTranslator`** — AST walker. `translate_source()` → `_translate_function()` → `_translate_statement()` → `_translate_expr()`
 - **`CompilationResult`** — Dataclass: `c_code`, `mk_code`, `cmake_code`, `success`, `errors`
-- **`FunctionInfo`** — Dataclass: `name`, `c_name`, `num_args`
+
+Key types in `ir.py`:
+- **`ClassIR`** — Class intermediate representation (fields, methods, inheritance)
+- **`MethodIR`** — Method IR with vtable support
+- **`FuncIR`** — Function IR for module-level functions
+- **`CType`** — Enum for C type mapping (MP_OBJ_T, MP_INT_T, MP_FLOAT_T, BOOL)
+
+Key modules:
+- **`class_emitter.py`** — `ClassEmitter`: generates C structs, vtables, constructors for classes
+- **`container_emitter.py`** — `ContainerEmitter`: generates IR for list/dict operations
 
 Key functions:
 - **`compile_source(source: str, module_name: str) -> str`** — Core: source → C string

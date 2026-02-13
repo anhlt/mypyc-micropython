@@ -19,10 +19,14 @@ This directory contains documentation for the mypyc-micropython project - a comp
 
 ### Blog Posts
 
+Located in [`/blogs/`](/blogs/) directory:
+
 | Post | Description |
 |------|-------------|
-| [01-why-ir-matters.md](blog/01-why-ir-matters.md) | Why we use an Intermediate Representation for compiling Python |
-| [02-vtables-and-inheritance.md](blog/02-vtables-and-inheritance.md) | How we compile Python inheritance to C using vtables and pointers |
+| [01-list-and-forloop-support.md](/blogs/01-list-and-forloop-support.md) | Implementing list operations and for-loop support |
+| [02-dict-support.md](/blogs/02-dict-support.md) | Adding dictionary operations and methods |
+| [03-vtables-and-inheritance.md](/blogs/03-vtables-and-inheritance.md) | How we compile Python inheritance to C using vtables and pointers |
+| [04-ir-design.md](/blogs/04-ir-design.md) | Why we use an Intermediate Representation for compiling Python |
 
 ## Quick Links
 
