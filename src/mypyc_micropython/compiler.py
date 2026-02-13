@@ -361,6 +361,11 @@ class TypedPythonTranslator:
         
         lines = [f"static {ret_type} {c_name}_native({params_str}) {{"]
         
+        # Populate _var_types so _translate_name returns correct types for params
+        self._var_types = {}
+        for param_name, param_type in method_ir.params:
+            self._var_types[param_name] = param_type.to_c_type_str()
+        
         local_vars = ["self"] + [p[0] for p in method_ir.params]
         return_type_str = ret_type
         
@@ -381,6 +386,10 @@ class TypedPythonTranslator:
     def _emit_mp_wrapper_method(self, class_ir: ClassIR, method_ir: MethodIR) -> None:
         node = method_ir.body_ast
         c_name = method_ir.c_name
+        
+        self._var_types = {}
+        for param_name, param_type in method_ir.params:
+            self._var_types[param_name] = param_type.to_c_type_str()
         
         num_args = len(method_ir.params) + 1
         
@@ -464,12 +473,15 @@ class TypedPythonTranslator:
         elif isinstance(stmt, ast.While):
             return self._translate_method_while(stmt, return_type, locals_, class_ir, native)
         elif isinstance(stmt, ast.For):
-            return self._translate_for(stmt, return_type, locals_)
+            return self._translate_for(stmt, return_type, locals_, class_ir=class_ir, native=native)
         elif isinstance(stmt, ast.AugAssign):
             return self._translate_method_aug_assign(stmt, locals_, class_ir, native)
         elif isinstance(stmt, ast.Expr):
+            lines = self._flush_ir_prelude()
             expr, _ = self._translate_method_expr(stmt.value, locals_, class_ir, native)
-            return [f"    (void){expr};"]
+            lines.extend(self._flush_ir_prelude())
+            lines.append(f"    (void){expr};")
+            return lines
         return self._translate_statement(stmt, return_type, locals_)
     
     def _translate_method_ann_assign(self, stmt: ast.AnnAssign, locals_: list[str], class_ir: ClassIR, native: bool) -> list[str]:
@@ -480,11 +492,17 @@ class TypedPythonTranslator:
         c_type = self._annotation_to_c_type(stmt.annotation) if stmt.annotation else "mp_int_t"
         
         if stmt.value is not None:
+            lines = self._flush_ir_prelude()
             expr, expr_type = self._translate_method_expr(stmt.value, locals_, class_ir, native)
+            lines.extend(self._flush_ir_prelude())
+            expr, expr_type = self._unbox_if_needed(expr, expr_type, c_type)
             if var_name not in locals_:
                 locals_.append(var_name)
-                return [f"    {c_type} {var_name} = {expr};"]
-            return [f"    {var_name} = {expr};"]
+                self._var_types[var_name] = c_type
+                lines.append(f"    {c_type} {var_name} = {expr};")
+                return lines
+            lines.append(f"    {var_name} = {expr};")
+            return lines
         else:
             if var_name not in locals_:
                 locals_.append(var_name)
@@ -503,18 +521,22 @@ class TypedPythonTranslator:
                 return ["    return;"]
             return ["    return mp_const_none;"]
         
+        lines = self._flush_ir_prelude()
         expr, expr_type = self._translate_method_expr(stmt.value, locals_, class_ir, native)
+        lines.extend(self._flush_ir_prelude())
         
         if native:
-            return [f"    return {expr};"]
+            lines.append(f"    return {expr};")
         else:
             if expr_type == "mp_int_t":
-                return [f"    return mp_obj_new_int({expr});"]
+                lines.append(f"    return mp_obj_new_int({expr});")
             elif expr_type == "mp_float_t":
-                return [f"    return mp_obj_new_float({expr});"]
+                lines.append(f"    return mp_obj_new_float({expr});")
             elif expr_type == "bool":
-                return [f"    return {expr} ? mp_const_true : mp_const_false;"]
-            return [f"    return {expr};"]
+                lines.append(f"    return {expr} ? mp_const_true : mp_const_false;")
+            else:
+                lines.append(f"    return {expr};")
+        return lines
     
     def _translate_method_assign(self, stmt: ast.Assign, locals_: list[str], class_ir: ClassIR, native: bool) -> list[str]:
         if len(stmt.targets) != 1:
@@ -524,30 +546,51 @@ class TypedPythonTranslator:
         
         if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "self":
             attr_name = target.attr
+            lines = self._flush_ir_prelude()
             expr, expr_type = self._translate_method_expr(stmt.value, locals_, class_ir, native)
+            lines.extend(self._flush_ir_prelude())
             
             field_with_path = next(((f, p) for f, p in class_ir.get_all_fields_with_path() if f.name == attr_name), None)
             if field_with_path:
                 field, path = field_with_path
                 if native:
-                    return [f"    self->{path} = {expr};"]
+                    lines.append(f"    self->{path} = {expr};")
                 else:
                     if field.c_type == CType.MP_INT_T and expr_type != "mp_int_t":
-                        return [f"    self->{path} = mp_obj_get_int({expr});"]
+                        lines.append(f"    self->{path} = mp_obj_get_int({expr});")
                     elif field.c_type == CType.MP_FLOAT_T and expr_type != "mp_float_t":
-                        return [f"    self->{path} = mp_obj_get_float({expr});"]
+                        lines.append(f"    self->{path} = mp_obj_get_float({expr});")
                     elif field.c_type == CType.BOOL and expr_type != "bool":
-                        return [f"    self->{path} = mp_obj_is_true({expr});"]
-                    return [f"    self->{path} = {expr};"]
+                        lines.append(f"    self->{path} = mp_obj_is_true({expr});")
+                    else:
+                        lines.append(f"    self->{path} = {expr};")
+            else:
+                lines.append(f"    self->{attr_name} = {expr};")
+            return lines
         
         if isinstance(target, ast.Name):
             var_name = target.id
+            lines = self._flush_ir_prelude()
             expr, expr_type = self._translate_method_expr(stmt.value, locals_, class_ir, native)
+            lines.extend(self._flush_ir_prelude())
             
             if var_name not in locals_:
                 locals_.append(var_name)
-                return [f"    {expr_type} {var_name} = {expr};"]
-            return [f"    {var_name} = {expr};"]
+                lines.append(f"    {expr_type} {var_name} = {expr};")
+                return lines
+            lines.append(f"    {var_name} = {expr};")
+            return lines
+        
+        if isinstance(target, ast.Subscript):
+            lines = self._flush_ir_prelude()
+            obj_expr, _ = self._translate_method_expr(target.value, locals_, class_ir, native)
+            idx_expr, idx_type = self._translate_method_expr(target.slice, locals_, class_ir, native)
+            val_expr, val_type = self._translate_method_expr(stmt.value, locals_, class_ir, native)
+            lines.extend(self._flush_ir_prelude())
+            boxed_key = self._box_value(idx_expr, idx_type)
+            boxed_val = self._box_value(val_expr, val_type)
+            lines.append(f"    mp_obj_subscr({obj_expr}, {boxed_key}, {boxed_val});")
+            return lines
         
         return self._translate_assign(stmt, locals_)
     
@@ -566,7 +609,22 @@ class TypedPythonTranslator:
             c_op = op_map.get(type(stmt.op), "+=")
             return [f"    self->{path} {c_op} {right};"]
         
-        return self._translate_aug_assign(stmt, locals_)
+        if not isinstance(stmt.target, ast.Name):
+            return self._translate_aug_assign(stmt, locals_)
+        
+        var_name = stmt.target.id
+        right, right_type = self._translate_method_expr(stmt.value, locals_, class_ir, native)
+        lines = self._flush_ir_prelude()
+        right, right_type = self._unbox_if_needed(right, right_type)
+        
+        op_map = {
+            ast.Add: "+=", ast.Sub: "-=", ast.Mult: "*=", ast.Div: "/=",
+            ast.Mod: "%=", ast.BitAnd: "&=", ast.BitOr: "|=", ast.BitXor: "^=",
+            ast.LShift: "<<=", ast.RShift: ">>="
+        }
+        c_op = op_map.get(type(stmt.op), "+=")
+        lines.append(f"    {var_name} {c_op} {right};")
+        return lines
     
     def _translate_method_if(self, stmt: ast.If, return_type: str, locals_: list[str], class_ir: ClassIR, native: bool) -> list[str]:
         cond, _ = self._translate_method_expr(stmt.test, locals_, class_ir, native)
@@ -608,6 +666,7 @@ class TypedPythonTranslator:
             return f"self->{attr_name}", "mp_obj_t"
         
         if isinstance(expr, ast.Call):
+            # Case 1: self.method(args) — direct method call on self
             if isinstance(expr.func, ast.Attribute) and isinstance(expr.func.value, ast.Name) and expr.func.value.id == "self":
                 method_name = expr.func.attr
                 method = class_ir.methods.get(method_name)
@@ -621,7 +680,52 @@ class TypedPythonTranslator:
                     
                     ret_type = method.return_type.to_c_type_str()
                     return f"{method.c_name}_native({args_str})", ret_type
-        
+
+            # Case 2: self.field.method(args) — method call on a field (e.g., self.items.append(x))
+            if (isinstance(expr.func, ast.Attribute)
+                    and isinstance(expr.func.value, ast.Attribute)
+                    and isinstance(expr.func.value.value, ast.Name)
+                    and expr.func.value.value.id == "self"):
+                field_name = expr.func.value.attr
+                method_name = expr.func.attr
+                field_with_path = next(
+                    ((f, p) for f, p in class_ir.get_all_fields_with_path() if f.name == field_name),
+                    None,
+                )
+                obj_c_expr = f"self->{field_with_path[1]}" if field_with_path else f"self->{field_name}"
+
+                ir_args: list[ValueIR] = []
+                for arg in expr.args:
+                    arg_expr, arg_type = self._translate_method_expr(arg, locals_, class_ir, native)
+                    boxed = self._box_value(arg_expr, arg_type)
+                    ir_args.append(NameIR(ir_type=IRType.OBJ, py_name="", c_name=boxed))
+
+                receiver = NameIR(ir_type=IRType.OBJ, py_name="", c_name=obj_c_expr)
+                temp_name = self._fresh_temp()
+                result = TempIR(ir_type=IRType.OBJ, name=temp_name)
+                self._pending_prelude.append(
+                    MethodCallIR(result=result, receiver=receiver, method=method_name, args=ir_args)
+                )
+                return temp_name, "mp_obj_t"
+
+            # Case 3: builtin(self.field) — e.g., len(self.items)
+            if isinstance(expr.func, ast.Name):
+                func_name = expr.func.id
+                args = [self._translate_method_expr(arg, locals_, class_ir, native) for arg in expr.args]
+                arg_exprs = [a[0] for a in args]
+                arg_types = [a[1] for a in args]
+
+                if func_name == "len" and len(arg_exprs) == 1:
+                    boxed = self._box_value(arg_exprs[0], arg_types[0])
+                    return f"mp_obj_get_int(mp_obj_len({boxed}))", "mp_int_t"
+                if func_name == "abs" and arg_exprs:
+                    a = arg_exprs[0]
+                    return f"(({a}) < 0 ? -({a}) : ({a}))", "mp_int_t"
+                if func_name == "int" and arg_exprs:
+                    return f"((mp_int_t)({arg_exprs[0]}))", "mp_int_t"
+                if func_name == "float" and arg_exprs:
+                    return f"((mp_float_t)({arg_exprs[0]}))", "mp_float_t"
+
         if isinstance(expr, ast.BinOp):
             left, left_type = self._translate_method_expr(expr.left, locals_, class_ir, native)
             right, right_type = self._translate_method_expr(expr.right, locals_, class_ir, native)
@@ -667,6 +771,12 @@ class TypedPythonTranslator:
             body, body_type = self._translate_method_expr(expr.body, locals_, class_ir, native)
             orelse, _ = self._translate_method_expr(expr.orelse, locals_, class_ir, native)
             return f"(({test}) ? ({body}) : ({orelse}))", body_type
+        
+        if isinstance(expr, ast.Subscript):
+            value_expr, _ = self._translate_method_expr(expr.value, locals_, class_ir, native)
+            slice_expr, slice_type = self._translate_method_expr(expr.slice, locals_, class_ir, native)
+            boxed_key = self._box_value(slice_expr, slice_type)
+            return f"mp_obj_subscr({value_expr}, {boxed_key}, MP_OBJ_SENTINEL)", "mp_obj_t"
         
         return self._translate_expr(expr, locals_)
     
@@ -843,7 +953,14 @@ class TypedPythonTranslator:
         lines.append("    }")
         return lines
     
-    def _translate_for(self, stmt: ast.For, return_type: str, locals_: list[str]) -> list[str]:
+    def _translate_for(
+        self,
+        stmt: ast.For,
+        return_type: str,
+        locals_: list[str],
+        class_ir: ClassIR | None = None,
+        native: bool = False,
+    ) -> list[str]:
         if not isinstance(stmt.target, ast.Name):
             return ["    /* unsupported for loop target */"]
         
@@ -851,11 +968,19 @@ class TypedPythonTranslator:
         
         if isinstance(stmt.iter, ast.Call) and isinstance(stmt.iter.func, ast.Name):
             if stmt.iter.func.id == "range":
-                return self._translate_for_range(stmt, loop_var, return_type, locals_)
+                return self._translate_for_range(stmt, loop_var, return_type, locals_, class_ir=class_ir, native=native)
         
-        return self._translate_for_iterable(stmt, loop_var, return_type, locals_)
+        return self._translate_for_iterable(stmt, loop_var, return_type, locals_, class_ir=class_ir, native=native)
     
-    def _translate_for_range(self, stmt: ast.For, loop_var: str, return_type: str, locals_: list[str]) -> list[str]:
+    def _translate_for_range(
+        self,
+        stmt: ast.For,
+        loop_var: str,
+        return_type: str,
+        locals_: list[str],
+        class_ir: ClassIR | None = None,
+        native: bool = False,
+    ) -> list[str]:
         assert isinstance(stmt.iter, ast.Call)
         args = stmt.iter.args
         lines = []
@@ -866,19 +991,30 @@ class TypedPythonTranslator:
         
         if len(args) == 1:
             start = "0"
-            end, _ = self._translate_expr(args[0], locals_)
+            if class_ir is not None:
+                end, _ = self._translate_method_expr(args[0], locals_, class_ir, native)
+            else:
+                end, _ = self._translate_expr(args[0], locals_)
             step = "1"
             step_is_constant = True
             step_constant_value = 1
         elif len(args) == 2:
-            start, _ = self._translate_expr(args[0], locals_)
-            end, _ = self._translate_expr(args[1], locals_)
+            if class_ir is not None:
+                start, _ = self._translate_method_expr(args[0], locals_, class_ir, native)
+                end, _ = self._translate_method_expr(args[1], locals_, class_ir, native)
+            else:
+                start, _ = self._translate_expr(args[0], locals_)
+                end, _ = self._translate_expr(args[1], locals_)
             step = "1"
             step_is_constant = True
             step_constant_value = 1
         elif len(args) == 3:
-            start, _ = self._translate_expr(args[0], locals_)
-            end, _ = self._translate_expr(args[1], locals_)
+            if class_ir is not None:
+                start, _ = self._translate_method_expr(args[0], locals_, class_ir, native)
+                end, _ = self._translate_method_expr(args[1], locals_, class_ir, native)
+            else:
+                start, _ = self._translate_expr(args[0], locals_)
+                end, _ = self._translate_expr(args[1], locals_)
             if isinstance(args[2], ast.Constant) and isinstance(args[2].value, int):
                 step_is_constant = True
                 step_constant_value = args[2].value
@@ -889,9 +1025,15 @@ class TypedPythonTranslator:
                     step_constant_value = -args[2].operand.value
                     step = str(step_constant_value)
                 else:
-                    step, _ = self._translate_expr(args[2], locals_)
+                    if class_ir is not None:
+                        step, _ = self._translate_method_expr(args[2], locals_, class_ir, native)
+                    else:
+                        step, _ = self._translate_expr(args[2], locals_)
             else:
-                step, _ = self._translate_expr(args[2], locals_)
+                if class_ir is not None:
+                    step, _ = self._translate_method_expr(args[2], locals_, class_ir, native)
+                else:
+                    step, _ = self._translate_expr(args[2], locals_)
         else:
             return ["    /* unsupported range() call */"]
         
@@ -930,16 +1072,31 @@ class TypedPythonTranslator:
         
         self._loop_depth += 1
         for s in stmt.body:
-            for line in self._translate_statement(s, return_type, locals_):
-                lines.append("    " + line)
+            if class_ir is not None:
+                for line in self._translate_method_statement(s, return_type, locals_, class_ir, native):
+                    lines.append("    " + line)
+            else:
+                for line in self._translate_statement(s, return_type, locals_):
+                    lines.append("    " + line)
         self._loop_depth -= 1
         
         lines.append("    }")
         return lines
     
-    def _translate_for_iterable(self, stmt: ast.For, loop_var: str, return_type: str, locals_: list[str]) -> list[str]:
+    def _translate_for_iterable(
+        self,
+        stmt: ast.For,
+        loop_var: str,
+        return_type: str,
+        locals_: list[str],
+        class_ir: ClassIR | None = None,
+        native: bool = False,
+    ) -> list[str]:
         lines = []
-        iter_expr, _ = self._translate_expr(stmt.iter, locals_)
+        if class_ir is not None:
+            iter_expr, _ = self._translate_method_expr(stmt.iter, locals_, class_ir, native)
+        else:
+            iter_expr, _ = self._translate_expr(stmt.iter, locals_)
         lines.extend(self._flush_ir_prelude())
         
         iter_var = self._fresh_temp()
@@ -957,8 +1114,12 @@ class TypedPythonTranslator:
         
         self._loop_depth += 1
         for s in stmt.body:
-            for line in self._translate_statement(s, return_type, locals_):
-                lines.append("    " + line)
+            if class_ir is not None:
+                for line in self._translate_method_statement(s, return_type, locals_, class_ir, native):
+                    lines.append("    " + line)
+            else:
+                for line in self._translate_statement(s, return_type, locals_):
+                    lines.append("    " + line)
         self._loop_depth -= 1
         
         lines.append("    }")

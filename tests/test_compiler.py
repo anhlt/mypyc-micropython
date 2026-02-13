@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from mypyc_micropython.compiler import (
+    CompilationResult,
     TypedPythonTranslator,
     compile_source,
     compile_to_micropython,
@@ -44,7 +45,7 @@ def add(a: int, b: int) -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-
+        
         assert "static mp_obj_t test_add" in result
         assert "mp_obj_get_int" in result
         assert "mp_obj_new_int" in result
@@ -57,7 +58,7 @@ def get_answer() -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-
+        
         assert "static mp_obj_t test_get_answer(void)" in result
         assert "MP_DEFINE_CONST_FUN_OBJ_0" in result
         assert "return mp_obj_new_int(42)" in result
@@ -69,7 +70,7 @@ def square(x: int) -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-
+        
         assert "static mp_obj_t test_square(mp_obj_t x_obj)" in result
         assert "MP_DEFINE_CONST_FUN_OBJ_1" in result
 
@@ -80,7 +81,7 @@ def add3(a: int, b: int, c: int) -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-
+        
         assert "MP_DEFINE_CONST_FUN_OBJ_3" in result
 
     def test_function_with_four_args(self):
@@ -90,7 +91,7 @@ def add4(a: int, b: int, c: int, d: int) -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-
+        
         assert "MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN" in result
         assert "size_t n_args" in result
 
@@ -101,7 +102,7 @@ def multiply(a: float, b: float) -> float:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-
+        
         assert "mp_float_t" in result
         assert "mp_get_float_checked" in result
         assert "mp_obj_new_float" in result
@@ -113,8 +114,182 @@ def is_positive(n: int) -> bool:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-
         assert "mp_const_true" in result or "mp_const_false" in result
+
+
+class TestClassContainerFields:
+
+    def test_self_field_append(self):
+        source = """
+class Bag:
+    items: list
+
+    def __init__(self):
+        self.items = []
+
+    def add(self, x: int) -> None:
+        self.items.append(x)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_list_append(self->items" in result
+
+    def test_self_field_subscript_read(self):
+        source = """
+class Bag:
+    items: list
+
+    def __init__(self):
+        self.items = []
+
+    def get(self, i: int) -> int:
+        return self.items[i]
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_subscr(self->items" in result
+        assert "MP_OBJ_SENTINEL" in result
+
+    def test_self_field_subscript_assign(self):
+        source = """
+class Store:
+    data: dict
+
+    def __init__(self):
+        self.data = {}
+
+    def put(self, key: int, value: int) -> None:
+        self.data[key] = value
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_subscr(self->data" in result
+        assert "mp_obj_new_int(key)" in result
+        assert "mp_obj_new_int(value)" in result
+
+    def test_len_self_field(self):
+        source = """
+class Bag:
+    items: list
+
+    def __init__(self):
+        self.items = []
+
+    def size(self) -> int:
+        return len(self.items)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_len(self->items)" in result
+
+    def test_for_loop_with_self_field(self):
+        source = """
+class Acc:
+    items: list
+
+    def __init__(self):
+        self.items = []
+
+    def total(self) -> int:
+        s: int = 0
+        n: int = len(self.items)
+        for i in range(n):
+            s += self.items[i]
+        return s
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_subscr(self->items" in result
+        assert "/* unsupported */" not in result
+
+    def test_nested_self_field_subscript(self):
+        source = """
+class Inv:
+    items: list
+    counts: dict
+
+    def __init__(self):
+        self.items = []
+        self.counts = {}
+
+    def sum_counts(self) -> int:
+        total: int = 0
+        n: int = len(self.items)
+        for i in range(n):
+            total += self.counts[self.items[i]]
+        return total
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_subscr(self->counts" in result
+        assert "mp_obj_subscr(self->items" in result
+        assert "/* unsupported */" not in result
+
+    def test_method_param_boxing_int(self):
+        source = """
+class Counter:
+    data: dict
+
+    def __init__(self):
+        self.data = {}
+
+    def set(self, key: int, val: int) -> None:
+        self.data[key] = val
+"""
+        result = compile_source(source, "test")
+        assert "mp_int_t key" in result
+        assert "mp_int_t val" in result
+        assert "mp_obj_new_int(key)" in result
+        assert "mp_obj_new_int(val)" in result
+
+    def test_method_param_boxing_str(self):
+        source = """
+class Registry:
+    data: dict
+
+    def __init__(self):
+        self.data = {}
+
+    def put(self, key: str, value: int) -> None:
+        self.data[key] = value
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_t key" in result
+        # key is mp_obj_t so it should NOT be wrapped in mp_obj_new_int
+        assert "mp_obj_new_int(key)" not in result
+        assert "mp_obj_new_int(value)" in result
+
+    def test_aug_assign_with_self_field_in_loop(self):
+        source = """
+class Acc:
+    data: dict
+    items: list
+
+    def __init__(self):
+        self.data = {}
+        self.items = []
+
+    def total(self) -> int:
+        s: int = 0
+        n: int = len(self.items)
+        for i in range(n):
+            s += self.data[self.items[i]]
+        return s
+"""
+        result = compile_source(source, "test")
+        assert "s +=" in result
+        assert "self->data" in result
+        assert "self->items" in result
+
+    def test_ann_assign_unbox_in_method(self):
+        source = """
+class Bag:
+    items: list
+
+    def __init__(self):
+        self.items = []
+
+    def first(self) -> int:
+        val: int = self.items[0]
+        return val
+"""
+        result = compile_source(source, "test")
+        assert "mp_int_t val = mp_obj_get_int(mp_obj_subscr(self->items" in result
+
 
     def test_if_else_statement(self):
         source = """
@@ -126,7 +301,7 @@ def abs_val(n: int) -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-
+        
         assert "if (" in result
         assert "} else {" in result
 
@@ -139,7 +314,7 @@ def factorial(n: int) -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-
+        
         assert "test_factorial(" in result
         assert result.count("test_factorial") >= 2
 
@@ -151,7 +326,7 @@ def compute(x: int) -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-
+        
         assert "result =" in result
 
     def test_multiple_functions(self):
@@ -164,7 +339,7 @@ def func2() -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-
+        
         assert "test_func1" in result
         assert "test_func2" in result
         assert "MP_QSTR_func1" in result
@@ -177,7 +352,7 @@ def hello() -> int:
 """
         translator = TypedPythonTranslator("mymod")
         result = translator.translate_source(source)
-
+        
         assert "MP_REGISTER_MODULE(MP_QSTR_mymod" in result
         assert "mymod_module_globals" in result
         assert "mymod_user_cmodule" in result
@@ -193,7 +368,7 @@ def count_down(n: int) -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-
+        
         assert "while (" in result
         assert "n > 0" in result
 
@@ -205,7 +380,7 @@ def test() -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-
+        
         assert "mp_int_t x = 10" in result
 
     def test_augmented_assignment(self):
@@ -216,7 +391,7 @@ def test(n: int) -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-
+        
         assert "n += 5" in result
 
 
@@ -226,7 +401,7 @@ class TestCompileSource:
     def test_basic_compilation(self):
         source = "def add(a: int, b: int) -> int:\n    return a + b\n"
         result = compile_source(source, "test")
-
+        
         assert '#include "py/runtime.h"' in result
         assert '#include "py/obj.h"' in result
         assert "test_add" in result
@@ -237,7 +412,7 @@ class TestCompileToMicropython:
 
     def test_file_not_found(self):
         result = compile_to_micropython("/nonexistent/path/file.py")
-
+        
         assert result.success is False
         assert "not found" in result.errors[0].lower()
 
@@ -245,13 +420,13 @@ class TestCompileToMicropython:
         with tempfile.TemporaryDirectory() as tmpdir:
             source_path = Path(tmpdir) / "mymodule.py"
             source_path.write_text("def hello() -> int:\n    return 42\n")
-
+            
             result = compile_to_micropython(source_path)
-
+            
             assert result.success is True
             assert result.module_name == "mymodule"
             assert "mymodule_hello" in result.c_code
-
+            
             output_dir = Path(tmpdir) / "usermod_mymodule"
             assert output_dir.exists()
             assert (output_dir / "mymodule.c").exists()
@@ -262,10 +437,10 @@ class TestCompileToMicropython:
         with tempfile.TemporaryDirectory() as tmpdir:
             source_path = Path(tmpdir) / "test.py"
             source_path.write_text("def foo() -> int:\n    return 1\n")
-
+            
             output_dir = Path(tmpdir) / "custom_output"
             result = compile_to_micropython(source_path, output_dir)
-
+            
             assert result.success is True
             assert output_dir.exists()
             assert (output_dir / "test.c").exists()
@@ -274,9 +449,9 @@ class TestCompileToMicropython:
         with tempfile.TemporaryDirectory() as tmpdir:
             source_path = Path(tmpdir) / "mymod.py"
             source_path.write_text("def x() -> int:\n    return 0\n")
-
+            
             result = compile_to_micropython(source_path)
-
+            
             assert "MYMOD_MOD_DIR" in result.mk_code
             assert "SRC_USERMOD" in result.mk_code
             assert "CFLAGS_USERMOD" in result.mk_code
@@ -285,9 +460,9 @@ class TestCompileToMicropython:
         with tempfile.TemporaryDirectory() as tmpdir:
             source_path = Path(tmpdir) / "mymod.py"
             source_path.write_text("def x() -> int:\n    return 0\n")
-
+            
             result = compile_to_micropython(source_path)
-
+            
             assert "add_library(usermod_mymod" in result.cmake_code
             assert "target_sources" in result.cmake_code
             assert "target_include_directories" in result.cmake_code
