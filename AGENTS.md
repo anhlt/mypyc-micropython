@@ -1,353 +1,160 @@
-# AI Agent Instructions for mypyc-micropython
+# AGENTS.md — mypyc-micropython
 
-This document provides instructions for AI agents to set up, build, and deploy this project.
+Typed Python → MicroPython C module compiler. Single-module codebase: `src/mypyc_micropython/compiler.py` (~900 LOC) is the core.
 
-## Project Overview
-
-**mypyc-micropython** compiles typed Python functions to native C modules for MicroPython, enabling high-performance code on embedded devices like ESP32.
-
-```
-Python source → mypyc compiler → C module → MicroPython firmware → ESP32 device
-```
-
-## Quick Reference
-
-| Task | Command |
-|------|---------|
-| Install Python deps | `pip install -e ".[dev]"` |
-| Install ESP-IDF | `make setup-idf` (30 min, 2GB) |
-| Build mpy-cross | `make setup-mpy` |
-| Compile Python→C | `make compile SRC=examples/factorial.py` |
-| Compile all examples | `make compile-all` |
-| Build firmware | `source ~/esp/esp-idf/export.sh && make build BOARD=ESP32_GENERIC_C3` |
-| Flash to device | `make flash BOARD=ESP32_GENERIC_C3 PORT=/dev/cu.usbmodem101` |
-| Test on device | `mpremote connect /dev/cu.usbmodem101 exec "import factorial; print(factorial.factorial(5))"` |
-
-## Directory Structure
-
-```
-mypyc-micropython/
-├── src/                    # Python compiler source code
-├── examples/               # Example Python files to compile
-├── modules/                # Output: compiled C modules
-│   ├── micropython.cmake   # Auto-generated cmake includes
-│   └── usermod_*/          # Generated C module folders
-├── deps/
-│   └── micropython/        # MicroPython git submodule (v1.24.1)
-├── Makefile                # Build automation
-└── AGENTS.md               # This file
-```
-
-## Setup Instructions (Fresh Machine)
-
-### Prerequisites
-
-- macOS or Linux
-- Python 3.9+ with pip
-- Git
-- ~3GB disk space for ESP-IDF toolchain
-
-### Step 1: Clone and Initialize
+## Build / Test / Lint Commands
 
 ```bash
-git clone <repo-url> mypyc-micropython
-cd mypyc-micropython
-
-# Initialize MicroPython submodule
-git submodule update --init --recursive
+pip install -e ".[dev]"                          # Install deps (one-time)
+pytest                                           # All tests (167 tests, <1s)
+pytest -xvs -k "test_simple_function"            # Single test by name
+pytest -xvs tests/test_compiler.py::TestTypedPythonTranslator  # Single test class
+pytest -xvs tests/test_compiler.py               # Single test file
+pytest -xvs -m c_runtime                         # C runtime tests only (compile+exec C via gcc)
+pytest -xvs -m "not c_runtime"                   # Skip C runtime tests
+ruff check src/ tests/                           # Lint
+ruff check src/ tests/ --fix                     # Lint with auto-fix
+make compile SRC=examples/factorial.py           # Compile one Python file → C module
+make compile-all                                 # Compile all examples
 ```
 
-### Step 2: Install Python Dependencies
+## Project Layout
 
-```bash
-# Create virtual environment (recommended)
-python3 -m venv .venv
-source .venv/bin/activate
+```
+src/mypyc_micropython/
+├── __init__.py          # Public API: compile_source, compile_to_micropython
+├── cli.py               # CLI entry point (mpy-compile command)
+└── compiler.py          # ALL compiler logic — AST translator, code gen, file output
 
-# Or with pyenv
-pyenv virtualenv 3.10.15 mypyc-micropython
-pyenv activate mypyc-micropython
+tests/
+├── conftest.py          # compile_and_run fixture (gcc compile + execute)
+├── test_compiler.py     # Unit tests — AST→C translation (152 tests)
+├── test_c_runtime.py    # Integration — compile generated C & run binary (15 tests, marker: c_runtime)
+└── mock_mp/             # Minimal C stubs for MicroPython API
 
-# Install project dependencies
-pip install -e ".[dev]"
-
-# Verify installation
-mpy-compile --help
+examples/                # Sample Python input files
+modules/                 # Generated C output (gitignored except committed examples)
+docs/                    # ESP-IDF setup guides (Linux/macOS)
 ```
 
-### Step 3: Install ESP-IDF Toolchain
+## Architecture
 
-**IMPORTANT**: MicroPython v1.24.1 requires ESP-IDF v5.2.2 (NOT v5.2.3+)
+Pipeline: `Python source → ast.parse() → TypedPythonTranslator → C code string`
 
-```bash
-# Clone ESP-IDF v5.2.2
-mkdir -p ~/esp
-git clone -b v5.2.2 --recursive https://github.com/espressif/esp-idf.git ~/esp/esp-idf
+Key types in `compiler.py`:
+- **`TypedPythonTranslator`** — AST walker. `translate_source()` → `_translate_function()` → `_translate_statement()` → `_translate_expr()`
+- **`CompilationResult`** — Dataclass: `c_code`, `mk_code`, `cmake_code`, `success`, `errors`
+- **`FunctionInfo`** — Dataclass: `name`, `c_name`, `num_args`
 
-# Install toolchain for ESP32 variants (~20-30 minutes)
-cd ~/esp/esp-idf
-./install.sh esp32,esp32c3,esp32s3
-```
+Key functions:
+- **`compile_source(source: str, module_name: str) -> str`** — Core: source → C string
+- **`compile_to_micropython(path, output_dir) -> CompilationResult`** — File-level wrapper
+- **`sanitize_name(name: str) -> str`** — Python name → valid C identifier
 
-### Step 4: Fix ESP-IDF Python Check Bug (Required)
+## Code Style
 
-ESP-IDF v5.2.x has a known bug with `ruamel.yaml` metadata detection. Apply this workaround:
+### Tooling (pyproject.toml)
+- **Linter**: ruff — rules `E`, `F`, `I`, `W`
+- **Line length**: 100
+- **Python target**: 3.10+
+- **Build**: hatchling
+- **Tests**: pytest (`testpaths = ["tests"]`)
 
-```bash
-# Patch the check script to always succeed
-cat > ~/esp/esp-idf/tools/check_python_dependencies.py << 'EOF'
-#!/usr/bin/env python
-# Patched to bypass ruamel.yaml metadata bug
-import sys
-sys.exit(0)
-EOF
-```
-
-**Why this is needed**: The `ruamel.yaml` package installs correctly but its metadata isn't recognized by `importlib.metadata`, causing false failures in ESP-IDF's dependency checker. The tools work fine despite this.
-
-### Step 5: Build mpy-cross Compiler
-
-```bash
-source ~/esp/esp-idf/export.sh
-make setup-mpy
-```
-
-## Building Firmware
-
-### Compile Python to C Modules
-
-```bash
-# Compile single file
-make compile SRC=examples/factorial.py
-
-# Compile all examples
-make compile-all
-```
-
-This generates:
-- `modules/usermod_<name>/<name>.c` - C implementation
-- `modules/usermod_<name>/micropython.cmake` - CMake config
-- `modules/micropython.cmake` - Master include file
-
-### Build MicroPython Firmware
-
-**Always source ESP-IDF environment first!**
-
-```bash
-source ~/esp/esp-idf/export.sh
-
-# For ESP32-C3 (common dev boards)
-make build BOARD=ESP32_GENERIC_C3
-
-# For ESP32 (original)
-make build BOARD=ESP32_GENERIC
-
-# For ESP32-S3
-make build BOARD=ESP32_GENERIC_S3
-```
-
-Build output: `deps/micropython/ports/esp32/build-<BOARD>/micropython.bin`
-
-### Flash to Device
-
-```bash
-# Find USB device
-ls /dev/cu.usb*  # macOS
-ls /dev/ttyUSB*  # Linux
-
-# Flash
-source ~/esp/esp-idf/export.sh
-make flash BOARD=ESP32_GENERIC_C3 PORT=/dev/cu.usbmodem101
-```
-
-## Testing on Device
-
-### Using mpremote
-
-```bash
-# Interactive REPL
-mpremote connect /dev/cu.usbmodem101 repl
-
-# Execute code
-mpremote connect /dev/cu.usbmodem101 exec "
-import factorial
-print(factorial.factorial(10))
-print(factorial.fib(15))
-"
-
-# Run script file
-mpremote connect /dev/cu.usbmodem101 run test_script.py
-```
-
-### Expected Test Output
-
+### Imports
 ```python
->>> import factorial
->>> factorial.factorial(5)
-120
->>> factorial.fib(10)
-55
->>> factorial.add(100, 200)
-300
->>> factorial.multiply(3.14, 2.0)
-6.28
->>> factorial.is_even(42)
-True
+from __future__ import annotations       # Always first in src/ files
+
+import ast                               # stdlib alphabetical
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:                        # Type-only imports guarded
+    from mypyc.ir.module_ir import ModuleIR
+```
+Order: `__future__` → stdlib → third-party → local. Blank line between groups.
+
+### Type Annotations
+- Use `str | None` (PEP 604), not `Optional[str]`
+- Use lowercase generics: `list[str]`, `dict[str, str]`, `tuple[str, int]`
+- Annotate all function signatures (params + return)
+- Local variables: annotate only when needed for clarity
+
+### Naming
+| Kind | Convention | Examples |
+|------|-----------|----------|
+| Functions/methods | `snake_case` | `compile_source`, `_translate_expr` |
+| Private methods | `_` prefix | `_fresh_temp`, `_unbox_if_needed` |
+| Classes | `PascalCase` | `TypedPythonTranslator`, `CompilationResult` |
+| Constants | `UPPER_SNAKE` | `C_RESERVED_WORDS` |
+| Test classes | `TestFeatureName` | `TestSanitizeName`, `TestDictOperations` |
+| Test methods | `test_descriptive_behavior` | `test_simple_function`, `test_pop_no_args` |
+
+### Error Handling
+- Compiler errors → `CompilationResult(success=False, errors=[...])`, never raise
+- Unsupported AST nodes → emit C comment: `/* unsupported: <description> */`
+- Broad `except Exception` only at top-level `compile_to_micropython`; inner code propagates
+
+### Code Patterns
+- `@dataclass` for data containers, not dicts or named tuples
+- `Path` for file paths, never raw strings
+- f-strings for string building (including C code generation)
+- Generated C built as `list[str]` joined with `"\n"`, not concatenation
+
+## Test Conventions
+
+### Unit tests (test_compiler.py)
+Grouped in pytest classes. Pattern:
+```python
+class TestDictOperations:
+    def test_dict_literal(self):
+        source = '''
+def make_dict() -> dict:
+    d: dict = {"key": 1}
+    return d
+'''
+        translator = TypedPythonTranslator("test")
+        result = translator.translate_source(source)
+        assert "mp_obj_new_dict" in result
+```
+1. Define Python source as triple-quoted string
+2. Create `TypedPythonTranslator("test")`
+3. Call `translator.translate_source(source)`
+4. Assert on substrings in generated C
+
+### C runtime tests (test_c_runtime.py)
+Marked `@pytest.mark.c_runtime`. Requires gcc. Uses `compile_and_run` fixture:
+```python
+pytestmark = pytest.mark.c_runtime
+
+def test_c_sum_range(compile_and_run):
+    source = "..."
+    test_main_c = "..."   # C main() calling generated function
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "10"
 ```
 
-## Troubleshooting
+## ESP-IDF / Firmware
 
-### "ESP-IDF not found"
+For building firmware and flashing to ESP32, see platform-specific guides:
+- **Linux**: [docs/esp-idf-setup-linux.md](docs/esp-idf-setup-linux.md)
+- **macOS**: [docs/esp-idf-setup-macos.md](docs/esp-idf-setup-macos.md)
 
-```bash
-# Install ESP-IDF
-make setup-idf
-
-# Or manually
-git clone -b v5.2.2 --recursive https://github.com/espressif/esp-idf.git ~/esp/esp-idf
-cd ~/esp/esp-idf && ./install.sh esp32,esp32c3
-```
-
-### "Python requirements not satisfied" (ruamel.yaml)
-
-Apply the patch from Step 4. This is a known ESP-IDF bug.
-
-### "This chip is ESP32-C3, not ESP32"
-
-You're building for the wrong board. Check your chip:
-
-```bash
-# Auto-detect chip
-esptool.py --port /dev/cu.usbmodem101 chip_id
-```
-
-Then build for correct board:
-- ESP32-C3 → `BOARD=ESP32_GENERIC_C3`
-- ESP32 → `BOARD=ESP32_GENERIC`
-- ESP32-S3 → `BOARD=ESP32_GENERIC_S3`
-
-### "USB_SERIAL_JTAG_PACKET_SZ_BYTES undeclared"
-
-ESP-IDF version mismatch. Use v5.2.2:
-
-```bash
-cd ~/esp/esp-idf
-git checkout v5.2.2
-git submodule update --init --recursive
-./install.sh esp32,esp32c3
-```
-
-### Build takes too long / runs out of memory
-
-ESP32 builds are resource-intensive. Ensure:
-- 4GB+ RAM available
-- Use `-j4` or lower parallelism if needed
-- First build takes 5-10 minutes; subsequent builds are faster
-
-### "No module named 'factorial'" on device
-
-The firmware wasn't built with user modules. Verify:
-
-```bash
-# Check modules are compiled
-ls modules/usermod_*/
-
-# Check cmake includes them
-cat modules/micropython.cmake
-
-# Rebuild with modules
-source ~/esp/esp-idf/export.sh
-make build BOARD=ESP32_GENERIC_C3
-```
-
-## Supported Boards
-
-| Board | BOARD Variable | Chip |
-|-------|----------------|------|
-| ESP32 DevKit | `ESP32_GENERIC` | ESP32 |
-| ESP32-C3 DevKit | `ESP32_GENERIC_C3` | ESP32-C3 |
-| ESP32-S3 DevKit | `ESP32_GENERIC_S3` | ESP32-S3 |
-
-List all boards: `make list-boards`
-
-## Environment Variables
+Key commands: `make build BOARD=ESP32_GENERIC_C3`, `make flash`, `make deploy`.
+Always run `source ~/esp/esp-idf/export.sh` before firmware builds.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BOARD` | `ESP32_GENERIC` | Target board |
-| `PORT` | `/dev/cu.usbmodem101` | Serial port |
-| `ESP_IDF_DIR` | `~/esp/esp-idf` | ESP-IDF installation |
+| `BOARD` | `ESP32_GENERIC` | Target board (`ESP32_GENERIC_C3`, `ESP32_GENERIC_S3`) |
+| `PORT` | `/dev/ttyACM0` | Serial port (macOS: `/dev/cu.usbmodem101`) |
+| `ESP_IDF_DIR` | `~/esp/esp-idf` | ESP-IDF installation path |
 
-## Version Compatibility Matrix
+## Version Matrix
 
-| MicroPython | ESP-IDF | Status |
-|-------------|---------|--------|
-| v1.24.1 | v5.2.2 | ✅ Tested |
-| v1.24.1 | v5.2.0 | ✅ Should work |
-| v1.24.1 | v5.2.3 | ❌ Build errors on ESP32-C3 |
-| v1.24.1 | v5.1.x | ⚠️ May work |
-
-## Complete Setup Script
-
-For automated setup, run:
-
-```bash
-#!/bin/bash
-set -e
-
-# 1. Install Python dependencies
-pip install -e ".[dev]"
-
-# 2. Initialize submodules
-git submodule update --init --recursive
-
-# 3. Install ESP-IDF v5.2.2
-if [ ! -d "$HOME/esp/esp-idf" ]; then
-    mkdir -p ~/esp
-    git clone -b v5.2.2 --recursive https://github.com/espressif/esp-idf.git ~/esp/esp-idf
-    cd ~/esp/esp-idf
-    ./install.sh esp32,esp32c3,esp32s3
-fi
-
-# 4. Patch ESP-IDF check script
-cat > ~/esp/esp-idf/tools/check_python_dependencies.py << 'EOF'
-#!/usr/bin/env python
-import sys
-sys.exit(0)
-EOF
-
-# 5. Build mpy-cross
-source ~/esp/esp-idf/export.sh
-make -C deps/micropython/mpy-cross
-
-# 6. Compile example modules
-make compile-all
-
-echo "Setup complete! Run:"
-echo "  source ~/esp/esp-idf/export.sh"
-echo "  make build BOARD=ESP32_GENERIC_C3"
-```
-
-## Files Modified by Setup
-
-After setup, these files/directories are created:
-
-| Path | Description |
-|------|-------------|
-| `~/esp/esp-idf/` | ESP-IDF installation (~2GB) |
-| `~/.espressif/` | ESP-IDF tools and Python venv |
-| `deps/micropython/mpy-cross/build/` | mpy-cross compiler |
-| `modules/usermod_*/` | Compiled C modules |
-
-## Cleaning Up
-
-```bash
-# Clean compiled modules
-make clean
-
-# Clean MicroPython build
-make clean-all
-
-# Full reset (removes ESP-IDF)
-rm -rf ~/esp/esp-idf ~/.espressif
-```
+| Component | Version |
+|-----------|---------|
+| Python | ≥3.10 |
+| MicroPython submodule | v1.28.0-preview |
+| ESP-IDF (for firmware) | v5.4.2 |
+| mypy | ≥1.0.0 |

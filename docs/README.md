@@ -10,15 +10,19 @@ This directory contains documentation for the mypyc-micropython project - a comp
 | [02-mypyc-reference.md](02-mypyc-reference.md) | How mypyc implements complex features (*args, **kwargs, closures, generators) |
 | [03-micropython-c-api.md](03-micropython-c-api.md) | MicroPython C API quick reference |
 | [04-feature-scope.md](04-feature-scope.md) | Feature scope definition (in-scope, partial, out-of-scope) |
-| [05-roadmap.md](05-roadmap.md) | 6-phase implementation roadmap |
+| [05-roadmap.md](05-roadmap.md) | 6-phase implementation roadmap with list/dict operation tracking |
 | [06-esp32-integration.md](06-esp32-integration.md) | Calling ESP32 MicroPython modules from compiled code |
 | [07-micropython-async-internals.md](07-micropython-async-internals.md) | Deep dive into MicroPython's async/await implementation |
+| [esp-idf-setup-linux.md](esp-idf-setup-linux.md) | ESP-IDF + pyenv setup guide for Linux (Ubuntu/Debian) |
+| [esp-idf-setup-macos.md](esp-idf-setup-macos.md) | ESP-IDF + pyenv setup guide for macOS |
 
 ## Quick Links
 
 ### For Users
 - [Getting Started](../README.md) - Installation and basic usage
 - [Supported Features](04-feature-scope.md#in-scope-features) - What Python features are supported
+- [ESP-IDF Setup (Linux)](esp-idf-setup-linux.md) - Setting up ESP-IDF with pyenv on Linux
+- [ESP-IDF Setup (macOS)](esp-idf-setup-macos.md) - Setting up ESP-IDF with pyenv on macOS
 - [ESP32 Integration](06-esp32-integration.md) - Using hardware modules
 
 ### For Contributors
@@ -34,13 +38,16 @@ This directory contains documentation for the mypyc-micropython project - a comp
 - Basic functions with type annotations
 - Primitives: `int`, `float`, `bool`
 - Arithmetic, comparison, bitwise operators
-- Control flow: `if`/`else`, `while` loops
+- Control flow: `if`/`else`, `while` loops, `for` loops (`range`, list, dict)
+- Ternary expressions
 - Recursion
-- Local variables
+- Local variables (typed and untyped)
+- Lists: literals, indexing, `append()`, `pop()`
+- Dicts: literals, indexing, `get()`, `keys()`, `values()`, `items()`, `copy()`, `clear()`, `setdefault()`, `pop()`, `popitem()`, `update()`, `in`/`not in`, `dict(d)` copy
+- Built-ins: `abs`, `int`, `float`, `len`, `range`
 
 **Coming Soon:**
-- `for` loops
-- Lists and dictionaries
+- Strings (beyond basic)
 - Simple classes
 - Exception handling
 

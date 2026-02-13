@@ -55,13 +55,14 @@ else:
 | Comparison operators (`==`, `!=`, `<`, `>`, `<=`, `>=`) | ✅ |
 | `if`/`else` statements | ✅ |
 | `while` loops | ✅ |
+| `for` loops (range, list, dict) | ✅ |
 | Ternary expressions (`x if cond else y`) | ✅ |
 | Recursion | ✅ |
 | Local variables (typed and untyped) | ✅ |
-| Built-ins: `abs`, `int`, `float` | ✅ |
+| Built-ins: `abs`, `int`, `float`, `len`, `range` | ✅ |
+| Lists: literals, indexing, `append()`, `pop()` | ✅ |
+| Dicts: literals, indexing, `get()`, `keys()`, `values()`, `items()` | ✅ |
 | Strings (basic) | Partial |
-| `for` loops | ❌ |
-| Lists/dicts | ❌ |
 | Classes | ❌ |
 | Exceptions | ❌ |
 

@@ -40,10 +40,21 @@ class FunctionInfo:
     docstring: str | None = None
 
 
+C_RESERVED_WORDS = {
+    "auto", "break", "case", "char", "const", "continue", "default", "do",
+    "double", "else", "enum", "extern", "float", "for", "goto", "if",
+    "int", "long", "register", "return", "short", "signed", "sizeof", "static",
+    "struct", "switch", "typedef", "union", "unsigned", "void", "volatile", "while",
+    "inline", "restrict", "_Bool", "_Complex", "_Imaginary",
+}
+
+
 def sanitize_name(name: str) -> str:
     result = re.sub(r'[^a-zA-Z0-9_]', '_', name)
     if result and result[0].isdigit():
         result = '_' + result
+    if result in C_RESERVED_WORDS:
+        result = result + "_"
     return result
 
 
@@ -139,7 +150,9 @@ class TypedPythonTranslator:
         self._function_code: list[str] = []
         self._temp_counter = 0
         self._pending_list_temps: list[tuple[str, int, str]] = []
+        self._pending_dict_temps: list[tuple[str, list[tuple[str, str]]]] = []
         self._loop_depth = 0
+        self._var_types: dict[str, str] = {}
     
     def translate_source(self, source: str) -> str:
         tree = ast.parse(source)
@@ -164,6 +177,8 @@ class TypedPythonTranslator:
         return expr, expr_type
     
     def _translate_function(self, node: ast.FunctionDef) -> None:
+        self._var_types = {}
+        
         func_name = node.name
         c_func_name = f"{self.c_name}_{sanitize_name(func_name)}"
         
@@ -173,7 +188,9 @@ class TypedPythonTranslator:
         
         arg_types = []
         for arg in args.args:
-            arg_types.append(self._annotation_to_c_type(arg.annotation) if arg.annotation else "mp_obj_t")
+            c_type = self._annotation_to_c_type(arg.annotation) if arg.annotation else "mp_obj_t"
+            arg_types.append(c_type)
+            self._var_types[arg.arg] = c_type
         
         return_type = self._annotation_to_c_type(node.returns) if node.returns else "mp_obj_t"
         
@@ -218,24 +235,25 @@ class TypedPythonTranslator:
         lines = []
         for i, (arg_name, arg_type) in enumerate(zip(arg_names, arg_types)):
             src = f"{arg_name}_obj" if num_args <= 3 else f"args[{i}]"
+            c_arg_name = sanitize_name(arg_name)
             
             if arg_type == "mp_int_t":
-                lines.append(f"    mp_int_t {arg_name} = mp_obj_get_int({src});")
+                lines.append(f"    mp_int_t {c_arg_name} = mp_obj_get_int({src});")
             elif arg_type == "mp_float_t":
-                lines.append(f"    mp_float_t {arg_name} = mp_get_float_checked({src});")
+                lines.append(f"    mp_float_t {c_arg_name} = mp_get_float_checked({src});")
             else:
-                lines.append(f"    mp_obj_t {arg_name} = {src};")
+                lines.append(f"    mp_obj_t {c_arg_name} = {src};")
         return lines
     
     def _annotation_to_c_type(self, annotation) -> str:
         if isinstance(annotation, ast.Name):
-            type_map = {"int": "mp_int_t", "float": "mp_float_t", "bool": "bool", "str": "const char*", "None": "void", "list": "mp_obj_t"}
+            type_map = {"int": "mp_int_t", "float": "mp_float_t", "bool": "bool", "str": "const char*", "None": "void", "list": "mp_obj_t", "dict": "mp_obj_t"}
             return type_map.get(annotation.id, "mp_obj_t")
         elif isinstance(annotation, ast.Subscript):
-            # Handle generic types like list[int], list[float], etc.
+            # Handle generic types like list[int], dict[str, int], etc.
             if isinstance(annotation.value, ast.Name):
-                if annotation.value.id == "list":
-                    return "mp_obj_t"  # All lists are boxed as mp_obj_t
+                if annotation.value.id in ("list", "dict"):
+                    return "mp_obj_t"  # All lists/dicts are boxed as mp_obj_t
         return "mp_obj_t"
     
     def _translate_statement(self, stmt, return_type: str, locals_: list[str]) -> list[str]:
@@ -372,7 +390,10 @@ class TypedPythonTranslator:
         
         if loop_var not in locals_:
             locals_.append(loop_var)
-            lines.append(f"    mp_int_t {loop_var};")
+            self._var_types[loop_var] = "mp_int_t"
+            lines.append(f"    mp_int_t {sanitize_name(loop_var)};")
+        
+        c_loop_var = sanitize_name(loop_var)
         
         end_var = self._fresh_temp()
         lines.append(f"    mp_int_t {end_var} = {end};")
@@ -382,23 +403,23 @@ class TypedPythonTranslator:
             lines.append(f"    mp_int_t {step_var} = {step};")
         
         if step_is_constant and step_constant_value == 1:
-            cond = f"{loop_var} < {end_var}"
-            inc = f"{loop_var}++"
+            cond = f"{c_loop_var} < {end_var}"
+            inc = f"{c_loop_var}++"
         elif step_is_constant and step_constant_value == -1:
-            cond = f"{loop_var} > {end_var}"
-            inc = f"{loop_var}--"
+            cond = f"{c_loop_var} > {end_var}"
+            inc = f"{c_loop_var}--"
         elif step_is_constant and step_constant_value is not None:
             if step_constant_value > 0:
-                cond = f"{loop_var} < {end_var}"
+                cond = f"{c_loop_var} < {end_var}"
             else:
-                cond = f"{loop_var} > {end_var}"
-            inc = f"{loop_var} += {step}"
+                cond = f"{c_loop_var} > {end_var}"
+            inc = f"{c_loop_var} += {step}"
         else:
             assert step_var is not None
-            cond = f"({step_var} > 0) ? ({loop_var} < {end_var}) : ({loop_var} > {end_var})"
-            inc = f"{loop_var} += {step_var}"
+            cond = f"({step_var} > 0) ? ({c_loop_var} < {end_var}) : ({c_loop_var} > {end_var})"
+            inc = f"{c_loop_var} += {step_var}"
         
-        lines.append(f"    for ({loop_var} = {start}; {cond}; {inc}) {{")
+        lines.append(f"    for ({c_loop_var} = {start}; {cond}; {inc}) {{")
         
         self._loop_depth += 1
         for s in stmt.body:
@@ -415,18 +436,17 @@ class TypedPythonTranslator:
         lines.extend(self._flush_pending_list_temps())
         
         iter_var = self._fresh_temp()
-        len_var = self._fresh_temp()
-        idx_var = self._fresh_temp()
-        
-        lines.append(f"    mp_obj_t {iter_var} = {iter_expr};")
-        lines.append(f"    size_t {len_var} = mp_obj_get_int(mp_obj_len({iter_var}));")
-        lines.append(f"    for (size_t {idx_var} = 0; {idx_var} < {len_var}; {idx_var}++) {{")
+        iter_buf_var = self._fresh_temp()
+        c_loop_var = sanitize_name(loop_var)
         
         if loop_var not in locals_:
             locals_.append(loop_var)
-            lines.append(f"        mp_obj_t {loop_var} = mp_obj_subscr({iter_var}, mp_obj_new_int({idx_var}), MP_OBJ_SENTINEL);")
-        else:
-            lines.append(f"        {loop_var} = mp_obj_subscr({iter_var}, mp_obj_new_int({idx_var}), MP_OBJ_SENTINEL);")
+            self._var_types[loop_var] = "mp_obj_t"
+            lines.append(f"    mp_obj_t {c_loop_var};")
+        
+        lines.append(f"    mp_obj_iter_buf_t {iter_buf_var};")
+        lines.append(f"    mp_obj_t {iter_var} = mp_getiter({iter_expr}, &{iter_buf_var});")
+        lines.append(f"    while (({c_loop_var} = mp_iternext({iter_var})) != MP_OBJ_STOP_ITERATION) {{")
         
         self._loop_depth += 1
         for s in stmt.body:
@@ -443,6 +463,13 @@ class TypedPythonTranslator:
             lines.append(f"    mp_obj_t {temp_name}_items[] = {{{items_str}}};")
             lines.append(f"    mp_obj_t {temp_name} = mp_obj_new_list({n}, {temp_name}_items);")
         self._pending_list_temps.clear()
+        
+        for temp_name, kv_pairs in self._pending_dict_temps:
+            lines.append(f"    mp_obj_t {temp_name} = mp_obj_new_dict({len(kv_pairs)});")
+            for key_expr, val_expr in kv_pairs:
+                lines.append(f"    mp_obj_dict_store({temp_name}, {key_expr}, {val_expr});")
+        self._pending_dict_temps.clear()
+        
         return lines
     
     def _translate_assign(self, stmt: ast.Assign, locals_: list[str]) -> list[str]:
@@ -458,6 +485,7 @@ class TypedPythonTranslator:
             return []
         
         var_name = target.id
+        c_var_name = sanitize_name(var_name)
         lines = self._flush_pending_list_temps()
         expr, expr_type = self._translate_expr(stmt.value, locals_)
         more_lines = self._flush_pending_list_temps()
@@ -465,25 +493,20 @@ class TypedPythonTranslator:
         
         if var_name not in locals_:
             locals_.append(var_name)
-            return lines + [f"    {expr_type} {var_name} = {expr};"]
-        return lines + [f"    {var_name} = {expr};"]
+            self._var_types[var_name] = expr_type
+            return lines + [f"    {expr_type} {c_var_name} = {expr};"]
+        return lines + [f"    {c_var_name} = {expr};"]
     
     def _translate_subscript_assign(self, target: ast.Subscript, value, locals_: list[str]) -> list[str]:
         lines = self._flush_pending_list_temps()
         obj_expr, _ = self._translate_expr(target.value, locals_)
-        idx_expr, _ = self._translate_expr(target.slice, locals_)
+        idx_expr, idx_type = self._translate_expr(target.slice, locals_)
         val_expr, val_type = self._translate_expr(value, locals_)
         
-        if val_type == "mp_int_t":
-            boxed_val = f"mp_obj_new_int({val_expr})"
-        elif val_type == "mp_float_t":
-            boxed_val = f"mp_obj_new_float({val_expr})"
-        elif val_type == "bool":
-            boxed_val = f"({val_expr} ? mp_const_true : mp_const_false)"
-        else:
-            boxed_val = val_expr
+        boxed_key = self._box_value(idx_expr, idx_type)
+        boxed_val = self._box_value(val_expr, val_type)
         
-        lines.append(f"    mp_obj_subscr({obj_expr}, mp_obj_new_int({idx_expr}), {boxed_val});")
+        lines.append(f"    mp_obj_subscr({obj_expr}, {boxed_key}, {boxed_val});")
         return lines
     
     def _translate_ann_assign(self, stmt: ast.AnnAssign, locals_: list[str]) -> list[str]:
@@ -491,6 +514,7 @@ class TypedPythonTranslator:
             return []
         
         var_name = stmt.target.id
+        c_var_name = sanitize_name(var_name)
         c_type = self._annotation_to_c_type(stmt.annotation) if stmt.annotation else "mp_int_t"
         
         if stmt.value is not None:
@@ -500,11 +524,13 @@ class TypedPythonTranslator:
             lines.extend(more_lines)
             expr, expr_type = self._unbox_if_needed(expr, expr_type, c_type)
             locals_.append(var_name)
-            lines.append(f"    {c_type} {var_name} = {expr};")
+            self._var_types[var_name] = c_type
+            lines.append(f"    {c_type} {c_var_name} = {expr};")
             return lines
         else:
             locals_.append(var_name)
-            return [f"    {c_type} {var_name};"]
+            self._var_types[var_name] = c_type
+            return [f"    {c_type} {c_var_name};"]
     
     def _translate_aug_assign(self, stmt: ast.AugAssign, locals_: list[str]) -> list[str]:
         if not isinstance(stmt.target, ast.Name):
@@ -545,6 +571,8 @@ class TypedPythonTranslator:
             return f"(({test}) ? ({body}) : ({orelse}))", body_type
         elif isinstance(expr, ast.List):
             return self._translate_list(expr, locals_)
+        elif isinstance(expr, ast.Dict):
+            return self._translate_dict(expr, locals_)
         elif isinstance(expr, ast.Subscript):
             return self._translate_subscript(expr, locals_)
         return "/* unsupported */", "mp_obj_t"
@@ -571,10 +599,39 @@ class TypedPythonTranslator:
         self._pending_list_temps.append((temp_name, n, items_str))
         return temp_name, "mp_obj_t"
     
+    def _translate_dict(self, expr: ast.Dict, locals_: list[str]) -> tuple[str, str]:
+        if not expr.keys:
+            return "mp_obj_new_dict(0)", "mp_obj_t"
+        
+        kv_pairs = []
+        for key, val in zip(expr.keys, expr.values):
+            if key is None:
+                continue
+            key_expr, key_type = self._translate_expr(key, locals_)
+            val_expr, val_type = self._translate_expr(val, locals_)
+            
+            boxed_key = self._box_value(key_expr, key_type)
+            boxed_val = self._box_value(val_expr, val_type)
+            kv_pairs.append((boxed_key, boxed_val))
+        
+        temp_name = self._fresh_temp()
+        self._pending_dict_temps.append((temp_name, kv_pairs))
+        return temp_name, "mp_obj_t"
+    
+    def _box_value(self, expr: str, expr_type: str) -> str:
+        if expr_type == "mp_int_t":
+            return f"mp_obj_new_int({expr})"
+        elif expr_type == "mp_float_t":
+            return f"mp_obj_new_float({expr})"
+        elif expr_type == "bool":
+            return f"({expr} ? mp_const_true : mp_const_false)"
+        return expr
+
     def _translate_subscript(self, expr: ast.Subscript, locals_: list[str]) -> tuple[str, str]:
         value_expr, value_type = self._translate_expr(expr.value, locals_)
-        slice_expr, _ = self._translate_expr(expr.slice, locals_)
-        return f"mp_obj_subscr({value_expr}, mp_obj_new_int({slice_expr}), MP_OBJ_SENTINEL)", "mp_obj_t"
+        slice_expr, slice_type = self._translate_expr(expr.slice, locals_)
+        boxed_key = self._box_value(slice_expr, slice_type)
+        return f"mp_obj_subscr({value_expr}, {boxed_key}, MP_OBJ_SENTINEL)", "mp_obj_t"
     
     def _translate_constant(self, expr: ast.Constant) -> tuple[str, str]:
         val = expr.value
@@ -599,7 +656,9 @@ class TypedPythonTranslator:
             return "false", "bool"
         elif name == "None":
             return "mp_const_none", "mp_obj_t"
-        return name, "mp_int_t"
+        c_name = sanitize_name(name)
+        var_type = self._var_types.get(name, "mp_int_t")
+        return c_name, var_type
     
     def _translate_binop(self, expr: ast.BinOp, locals_: list[str]) -> tuple[str, str]:
         left, left_type = self._translate_expr(expr.left, locals_)
@@ -652,6 +711,19 @@ class TypedPythonTranslator:
         prev_type = left_type
         for op, comparator in zip(expr.ops, expr.comparators):
             right, right_type = self._translate_expr(comparator, locals_)
+            
+            # Handle 'in' / 'not in' via MicroPython binary op
+            if isinstance(op, (ast.In, ast.NotIn)):
+                boxed_prev = self._box_value(prev, prev_type)
+                contains_expr = f"mp_obj_is_true(mp_binary_op(MP_BINARY_OP_IN, {boxed_prev}, {right}))"
+                if isinstance(op, ast.NotIn):
+                    parts.append(f"(!{contains_expr})")
+                else:
+                    parts.append(f"({contains_expr})")
+                prev = right
+                prev_type = right_type
+                continue
+            
             # Unbox mp_obj_t operands for native C comparison
             if prev_type == "mp_obj_t" or right_type == "mp_obj_t":
                 target = right_type if right_type != "mp_obj_t" else (prev_type if prev_type != "mp_obj_t" else "mp_int_t")
@@ -692,6 +764,12 @@ class TypedPythonTranslator:
         if func_name == "list" and len(args) == 0:
             return "mp_obj_new_list(0, NULL)", "mp_obj_t"
         
+        if func_name == "dict" and len(args) == 0:
+            return "mp_obj_new_dict(0)", "mp_obj_t"
+        
+        if func_name == "dict" and len(args) == 1:
+            return f"mp_obj_dict_copy({args[0]})", "mp_obj_t"
+        
         c_func = f"{self.c_name}_{sanitize_name(func_name)}"
         args_str = ", ".join(f"mp_obj_new_int({a})" for a in args)
         call_expr = f"{c_func}({args_str})"
@@ -707,34 +785,82 @@ class TypedPythonTranslator:
         
         if method_name == "append" and len(args) == 1:
             arg_expr, arg_type = args[0]
-            if arg_type == "mp_int_t":
-                boxed_arg = f"mp_obj_new_int({arg_expr})"
-            elif arg_type == "mp_float_t":
-                boxed_arg = f"mp_obj_new_float({arg_expr})"
-            elif arg_type == "bool":
-                boxed_arg = f"({arg_expr} ? mp_const_true : mp_const_false)"
-            else:
-                boxed_arg = arg_expr
+            boxed_arg = self._box_value(arg_expr, arg_type)
             return f"mp_obj_list_append({obj_expr}, {boxed_arg})", "mp_obj_t"
         
         if method_name == "pop":
-            # Use MicroPython method dispatch: mp_load_method + mp_call_method_n_kw
-            # list_pop is static in real MicroPython, so direct call won't link.
-            # mp_call_method_n_kw args layout: [method, self, arg0, ...]
             if len(args) == 0:
                 return (
                     f"({{ mp_obj_t __method[2]; "
                     f"mp_load_method({obj_expr}, MP_QSTR_pop, __method); "
                     f"mp_call_method_n_kw(0, 0, __method); }})"
                 ), "mp_obj_t"
-            else:
-                idx_expr, _ = args[0]
+            elif len(args) == 1:
+                arg_expr, arg_type = args[0]
+                boxed_arg = self._box_value(arg_expr, arg_type)
                 return (
                     f"({{ mp_obj_t __method[3]; "
                     f"mp_load_method({obj_expr}, MP_QSTR_pop, __method); "
-                    f"__method[2] = mp_obj_new_int({idx_expr}); "
+                    f"__method[2] = {boxed_arg}; "
                     f"mp_call_method_n_kw(1, 0, __method); }})"
                 ), "mp_obj_t"
+            else:
+                arg_expr, arg_type = args[0]
+                boxed_arg = self._box_value(arg_expr, arg_type)
+                default_expr, default_type = args[1]
+                boxed_default = self._box_value(default_expr, default_type)
+                return (
+                    f"({{ mp_obj_t __method[4]; "
+                    f"mp_load_method({obj_expr}, MP_QSTR_pop, __method); "
+                    f"__method[2] = {boxed_arg}; "
+                    f"__method[3] = {boxed_default}; "
+                    f"mp_call_method_n_kw(2, 0, __method); }})"
+                ), "mp_obj_t"
+        
+        if method_name == "get":
+            if len(args) >= 1:
+                key_expr, key_type = args[0]
+                boxed_key = self._box_value(key_expr, key_type)
+                if len(args) >= 2:
+                    default_expr, default_type = args[1]
+                    boxed_default = self._box_value(default_expr, default_type)
+                    return f"mp_call_function_n_kw(mp_load_attr({obj_expr}, MP_QSTR_get), 2, 0, (mp_obj_t[]){{{boxed_key}, {boxed_default}}})", "mp_obj_t"
+                return f"mp_obj_dict_get({obj_expr}, {boxed_key})", "mp_obj_t"
+        
+        if method_name == "keys":
+            return f"mp_call_function_0(mp_load_attr({obj_expr}, MP_QSTR_keys))", "mp_obj_t"
+        
+        if method_name == "values":
+            return f"mp_call_function_0(mp_load_attr({obj_expr}, MP_QSTR_values))", "mp_obj_t"
+        
+        if method_name == "items":
+            return f"mp_call_function_0(mp_load_attr({obj_expr}, MP_QSTR_items))", "mp_obj_t"
+        
+        if method_name == "copy":
+            return f"mp_call_function_0(mp_load_attr({obj_expr}, MP_QSTR_copy))", "mp_obj_t"
+        
+        if method_name == "clear":
+            return f"mp_call_function_0(mp_load_attr({obj_expr}, MP_QSTR_clear))", "mp_obj_t"
+        
+        if method_name == "popitem":
+            return f"mp_call_function_0(mp_load_attr({obj_expr}, MP_QSTR_popitem))", "mp_obj_t"
+        
+        if method_name == "setdefault":
+            if len(args) == 1:
+                key_expr, key_type = args[0]
+                boxed_key = self._box_value(key_expr, key_type)
+                return f"mp_call_function_1(mp_load_attr({obj_expr}, MP_QSTR_setdefault), {boxed_key})", "mp_obj_t"
+            elif len(args) >= 2:
+                key_expr, key_type = args[0]
+                boxed_key = self._box_value(key_expr, key_type)
+                default_expr, default_type = args[1]
+                boxed_default = self._box_value(default_expr, default_type)
+                return f"mp_call_function_n_kw(mp_load_attr({obj_expr}, MP_QSTR_setdefault), 2, 0, (mp_obj_t[]){{{boxed_key}, {boxed_default}}})", "mp_obj_t"
+        
+        if method_name == "update" and len(args) == 1:
+            arg_expr, arg_type = args[0]
+            boxed_arg = self._box_value(arg_expr, arg_type)
+            return f"mp_call_function_1(mp_load_attr({obj_expr}, MP_QSTR_update), {boxed_arg})", "mp_obj_t"
         
         return f"/* unsupported method: {method_name} */", "mp_obj_t"
     

@@ -48,7 +48,7 @@ This document defines what Python features mypyc-micropython will support, parti
 |---------|--------|-------|
 | `if`/`elif`/`else` | ✅ Implemented | |
 | `while` loops | ✅ Implemented | Including `break`/`continue` |
-| `for` loops | 📋 Planned | Phase 1 - over range, list, tuple |
+| `for` loops | ✅ Implemented | Over range, list, dict, and other iterables |
 | `pass` | ✅ Implemented | |
 | `return` | ✅ Implemented | |
 
@@ -65,14 +65,14 @@ This document defines what Python features mypyc-micropython will support, parti
 | Keyword-only arguments | 📋 Planned | Phase 2 |
 | Positional-only arguments | 📋 Planned | Phase 2 |
 
-### Data Structures 📋
+### Data Structures ✅
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| `list` | 📋 Planned | Phase 1 |
-| `tuple` | 📋 Planned | Phase 1 |
-| `dict` | 📋 Planned | Phase 1 |
-| `set` | 📋 Planned | Phase 1 |
+| `list` | ✅ Implemented | Literals, indexing, `append()`, `pop()`, `len()` |
+| `tuple` | 📋 Planned | Phase 2 |
+| `dict` | ✅ Implemented | Literals, indexing, `get()`, `keys()`, `values()`, `items()` |
+| `set` | 📋 Planned | Phase 2 |
 | `frozenset` | 📋 Planned | Lower priority |
 
 ### Classes 📋
@@ -107,12 +107,12 @@ This document defines what Python features mypyc-micropython will support, parti
 | `abs()` | ✅ Implemented | |
 | `int()` | ✅ Implemented | |
 | `float()` | ✅ Implemented | |
-| `bool()` | 📋 Planned | Phase 1 |
-| `len()` | 📋 Planned | Phase 1 |
-| `range()` | 📋 Planned | Phase 1 |
-| `print()` | 📋 Planned | Phase 1 |
-| `min()`/`max()` | 📋 Planned | Phase 1 |
-| `sum()` | 📋 Planned | Phase 1 |
+| `bool()` | 📋 Planned | Phase 2 |
+| `len()` | ✅ Implemented | For list, dict, and other collections |
+| `range()` | ✅ Implemented | 1, 2, and 3 argument forms |
+| `print()` | 📋 Planned | Phase 2 |
+| `min()`/`max()` | 📋 Planned | Phase 2 |
+| `sum()` | 📋 Planned | Phase 2 |
 | `enumerate()` | 📋 Planned | Phase 2 |
 | `zip()` | 📋 Planned | Phase 2 |
 | `map()`/`filter()` | 📋 Planned | Phase 5 |
@@ -120,6 +120,8 @@ This document defines what Python features mypyc-micropython will support, parti
 | `isinstance()` | 📋 Planned | Phase 3 |
 | `type()` | 📋 Planned | Phase 3 |
 | `hasattr()`/`getattr()`/`setattr()` | 📋 Planned | Phase 3 |
+| `list()` | ✅ Implemented | Empty list constructor |
+| `dict()` | ✅ Implemented | Empty dict constructor |
 
 ## Partially In-Scope Features
 
