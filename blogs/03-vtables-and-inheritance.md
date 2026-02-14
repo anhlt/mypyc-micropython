@@ -41,6 +41,13 @@ class Counter:
         self.value += self.step
         return self.value
 
+    def decrement(self) -> int:
+        self.value -= self.step
+        return self.value
+
+    def reset(self) -> None:
+        self.value = 0
+
     def get(self) -> int:
         return self.value
 
