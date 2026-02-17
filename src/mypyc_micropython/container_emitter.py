@@ -93,8 +93,7 @@ class ContainerEmitter:
         container_c = self._value_to_c(instr.container)
         key_c = self._box_value_ir(instr.key)
         return [
-            f"    mp_obj_t {result_name} = "
-            f"mp_obj_subscr({container_c}, {key_c}, MP_OBJ_SENTINEL);"
+            f"    mp_obj_t {result_name} = mp_obj_subscr({container_c}, {key_c}, MP_OBJ_SENTINEL);"
         ]
 
     def emit_set_item(self, instr: SetItemIR) -> list[str]:
@@ -153,7 +152,6 @@ class ContainerEmitter:
     def _emit_pop(self, instr: MethodCallIR, receiver: str) -> list[str]:
         n_args = len(instr.args)
         method_size = 2 + n_args
-        lines: list[str] = []
 
         if instr.result:
             result_name = instr.result.name
@@ -182,15 +180,10 @@ class ContainerEmitter:
             ]
         elif len(instr.args) == 1:
             key_c = self._box_value_ir(instr.args[0])
-            return [
-                f"    mp_obj_t {result_name} = "
-                f"mp_obj_dict_get({receiver}, {key_c});"
-            ]
+            return [f"    mp_obj_t {result_name} = mp_obj_dict_get({receiver}, {key_c});"]
         return ["    /* get() requires at least 1 arg */"]
 
-    def _emit_zero_arg_method(
-        self, instr: MethodCallIR, receiver: str
-    ) -> list[str]:
+    def _emit_zero_arg_method(self, instr: MethodCallIR, receiver: str) -> list[str]:
         """keys, values, items, copy, clear, popitem — all zero-arg dispatches."""
         method = instr.method
         call = f"mp_call_function_0(mp_load_attr({receiver}, MP_QSTR_{method}))"
@@ -220,26 +213,19 @@ class ContainerEmitter:
     def _emit_update(self, instr: MethodCallIR, receiver: str) -> list[str]:
         if instr.args:
             arg_c = self._box_value_ir(instr.args[0])
-            call = (
-                f"mp_call_function_1(mp_load_attr({receiver}, MP_QSTR_update), "
-                f"{arg_c})"
-            )
+            call = f"mp_call_function_1(mp_load_attr({receiver}, MP_QSTR_update), {arg_c})"
         else:
             call = f"mp_call_function_0(mp_load_attr({receiver}, MP_QSTR_update))"
         if instr.result:
             return [f"    mp_obj_t {instr.result.name} = {call};"]
         return [f"    (void){call};"]
 
-    def _emit_generic_method_call(
-        self, instr: MethodCallIR, receiver: str
-    ) -> list[str]:
+    def _emit_generic_method_call(self, instr: MethodCallIR, receiver: str) -> list[str]:
         """Fallback for unknown methods: mp_load_method + mp_call_method."""
         n_args = len(instr.args)
         method_size = 2 + n_args
         parts = [f"mp_obj_t __method[{method_size}]; "]
-        parts.append(
-            f"mp_load_method({receiver}, MP_QSTR_{instr.method}, __method); "
-        )
+        parts.append(f"mp_load_method({receiver}, MP_QSTR_{instr.method}, __method); ")
         for i, arg in enumerate(instr.args):
             boxed = self._box_value_ir(arg)
             parts.append(f"__method[{2 + i}] = {boxed}; ")

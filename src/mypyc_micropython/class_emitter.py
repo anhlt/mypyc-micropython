@@ -175,7 +175,6 @@ class ClassEmitter:
 
     def emit_make_new(self) -> list[str]:
         lines = []
-        all_fields = self.class_ir.get_all_fields()
         vtable_entries = self.class_ir.get_vtable_entries()
 
         if self.class_ir.is_dataclass and self.class_ir.dataclass_info:

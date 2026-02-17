@@ -60,18 +60,50 @@ class FunctionInfo:
 
 
 C_RESERVED_WORDS = {
-    "auto", "break", "case", "char", "const", "continue", "default", "do",
-    "double", "else", "enum", "extern", "float", "for", "goto", "if",
-    "int", "long", "register", "return", "short", "signed", "sizeof", "static",
-    "struct", "switch", "typedef", "union", "unsigned", "void", "volatile", "while",
-    "inline", "restrict", "_Bool", "_Complex", "_Imaginary",
+    "auto",
+    "break",
+    "case",
+    "char",
+    "const",
+    "continue",
+    "default",
+    "do",
+    "double",
+    "else",
+    "enum",
+    "extern",
+    "float",
+    "for",
+    "goto",
+    "if",
+    "int",
+    "long",
+    "register",
+    "return",
+    "short",
+    "signed",
+    "sizeof",
+    "static",
+    "struct",
+    "switch",
+    "typedef",
+    "union",
+    "unsigned",
+    "void",
+    "volatile",
+    "while",
+    "inline",
+    "restrict",
+    "_Bool",
+    "_Complex",
+    "_Imaginary",
 }
 
 
 def sanitize_name(name: str) -> str:
-    result = re.sub(r'[^a-zA-Z0-9_]', '_', name)
+    result = re.sub(r"[^a-zA-Z0-9_]", "_", name)
     if result and result[0].isdigit():
-        result = '_' + result
+        result = "_" + result
     if result in C_RESERVED_WORDS:
         result = result + "_"
     return result
@@ -91,7 +123,7 @@ def compile_to_micropython(
             mk_code="",
             cmake_code="",
             success=False,
-            errors=[f"Source file not found: {source_path}"]
+            errors=[f"Source file not found: {source_path}"],
         )
 
     module_name = source_path.stem
@@ -128,7 +160,7 @@ def compile_to_micropython(
             mk_code="",
             cmake_code="",
             success=False,
-            errors=[str(e)]
+            errors=[str(e)],
         )
 
 
@@ -200,7 +232,9 @@ class TypedPythonTranslator:
         self._temp_counter += 1
         return f"_tmp{self._temp_counter}"
 
-    def _unbox_if_needed(self, expr: str, expr_type: str, target_type: str = "mp_int_t") -> tuple[str, str]:
+    def _unbox_if_needed(
+        self, expr: str, expr_type: str, target_type: str = "mp_int_t"
+    ) -> tuple[str, str]:
         """Unbox mp_obj_t to a native C type when needed for arithmetic/comparison."""
         if expr_type == "mp_obj_t" and target_type != "mp_obj_t":
             if target_type == "mp_float_t":
@@ -348,12 +382,6 @@ class TypedPythonTranslator:
         self._class_code.append(class_code)
 
     def _emit_method(self, class_ir: ClassIR, method_ir: MethodIR) -> None:
-        node = method_ir.body_ast
-        c_method_name = method_ir.c_name
-
-        vtable_entries = class_ir.get_vtable_entries()
-        has_vtable = len(vtable_entries) > 0
-
         if method_ir.is_virtual and not method_ir.is_special:
             self._emit_native_method(class_ir, method_ir)
 
@@ -381,9 +409,17 @@ class TypedPythonTranslator:
         return_type_str = ret_type
 
         for stmt in node.body:
-            if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str):
+            if (
+                isinstance(stmt, ast.Expr)
+                and isinstance(stmt.value, ast.Constant)
+                and isinstance(stmt.value.value, str)
+            ):
                 continue
-            lines.extend(self._translate_method_statement(stmt, return_type_str, local_vars, class_ir, native=True))
+            lines.extend(
+                self._translate_method_statement(
+                    stmt, return_type_str, local_vars, class_ir, native=True
+                )
+            )
 
         if method_ir.return_type == CType.VOID:
             if not any("return" in line for line in lines):
@@ -450,7 +486,9 @@ class TypedPythonTranslator:
             elif method_ir.return_type == CType.MP_FLOAT_T:
                 lines.append(f"    return mp_obj_new_float({c_name}_native({args_str}));")
             elif method_ir.return_type == CType.BOOL:
-                lines.append(f"    return {c_name}_native({args_str}) ? mp_const_true : mp_const_false;")
+                lines.append(
+                    f"    return {c_name}_native({args_str}) ? mp_const_true : mp_const_false;"
+                )
             else:
                 lines.append(f"    return {c_name}_native({args_str});")
         else:
@@ -458,9 +496,17 @@ class TypedPythonTranslator:
             return_type_str = "mp_obj_t"
 
             for stmt in node.body:
-                if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str):
+                if (
+                    isinstance(stmt, ast.Expr)
+                    and isinstance(stmt.value, ast.Constant)
+                    and isinstance(stmt.value.value, str)
+                ):
                     continue
-                lines.extend(self._translate_method_statement(stmt, return_type_str, local_vars, class_ir, native=False))
+                lines.extend(
+                    self._translate_method_statement(
+                        stmt, return_type_str, local_vars, class_ir, native=False
+                    )
+                )
 
             if method_ir.return_type == CType.VOID:
                 if not any("return" in line for line in lines):
@@ -472,7 +518,9 @@ class TypedPythonTranslator:
 
         self._function_code.append("\n".join(lines))
 
-    def _translate_method_statement(self, stmt, return_type: str, locals_: list[str], class_ir: ClassIR, native: bool) -> list[str]:
+    def _translate_method_statement(
+        self, stmt, return_type: str, locals_: list[str], class_ir: ClassIR, native: bool
+    ) -> list[str]:
         if isinstance(stmt, ast.Return):
             return self._translate_method_return(stmt, return_type, locals_, class_ir, native)
         elif isinstance(stmt, ast.Assign):
@@ -495,7 +543,9 @@ class TypedPythonTranslator:
             return lines
         return self._translate_statement(stmt, return_type, locals_)
 
-    def _translate_method_ann_assign(self, stmt: ast.AnnAssign, locals_: list[str], class_ir: ClassIR, native: bool) -> list[str]:
+    def _translate_method_ann_assign(
+        self, stmt: ast.AnnAssign, locals_: list[str], class_ir: ClassIR, native: bool
+    ) -> list[str]:
         if not isinstance(stmt.target, ast.Name):
             return []
 
@@ -526,7 +576,14 @@ class TypedPythonTranslator:
                 return [f"    {c_type} {var_name} = mp_const_none;"]
         return []
 
-    def _translate_method_return(self, stmt: ast.Return, return_type: str, locals_: list[str], class_ir: ClassIR, native: bool) -> list[str]:
+    def _translate_method_return(
+        self,
+        stmt: ast.Return,
+        return_type: str,
+        locals_: list[str],
+        class_ir: ClassIR,
+        native: bool,
+    ) -> list[str]:
         if stmt.value is None:
             if native:
                 return ["    return;"]
@@ -550,19 +607,28 @@ class TypedPythonTranslator:
                 lines.append(f"    return {expr};")
         return lines
 
-    def _translate_method_assign(self, stmt: ast.Assign, locals_: list[str], class_ir: ClassIR, native: bool) -> list[str]:
+    def _translate_method_assign(
+        self, stmt: ast.Assign, locals_: list[str], class_ir: ClassIR, native: bool
+    ) -> list[str]:
         if len(stmt.targets) != 1:
             return []
 
         target = stmt.targets[0]
 
-        if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "self":
+        if (
+            isinstance(target, ast.Attribute)
+            and isinstance(target.value, ast.Name)
+            and target.value.id == "self"
+        ):
             attr_name = target.attr
             lines = self._flush_ir_prelude()
             expr, expr_type = self._translate_method_expr(stmt.value, locals_, class_ir, native)
             lines.extend(self._flush_ir_prelude())
 
-            field_with_path = next(((f, p) for f, p in class_ir.get_all_fields_with_path() if f.name == attr_name), None)
+            field_with_path = next(
+                ((f, p) for f, p in class_ir.get_all_fields_with_path() if f.name == attr_name),
+                None,
+            )
             if field_with_path:
                 field, path = field_with_path
                 if native:
@@ -596,7 +662,9 @@ class TypedPythonTranslator:
         if isinstance(target, ast.Subscript):
             lines = self._flush_ir_prelude()
             obj_expr, _ = self._translate_method_expr(target.value, locals_, class_ir, native)
-            idx_expr, idx_type = self._translate_method_expr(target.slice, locals_, class_ir, native)
+            idx_expr, idx_type = self._translate_method_expr(
+                target.slice, locals_, class_ir, native
+            )
             val_expr, val_type = self._translate_method_expr(stmt.value, locals_, class_ir, native)
             lines.extend(self._flush_ir_prelude())
             boxed_key = self._box_value(idx_expr, idx_type)
@@ -606,18 +674,33 @@ class TypedPythonTranslator:
 
         return self._translate_assign(stmt, locals_)
 
-    def _translate_method_aug_assign(self, stmt: ast.AugAssign, locals_: list[str], class_ir: ClassIR, native: bool) -> list[str]:
-        if isinstance(stmt.target, ast.Attribute) and isinstance(stmt.target.value, ast.Name) and stmt.target.value.id == "self":
+    def _translate_method_aug_assign(
+        self, stmt: ast.AugAssign, locals_: list[str], class_ir: ClassIR, native: bool
+    ) -> list[str]:
+        if (
+            isinstance(stmt.target, ast.Attribute)
+            and isinstance(stmt.target.value, ast.Name)
+            and stmt.target.value.id == "self"
+        ):
             attr_name = stmt.target.attr
             right, _ = self._translate_method_expr(stmt.value, locals_, class_ir, native)
             lines = self._flush_ir_prelude()
 
-            field_with_path = next(((f, p) for f, p in class_ir.get_all_fields_with_path() if f.name == attr_name), None)
+            field_with_path = next(
+                ((f, p) for f, p in class_ir.get_all_fields_with_path() if f.name == attr_name),
+                None,
+            )
             path = field_with_path[1] if field_with_path else attr_name
 
             op_map = {
-                ast.Add: "+=", ast.Sub: "-=", ast.Mult: "*=", ast.Div: "/=",
-                ast.Mod: "%=", ast.BitAnd: "&=", ast.BitOr: "|=", ast.BitXor: "^=",
+                ast.Add: "+=",
+                ast.Sub: "-=",
+                ast.Mult: "*=",
+                ast.Div: "/=",
+                ast.Mod: "%=",
+                ast.BitAnd: "&=",
+                ast.BitOr: "|=",
+                ast.BitXor: "^=",
             }
             c_op = op_map.get(type(stmt.op), "+=")
             lines.append(f"    self->{path} {c_op} {right};")
@@ -632,15 +715,24 @@ class TypedPythonTranslator:
         right, right_type = self._unbox_if_needed(right, right_type)
 
         op_map = {
-            ast.Add: "+=", ast.Sub: "-=", ast.Mult: "*=", ast.Div: "/=",
-            ast.Mod: "%=", ast.BitAnd: "&=", ast.BitOr: "|=", ast.BitXor: "^=",
-            ast.LShift: "<<=", ast.RShift: ">>="
+            ast.Add: "+=",
+            ast.Sub: "-=",
+            ast.Mult: "*=",
+            ast.Div: "/=",
+            ast.Mod: "%=",
+            ast.BitAnd: "&=",
+            ast.BitOr: "|=",
+            ast.BitXor: "^=",
+            ast.LShift: "<<=",
+            ast.RShift: ">>=",
         }
         c_op = op_map.get(type(stmt.op), "+=")
         lines.append(f"    {var_name} {c_op} {right};")
         return lines
 
-    def _translate_method_if(self, stmt: ast.If, return_type: str, locals_: list[str], class_ir: ClassIR, native: bool) -> list[str]:
+    def _translate_method_if(
+        self, stmt: ast.If, return_type: str, locals_: list[str], class_ir: ClassIR, native: bool
+    ) -> list[str]:
         cond, _ = self._translate_method_expr(stmt.test, locals_, class_ir, native)
         lines = [f"    if ({cond}) {{"]
 
@@ -651,13 +743,17 @@ class TypedPythonTranslator:
         if stmt.orelse:
             lines.append("    } else {")
             for s in stmt.orelse:
-                for line in self._translate_method_statement(s, return_type, locals_, class_ir, native):
+                for line in self._translate_method_statement(
+                    s, return_type, locals_, class_ir, native
+                ):
                     lines.append("    " + line)
 
         lines.append("    }")
         return lines
 
-    def _translate_method_while(self, stmt: ast.While, return_type: str, locals_: list[str], class_ir: ClassIR, native: bool) -> list[str]:
+    def _translate_method_while(
+        self, stmt: ast.While, return_type: str, locals_: list[str], class_ir: ClassIR, native: bool
+    ) -> list[str]:
         cond, _ = self._translate_method_expr(stmt.test, locals_, class_ir, native)
         lines = [f"    while ({cond}) {{"]
 
@@ -668,11 +764,20 @@ class TypedPythonTranslator:
         lines.append("    }")
         return lines
 
-    def _translate_method_expr(self, expr, locals_: list[str], class_ir: ClassIR, native: bool) -> tuple[str, str]:
-        if isinstance(expr, ast.Attribute) and isinstance(expr.value, ast.Name) and expr.value.id == "self":
+    def _translate_method_expr(
+        self, expr, locals_: list[str], class_ir: ClassIR, native: bool
+    ) -> tuple[str, str]:
+        if (
+            isinstance(expr, ast.Attribute)
+            and isinstance(expr.value, ast.Name)
+            and expr.value.id == "self"
+        ):
             attr_name = expr.attr
             # Look up field with path for proper inheritance access (e.g., super.x)
-            field_with_path = next(((f, p) for f, p in class_ir.get_all_fields_with_path() if f.name == attr_name), None)
+            field_with_path = next(
+                ((f, p) for f, p in class_ir.get_all_fields_with_path() if f.name == attr_name),
+                None,
+            )
             if field_with_path:
                 field, path = field_with_path
                 c_type_str = field.c_type.to_c_type_str()
@@ -681,7 +786,11 @@ class TypedPythonTranslator:
 
         if isinstance(expr, ast.Call):
             # Case 1: self.method(args) — direct method call on self
-            if isinstance(expr.func, ast.Attribute) and isinstance(expr.func.value, ast.Name) and expr.func.value.id == "self":
+            if (
+                isinstance(expr.func, ast.Attribute)
+                and isinstance(expr.func.value, ast.Name)
+                and expr.func.value.id == "self"
+            ):
                 method_name = expr.func.attr
                 method = class_ir.methods.get(method_name)
 
@@ -696,17 +805,25 @@ class TypedPythonTranslator:
                     return f"{method.c_name}_native({args_str})", ret_type
 
             # Case 2: self.field.method(args) — method call on a field (e.g., self.items.append(x))
-            if (isinstance(expr.func, ast.Attribute)
-                    and isinstance(expr.func.value, ast.Attribute)
-                    and isinstance(expr.func.value.value, ast.Name)
-                    and expr.func.value.value.id == "self"):
+            if (
+                isinstance(expr.func, ast.Attribute)
+                and isinstance(expr.func.value, ast.Attribute)
+                and isinstance(expr.func.value.value, ast.Name)
+                and expr.func.value.value.id == "self"
+            ):
                 field_name = expr.func.value.attr
                 method_name = expr.func.attr
                 field_with_path = next(
-                    ((f, p) for f, p in class_ir.get_all_fields_with_path() if f.name == field_name),
+                    (
+                        (f, p)
+                        for f, p in class_ir.get_all_fields_with_path()
+                        if f.name == field_name
+                    ),
                     None,
                 )
-                obj_c_expr = f"self->{field_with_path[1]}" if field_with_path else f"self->{field_name}"
+                obj_c_expr = (
+                    f"self->{field_with_path[1]}" if field_with_path else f"self->{field_name}"
+                )
 
                 ir_args: list[ValueIR] = []
                 for arg in expr.args:
@@ -725,7 +842,9 @@ class TypedPythonTranslator:
             # Case 3: builtin(self.field) — e.g., len(self.items)
             if isinstance(expr.func, ast.Name):
                 func_name = expr.func.id
-                args = [self._translate_method_expr(arg, locals_, class_ir, native) for arg in expr.args]
+                args = [
+                    self._translate_method_expr(arg, locals_, class_ir, native) for arg in expr.args
+                ]
                 arg_exprs = [a[0] for a in args]
                 arg_types = [a[1] for a in args]
 
@@ -745,12 +864,24 @@ class TypedPythonTranslator:
             right, right_type = self._translate_method_expr(expr.right, locals_, class_ir, native)
 
             op_map = {
-                ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/",
-                ast.FloorDiv: "/", ast.Mod: "%", ast.BitAnd: "&",
-                ast.BitOr: "|", ast.BitXor: "^", ast.LShift: "<<", ast.RShift: ">>"
+                ast.Add: "+",
+                ast.Sub: "-",
+                ast.Mult: "*",
+                ast.Div: "/",
+                ast.FloorDiv: "/",
+                ast.Mod: "%",
+                ast.BitAnd: "&",
+                ast.BitOr: "|",
+                ast.BitXor: "^",
+                ast.LShift: "<<",
+                ast.RShift: ">>",
             }
             c_op = op_map.get(type(expr.op), "+")
-            result_type = "mp_float_t" if (left_type == "mp_float_t" or right_type == "mp_float_t") else left_type
+            result_type = (
+                "mp_float_t"
+                if (left_type == "mp_float_t" or right_type == "mp_float_t")
+                else left_type
+            )
             return f"({left} {c_op} {right})", result_type
 
         if isinstance(expr, ast.UnaryOp):
@@ -768,8 +899,12 @@ class TypedPythonTranslator:
         if isinstance(expr, ast.Compare):
             left, _ = self._translate_method_expr(expr.left, locals_, class_ir, native)
             op_map = {
-                ast.Eq: "==", ast.NotEq: "!=", ast.Lt: "<",
-                ast.LtE: "<=", ast.Gt: ">", ast.GtE: ">="
+                ast.Eq: "==",
+                ast.NotEq: "!=",
+                ast.Lt: "<",
+                ast.LtE: "<=",
+                ast.Gt: ">",
+                ast.GtE: ">=",
             }
             parts = []
             prev = left
@@ -788,7 +923,9 @@ class TypedPythonTranslator:
 
         if isinstance(expr, ast.Subscript):
             value_expr, _ = self._translate_method_expr(expr.value, locals_, class_ir, native)
-            slice_expr, slice_type = self._translate_method_expr(expr.slice, locals_, class_ir, native)
+            slice_expr, slice_type = self._translate_method_expr(
+                expr.slice, locals_, class_ir, native
+            )
             boxed_key = self._box_value(slice_expr, slice_type)
             return f"mp_obj_subscr({value_expr}, {boxed_key}, MP_OBJ_SENTINEL)", "mp_obj_t"
 
@@ -836,31 +973,47 @@ class TypedPythonTranslator:
         func_code = [c_sig + " {"] + body_lines + ["}", obj_def, ""]
         self._function_code.append("\n".join(func_code))
 
-        self.functions.append(FunctionInfo(
-            name=func_name,
-            c_name=c_func_name,
-            num_args=num_args,
-            docstring=ast.get_docstring(node),
-        ))
+        self.functions.append(
+            FunctionInfo(
+                name=func_name,
+                c_name=c_func_name,
+                num_args=num_args,
+                docstring=ast.get_docstring(node),
+            )
+        )
 
-    def _build_function_signature(self, c_func_name: str, arg_names: list[str], num_args: int) -> tuple[str, str]:
+    def _build_function_signature(
+        self, c_func_name: str, arg_names: list[str], num_args: int
+    ) -> tuple[str, str]:
         if num_args == 0:
-            return (f"static mp_obj_t {c_func_name}(void)",
-                    f"MP_DEFINE_CONST_FUN_OBJ_0({c_func_name}_obj, {c_func_name});")
+            return (
+                f"static mp_obj_t {c_func_name}(void)",
+                f"MP_DEFINE_CONST_FUN_OBJ_0({c_func_name}_obj, {c_func_name});",
+            )
         elif num_args == 1:
-            return (f"static mp_obj_t {c_func_name}(mp_obj_t {arg_names[0]}_obj)",
-                    f"MP_DEFINE_CONST_FUN_OBJ_1({c_func_name}_obj, {c_func_name});")
+            return (
+                f"static mp_obj_t {c_func_name}(mp_obj_t {arg_names[0]}_obj)",
+                f"MP_DEFINE_CONST_FUN_OBJ_1({c_func_name}_obj, {c_func_name});",
+            )
         elif num_args == 2:
-            return (f"static mp_obj_t {c_func_name}(mp_obj_t {arg_names[0]}_obj, mp_obj_t {arg_names[1]}_obj)",
-                    f"MP_DEFINE_CONST_FUN_OBJ_2({c_func_name}_obj, {c_func_name});")
+            return (
+                f"static mp_obj_t {c_func_name}(mp_obj_t {arg_names[0]}_obj, mp_obj_t {arg_names[1]}_obj)",
+                f"MP_DEFINE_CONST_FUN_OBJ_2({c_func_name}_obj, {c_func_name});",
+            )
         elif num_args == 3:
-            return (f"static mp_obj_t {c_func_name}(mp_obj_t {arg_names[0]}_obj, mp_obj_t {arg_names[1]}_obj, mp_obj_t {arg_names[2]}_obj)",
-                    f"MP_DEFINE_CONST_FUN_OBJ_3({c_func_name}_obj, {c_func_name});")
+            return (
+                f"static mp_obj_t {c_func_name}(mp_obj_t {arg_names[0]}_obj, mp_obj_t {arg_names[1]}_obj, mp_obj_t {arg_names[2]}_obj)",
+                f"MP_DEFINE_CONST_FUN_OBJ_3({c_func_name}_obj, {c_func_name});",
+            )
         else:
-            return (f"static mp_obj_t {c_func_name}(size_t n_args, const mp_obj_t *args)",
-                    f"MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN({c_func_name}_obj, {num_args}, {num_args}, {c_func_name});")
+            return (
+                f"static mp_obj_t {c_func_name}(size_t n_args, const mp_obj_t *args)",
+                f"MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN({c_func_name}_obj, {num_args}, {num_args}, {c_func_name});",
+            )
 
-    def _unbox_arguments(self, arg_names: list[str], arg_types: list[str], num_args: int) -> list[str]:
+    def _unbox_arguments(
+        self, arg_names: list[str], arg_types: list[str], num_args: int
+    ) -> list[str]:
         lines = []
         for i, (arg_name, arg_type) in enumerate(zip(arg_names, arg_types)):
             src = f"{arg_name}_obj" if num_args <= 3 else f"args[{i}]"
@@ -876,7 +1029,15 @@ class TypedPythonTranslator:
 
     def _annotation_to_c_type(self, annotation) -> str:
         if isinstance(annotation, ast.Name):
-            type_map = {"int": "mp_int_t", "float": "mp_float_t", "bool": "bool", "str": "const char*", "None": "void", "list": "mp_obj_t", "dict": "mp_obj_t"}
+            type_map = {
+                "int": "mp_int_t",
+                "float": "mp_float_t",
+                "bool": "bool",
+                "str": "const char*",
+                "None": "void",
+                "list": "mp_obj_t",
+                "dict": "mp_obj_t",
+            }
             return type_map.get(annotation.id, "mp_obj_t")
         elif isinstance(annotation, ast.Subscript):
             # Handle generic types like list[int], dict[str, int], etc.
@@ -916,7 +1077,9 @@ class TypedPythonTranslator:
             return lines
         return []
 
-    def _translate_return(self, stmt: ast.Return, return_type: str, locals_: list[str]) -> list[str]:
+    def _translate_return(
+        self, stmt: ast.Return, return_type: str, locals_: list[str]
+    ) -> list[str]:
         if stmt.value is None:
             return ["    return mp_const_none;"]
 
@@ -982,9 +1145,13 @@ class TypedPythonTranslator:
 
         if isinstance(stmt.iter, ast.Call) and isinstance(stmt.iter.func, ast.Name):
             if stmt.iter.func.id == "range":
-                return self._translate_for_range(stmt, loop_var, return_type, locals_, class_ir=class_ir, native=native)
+                return self._translate_for_range(
+                    stmt, loop_var, return_type, locals_, class_ir=class_ir, native=native
+                )
 
-        return self._translate_for_iterable(stmt, loop_var, return_type, locals_, class_ir=class_ir, native=native)
+        return self._translate_for_iterable(
+            stmt, loop_var, return_type, locals_, class_ir=class_ir, native=native
+        )
 
     def _translate_for_range(
         self,
@@ -1034,7 +1201,9 @@ class TypedPythonTranslator:
                 step_constant_value = args[2].value
                 step = str(step_constant_value)
             elif isinstance(args[2], ast.UnaryOp) and isinstance(args[2].op, ast.USub):
-                if isinstance(args[2].operand, ast.Constant) and isinstance(args[2].operand.value, int):
+                if isinstance(args[2].operand, ast.Constant) and isinstance(
+                    args[2].operand.value, int
+                ):
                     step_is_constant = True
                     step_constant_value = -args[2].operand.value
                     step = str(step_constant_value)
@@ -1087,7 +1256,9 @@ class TypedPythonTranslator:
         self._loop_depth += 1
         for s in stmt.body:
             if class_ir is not None:
-                for line in self._translate_method_statement(s, return_type, locals_, class_ir, native):
+                for line in self._translate_method_statement(
+                    s, return_type, locals_, class_ir, native
+                ):
                     lines.append("    " + line)
             else:
                 for line in self._translate_statement(s, return_type, locals_):
@@ -1124,12 +1295,16 @@ class TypedPythonTranslator:
 
         lines.append(f"    mp_obj_iter_buf_t {iter_buf_var};")
         lines.append(f"    mp_obj_t {iter_var} = mp_getiter({iter_expr}, &{iter_buf_var});")
-        lines.append(f"    while (({c_loop_var} = mp_iternext({iter_var})) != MP_OBJ_STOP_ITERATION) {{")
+        lines.append(
+            f"    while (({c_loop_var} = mp_iternext({iter_var})) != MP_OBJ_STOP_ITERATION) {{"
+        )
 
         self._loop_depth += 1
         for s in stmt.body:
             if class_ir is not None:
-                for line in self._translate_method_statement(s, return_type, locals_, class_ir, native):
+                for line in self._translate_method_statement(
+                    s, return_type, locals_, class_ir, native
+                ):
                     lines.append("    " + line)
             else:
                 for line in self._translate_statement(s, return_type, locals_):
@@ -1169,7 +1344,9 @@ class TypedPythonTranslator:
             return lines + [f"    {expr_type} {c_var_name} = {expr};"]
         return lines + [f"    {c_var_name} = {expr};"]
 
-    def _translate_subscript_assign(self, target: ast.Subscript, value, locals_: list[str]) -> list[str]:
+    def _translate_subscript_assign(
+        self, target: ast.Subscript, value, locals_: list[str]
+    ) -> list[str]:
         lines = self._flush_ir_prelude()
         obj_expr, _ = self._translate_expr(target.value, locals_)
         idx_expr, idx_type = self._translate_expr(target.slice, locals_)
@@ -1216,9 +1393,16 @@ class TypedPythonTranslator:
         right, right_type = self._unbox_if_needed(right, right_type)
 
         op_map = {
-            ast.Add: "+=", ast.Sub: "-=", ast.Mult: "*=", ast.Div: "/=",
-            ast.Mod: "%=", ast.BitAnd: "&=", ast.BitOr: "|=", ast.BitXor: "^=",
-            ast.LShift: "<<=", ast.RShift: ">>="
+            ast.Add: "+=",
+            ast.Sub: "-=",
+            ast.Mult: "*=",
+            ast.Div: "/=",
+            ast.Mod: "%=",
+            ast.BitAnd: "&=",
+            ast.BitOr: "|=",
+            ast.BitXor: "^=",
+            ast.LShift: "<<=",
+            ast.RShift: ">>=",
         }
 
         c_op = op_map.get(type(stmt.op), "+=")
@@ -1337,20 +1521,36 @@ class TypedPythonTranslator:
         right, right_type = self._translate_expr(expr.right, locals_)
 
         op_map = {
-            ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/",
-            ast.FloorDiv: "/", ast.Mod: "%", ast.BitAnd: "&",
-            ast.BitOr: "|", ast.BitXor: "^", ast.LShift: "<<", ast.RShift: ">>"
+            ast.Add: "+",
+            ast.Sub: "-",
+            ast.Mult: "*",
+            ast.Div: "/",
+            ast.FloorDiv: "/",
+            ast.Mod: "%",
+            ast.BitAnd: "&",
+            ast.BitOr: "|",
+            ast.BitXor: "^",
+            ast.LShift: "<<",
+            ast.RShift: ">>",
         }
 
         c_op = op_map.get(type(expr.op), "+")
 
         # Unbox mp_obj_t operands for native C arithmetic
         if left_type == "mp_obj_t" or right_type == "mp_obj_t":
-            target = right_type if right_type != "mp_obj_t" else (left_type if left_type != "mp_obj_t" else "mp_int_t")
+            target = (
+                right_type
+                if right_type != "mp_obj_t"
+                else (left_type if left_type != "mp_obj_t" else "mp_int_t")
+            )
             left, left_type = self._unbox_if_needed(left, left_type, target)
             right, right_type = self._unbox_if_needed(right, right_type, target)
 
-        result_type = "mp_float_t" if (left_type == "mp_float_t" or right_type == "mp_float_t") else "mp_int_t"
+        result_type = (
+            "mp_float_t"
+            if (left_type == "mp_float_t" or right_type == "mp_float_t")
+            else "mp_int_t"
+        )
 
         if isinstance(expr.op, ast.Pow):
             return f"/* pow({left}, {right}) - needs runtime */", result_type
@@ -1374,8 +1574,12 @@ class TypedPythonTranslator:
         left, left_type = self._translate_expr(expr.left, locals_)
 
         op_map = {
-            ast.Eq: "==", ast.NotEq: "!=", ast.Lt: "<",
-            ast.LtE: "<=", ast.Gt: ">", ast.GtE: ">="
+            ast.Eq: "==",
+            ast.NotEq: "!=",
+            ast.Lt: "<",
+            ast.LtE: "<=",
+            ast.Gt: ">",
+            ast.GtE: ">=",
         }
 
         parts = []
@@ -1387,7 +1591,9 @@ class TypedPythonTranslator:
             # Handle 'in' / 'not in' via MicroPython binary op
             if isinstance(op, (ast.In, ast.NotIn)):
                 boxed_prev = self._box_value(prev, prev_type)
-                contains_expr = f"mp_obj_is_true(mp_binary_op(MP_BINARY_OP_IN, {boxed_prev}, {right}))"
+                contains_expr = (
+                    f"mp_obj_is_true(mp_binary_op(MP_BINARY_OP_IN, {boxed_prev}, {right}))"
+                )
                 if isinstance(op, ast.NotIn):
                     parts.append(f"(!{contains_expr})")
                 else:
@@ -1398,7 +1604,11 @@ class TypedPythonTranslator:
 
             # Unbox mp_obj_t operands for native C comparison
             if prev_type == "mp_obj_t" or right_type == "mp_obj_t":
-                target = right_type if right_type != "mp_obj_t" else (prev_type if prev_type != "mp_obj_t" else "mp_int_t")
+                target = (
+                    right_type
+                    if right_type != "mp_obj_t"
+                    else (prev_type if prev_type != "mp_obj_t" else "mp_int_t")
+                )
                 prev, prev_type = self._unbox_if_needed(prev, prev_type, target)
                 right, right_type = self._unbox_if_needed(right, right_type, target)
             c_op = op_map.get(type(op), "==")
@@ -1451,7 +1661,9 @@ class TypedPythonTranslator:
         call_expr = f"{c_func}({args_str})"
         return f"mp_obj_get_int({call_expr})", "mp_int_t"
 
-    def _translate_class_instantiation(self, expr: ast.Call, class_name: str, locals_: list[str]) -> tuple[str, str]:
+    def _translate_class_instantiation(
+        self, expr: ast.Call, class_name: str, locals_: list[str]
+    ) -> tuple[str, str]:
         class_ir = self._known_classes[class_name]
         args = []
         for arg in expr.args:
@@ -1468,7 +1680,10 @@ class TypedPythonTranslator:
         args_str = ", ".join(args)
         n_args = len(args)
 
-        return f"{class_ir.c_name}_make_new(&{class_ir.c_name}_type, {n_args}, 0, (const mp_obj_t[]){{{args_str}}})", "mp_obj_t"
+        return (
+            f"{class_ir.c_name}_make_new(&{class_ir.c_name}_type, {n_args}, 0, (const mp_obj_t[]){{{args_str}}})",
+            "mp_obj_t",
+        )
 
     def _translate_method_call_expr(self, expr: ast.Call, locals_: list[str]) -> tuple[str, str]:
         if not isinstance(expr.func, ast.Attribute):
@@ -1499,7 +1714,7 @@ class TypedPythonTranslator:
             '#include "py/runtime.h"',
             '#include "py/obj.h"',
             '#include "py/objtype.h"',
-            '#include <stddef.h>',
+            "#include <stddef.h>",
             "",
         ]
 
@@ -1507,17 +1722,19 @@ class TypedPythonTranslator:
             lines.extend(self._forward_decls)
             lines.append("")
 
-        lines.extend([
-            "#if MICROPY_FLOAT_IMPL != MICROPY_FLOAT_IMPL_NONE",
-            "static inline mp_float_t mp_get_float_checked(mp_obj_t obj) {",
-            "    if (mp_obj_is_float(obj)) {",
-            "        return mp_obj_float_get(obj);",
-            "    }",
-            "    return (mp_float_t)mp_obj_get_int(obj);",
-            "}",
-            "#endif",
-            "",
-        ])
+        lines.extend(
+            [
+                "#if MICROPY_FLOAT_IMPL != MICROPY_FLOAT_IMPL_NONE",
+                "static inline mp_float_t mp_get_float_checked(mp_obj_t obj) {",
+                "    if (mp_obj_is_float(obj)) {",
+                "        return mp_obj_float_get(obj);",
+                "    }",
+                "    return (mp_float_t)mp_obj_get_int(obj);",
+                "}",
+                "#endif",
+                "",
+            ]
+        )
 
         if self._struct_code:
             lines.extend(self._struct_code)
@@ -1529,29 +1746,37 @@ class TypedPythonTranslator:
         for class_code in self._class_code:
             lines.append(class_code)
 
-        lines.extend([
-            f"static const mp_rom_map_elem_t {self.c_name}_module_globals_table[] = {{",
-            f"    {{ MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_{self.c_name}) }},",
-        ])
+        lines.extend(
+            [
+                f"static const mp_rom_map_elem_t {self.c_name}_module_globals_table[] = {{",
+                f"    {{ MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_{self.c_name}) }},",
+            ]
+        )
 
         for func in self.functions:
-            lines.append(f"    {{ MP_ROM_QSTR(MP_QSTR_{func.name}), MP_ROM_PTR(&{func.c_name}_obj) }},")
+            lines.append(
+                f"    {{ MP_ROM_QSTR(MP_QSTR_{func.name}), MP_ROM_PTR(&{func.c_name}_obj) }},"
+            )
 
         for class_name in self._module_ir.class_order:
             class_ir = self._module_ir.classes[class_name]
-            lines.append(f"    {{ MP_ROM_QSTR(MP_QSTR_{class_ir.name}), MP_ROM_PTR(&{class_ir.c_name}_type) }},")
+            lines.append(
+                f"    {{ MP_ROM_QSTR(MP_QSTR_{class_ir.name}), MP_ROM_PTR(&{class_ir.c_name}_type) }},"
+            )
 
-        lines.extend([
-            "};",
-            f"MP_DEFINE_CONST_DICT({self.c_name}_module_globals, {self.c_name}_module_globals_table);",
-            "",
-            f"const mp_obj_module_t {self.c_name}_user_cmodule = {{",
-            "    .base = { &mp_type_module },",
-            f"    .globals = (mp_obj_dict_t *)&{self.c_name}_module_globals,",
-            "};",
-            "",
-            f"MP_REGISTER_MODULE(MP_QSTR_{self.c_name}, {self.c_name}_user_cmodule);",
-        ])
+        lines.extend(
+            [
+                "};",
+                f"MP_DEFINE_CONST_DICT({self.c_name}_module_globals, {self.c_name}_module_globals_table);",
+                "",
+                f"const mp_obj_module_t {self.c_name}_user_cmodule = {{",
+                "    .base = { &mp_type_module },",
+                f"    .globals = (mp_obj_dict_t *)&{self.c_name}_module_globals,",
+                "};",
+                "",
+                f"MP_REGISTER_MODULE(MP_QSTR_{self.c_name}, {self.c_name}_user_cmodule);",
+            ]
+        )
 
         return "\n".join(lines)
 
