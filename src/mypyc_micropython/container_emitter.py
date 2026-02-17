@@ -17,8 +17,8 @@ from .ir import (
     ConstIR,
     DictNewIR,
     GetItemIR,
-    IRType,
     InstrIR,
+    IRType,
     ListNewIR,
     MethodCallIR,
     NameIR,
@@ -186,7 +186,7 @@ class ContainerEmitter:
                 f"    mp_obj_t {result_name} = "
                 f"mp_obj_dict_get({receiver}, {key_c});"
             ]
-        return [f"    /* get() requires at least 1 arg */"]
+        return ["    /* get() requires at least 1 arg */"]
 
     def _emit_zero_arg_method(
         self, instr: MethodCallIR, receiver: str
@@ -215,7 +215,7 @@ class ContainerEmitter:
                 f"mp_call_function_1(mp_load_attr({receiver}, MP_QSTR_setdefault), "
                 f"{key_c});"
             ]
-        return [f"    /* setdefault() requires at least 1 arg */"]
+        return ["    /* setdefault() requires at least 1 arg */"]
 
     def _emit_update(self, instr: MethodCallIR, receiver: str) -> list[str]:
         if instr.args:

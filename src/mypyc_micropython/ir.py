@@ -26,7 +26,7 @@ class CType(Enum):
     MP_FLOAT_T = auto()    # mp_float_t (unboxed float)
     BOOL = auto()          # bool
     VOID = auto()          # void (for None returns)
-    
+
     def to_c_type_str(self) -> str:
         """Return the C type string."""
         mapping = {
@@ -37,7 +37,7 @@ class CType(Enum):
             CType.VOID: "void",
         }
         return mapping[self]
-    
+
     def to_field_type_id(self) -> int:
         """Return the field type ID for attr slot dispatch."""
         mapping = {
@@ -47,7 +47,7 @@ class CType(Enum):
             CType.BOOL: 3,
         }
         return mapping.get(self, 0)
-    
+
     @staticmethod
     def from_python_type(type_str: str) -> CType:
         """Convert Python type annotation string to CType."""
@@ -85,7 +85,7 @@ class FieldIR:
     default_value: Any = None           # Literal default value
     default_factory: str | None = None  # For dataclass field(default_factory=...)
     default_ast: ast.expr | None = None # AST node for default value
-    
+
     def get_c_type_str(self) -> str:
         """Get the C type string for this field."""
         return self.c_type.to_c_type_str()
@@ -106,12 +106,12 @@ class MethodIR:
     vtable_index: int = -1              # Index in vtable (if virtual)
     is_special: bool = False            # __init__, __repr__, etc.
     docstring: str | None = None
-    
+
     def get_native_signature(self, class_c_name: str) -> str:
         """Get the native C function signature (typed parameters)."""
         if self.is_static:
             params_str = ", ".join(
-                f"{ctype.to_c_type_str()} {name}" 
+                f"{ctype.to_c_type_str()} {name}"
                 for name, ctype in self.params
             )
             if not params_str:
@@ -120,12 +120,12 @@ class MethodIR:
             params_str = f"{class_c_name}_obj_t *self"
             if self.params:
                 params_str += ", " + ", ".join(
-                    f"{ctype.to_c_type_str()} {name}" 
+                    f"{ctype.to_c_type_str()} {name}"
                     for name, ctype in self.params
                 )
-        
+
         return f"static {self.return_type.to_c_type_str()} {self.c_name}_native({params_str})"
-    
+
     def get_mp_wrapper_signature(self) -> str:
         """Get the MicroPython wrapper signature."""
         n_args = len(self.params) + (0 if self.is_static else 1)  # +1 for self
@@ -150,7 +150,7 @@ class DataclassInfo:
     order: bool = False
     repr_: bool = True
     init: bool = True
-    
+
     # Flags for which methods to auto-generate
     generate_init: bool = True
     generate_repr: bool = True
@@ -163,44 +163,44 @@ class ClassIR:
     name: str
     c_name: str                                   # Sanitized C identifier
     module_name: str
-    
+
     # Inheritance (single inheritance only)
     base: ClassIR | None = None
     base_name: str | None = None                  # For deferred resolution
-    
+
     # Members
     fields: list[FieldIR] = field(default_factory=list)
     methods: dict[str, MethodIR] = field(default_factory=dict)
-    
+
     # Special methods tracking
     has_init: bool = False
     has_repr: bool = False
     has_eq: bool = False
     has_hash: bool = False
-    
+
     # Virtual dispatch
     virtual_methods: list[str] = field(default_factory=list)
     vtable_size: int = 0
-    
+
     # Dataclass support
     is_dataclass: bool = False
     dataclass_info: DataclassInfo | None = None
-    
+
     # MicroPython slots to emit
     mp_slots: set[str] = field(default_factory=lambda: {"make_new", "attr"})
-    
+
     # Computed layout
     struct_size: int = 0
-    
+
     # Original AST
     ast_node: ast.ClassDef | None = None
-    
+
     def get_all_fields(self) -> list[FieldIR]:
         """Get fields including inherited ones (base first)."""
         if self.base:
             return self.base.get_all_fields() + self.fields
         return list(self.fields)
-    
+
     def get_all_fields_with_path(self) -> list[tuple[FieldIR, str]]:
         """Get fields with their C access path (e.g., 'super.x' for inherited)."""
         result: list[tuple[FieldIR, str]] = []
@@ -210,17 +210,17 @@ class ClassIR:
         for fld in self.fields:
             result.append((fld, fld.name))
         return result
-    
+
     def get_own_fields(self) -> list[FieldIR]:
         """Get only this class's fields (not inherited)."""
         return list(self.fields)
-    
+
     def get_vtable_entries(self) -> list[tuple[str, MethodIR]]:
         """Get ordered vtable entries including inherited."""
         entries: list[tuple[str, MethodIR]] = []
         if self.base:
             entries = self.base.get_vtable_entries()
-        
+
         # Add new virtual methods, override existing
         existing_names = {name for name, _ in entries}
         for name in self.virtual_methods:
@@ -228,16 +228,16 @@ class ClassIR:
                 method = self.methods[name]
                 # Check if overriding
                 existing_idx = next(
-                    (i for i, (n, _) in enumerate(entries) if n == name), 
+                    (i for i, (n, _) in enumerate(entries) if n == name),
                     None
                 )
                 if existing_idx is not None:
                     entries[existing_idx] = (name, method)
                 elif name not in existing_names:
                     entries.append((name, method))
-        
+
         return entries
-    
+
     def get_all_methods(self) -> dict[str, MethodIR]:
         """Get all methods including inherited (child overrides parent)."""
         methods = {}
@@ -245,28 +245,28 @@ class ClassIR:
             methods.update(self.base.get_all_methods())
         methods.update(self.methods)
         return methods
-    
+
     def get_struct_name(self) -> str:
         """Get the C struct type name."""
         return f"{self.c_name}_obj_t"
-    
+
     def get_type_name(self) -> str:
         """Get the MicroPython type object name."""
         return f"{self.c_name}_type"
-    
+
     def get_vtable_type_name(self) -> str:
         """Get the vtable struct type name."""
         return f"{self.c_name}_vtable_t"
-    
+
     def get_vtable_instance_name(self) -> str:
         """Get the vtable instance name."""
         return f"{self.c_name}_vtable"
-    
+
     def compute_layout(self) -> None:
         """Compute field offsets and struct size."""
         # Start after the header (base + vtable pointer)
         offset = 0  # Relative to after base struct
-        
+
         for fld in self.fields:
             # Simple alignment (could be improved)
             fld.offset = offset
@@ -280,11 +280,11 @@ class ClassIR:
                 offset += 1  # sizeof(bool)
                 # Align to 8 bytes after bool
                 offset = (offset + 7) & ~7
-        
+
         self.struct_size = offset
 
 
-@dataclass 
+@dataclass
 class FuncIR:
     """Function IR (standalone or method context)."""
     name: str
@@ -439,35 +439,35 @@ class ModuleIR:
     c_name: str
     classes: dict[str, ClassIR] = field(default_factory=dict)
     functions: dict[str, FuncIR] = field(default_factory=dict)
-    
+
     # For tracking definition order (important for forward declarations)
     class_order: list[str] = field(default_factory=list)
     function_order: list[str] = field(default_factory=list)
-    
+
     def add_class(self, class_ir: ClassIR) -> None:
         """Add a class to the module."""
         self.classes[class_ir.name] = class_ir
         if class_ir.name not in self.class_order:
             self.class_order.append(class_ir.name)
-    
+
     def add_function(self, func_ir: FuncIR) -> None:
         """Add a function to the module."""
         self.functions[func_ir.name] = func_ir
         if func_ir.name not in self.function_order:
             self.function_order.append(func_ir.name)
-    
+
     def resolve_base_classes(self) -> None:
         """Resolve base class references after all classes are parsed."""
         for class_ir in self.classes.values():
             if class_ir.base_name and class_ir.base is None:
                 if class_ir.base_name in self.classes:
                     class_ir.base = self.classes[class_ir.base_name]
-    
+
     def get_classes_in_order(self) -> list[ClassIR]:
         """Get classes in topological order (base classes first)."""
         visited: set[str] = set()
         result: list[ClassIR] = []
-        
+
         def visit(name: str) -> None:
             if name in visited:
                 return
@@ -476,8 +476,8 @@ class ModuleIR:
             if class_ir.base_name and class_ir.base_name in self.classes:
                 visit(class_ir.base_name)
             result.append(class_ir)
-        
+
         for name in self.class_order:
             visit(name)
-        
+
         return result
