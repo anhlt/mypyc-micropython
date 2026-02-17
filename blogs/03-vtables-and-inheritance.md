@@ -478,16 +478,209 @@ Compared to a pure Python object (which needs a dict for attributes, a type poin
 
 ---
 
+## How Inherited Methods Become Callable: The Pointer Casting Mechanism
+
+When `BoundedCounter` inherits from `Counter`, it should be able to call `get()` and `reset()`—methods defined in the parent. But how does this work at the C level? The answer lies in **struct embedding** and **pointer casting**.
+
+### The Problem: Method Visibility vs. Method Implementation
+
+There's a subtle distinction in our compiler:
+
+1. **Method Implementation**: The actual C function that executes the method logic
+2. **Method Visibility**: Whether Python code can find and call the method
+
+The implementation was always there. When we compile `Counter`, we generate `Counter_get_native()` and `Counter_reset_native()`. These functions work with `Counter*` pointers. The question is: how do we make them accessible on `BoundedCounter` instances?
+
+### The Solution: Parent Pointers Work on Children
+
+Recall that `BoundedCounter` embeds `Counter` as its first member:
+
+```c
+struct _counter_BoundedCounter_obj_t {
+    counter_Counter_obj_t super;   // ← Parent is FIRST
+    mp_int_t min_val;
+    mp_int_t max_val;
+};
+```
+
+This creates a **subtyping relationship** in C. Because `super` is the first field:
+
+- A `BoundedCounter*` points to the same memory location as a `Counter*`
+- The parent's fields (`value`, `step`) are at identical offsets in both structs
+- Any code expecting `Counter*` can safely receive `BoundedCounter*`
+
+This is the same principle that makes C++ inheritance work.
+
+### Pointer Casting: The Magic That Makes It Work
+
+When `BoundedCounter` needs to expose `get()` to Python, it doesn't create a new implementation. It **reuses** `Counter`'s implementation through pointer casting:
+
+```c
+// Parent's implementation (works on Counter*)
+static mp_int_t counter_Counter_get_native(counter_Counter_obj_t *self) {
+    return self->value;  // Accesses field at offset 16
+}
+
+// Child exposes parent's implementation
+static const counter_BoundedCounter_vtable_t counter_BoundedCounter_vtable_inst = {
+    .get = (mp_int_t (*)(counter_BoundedCounter_obj_t *))counter_Counter_get_native,
+          // ↑ Cast tells compiler: "Trust me, this pointer is compatible"
+};
+```
+
+The cast `(mp_int_t (*)(counter_BoundedCounter_obj_t *))` does two things:
+
+1. **Changes the type signature** so it matches the vtable's expected type
+2. **Tells the compiler not to worry** about the type mismatch
+
+At runtime, when `get()` is called:
+
+```c
+counter_BoundedCounter_obj_t *bc = /* ... */;
+// Call through vtable
+mp_int_t result = bc->super.vtable->get(bc);
+//                     ↑
+//                     bc is BoundedCounter*, but get() receives it as Counter*
+//                     This works because both point to same memory location!
+```
+
+Inside `Counter_get_native`, the code accesses `self->value`. Since `value` is at offset 16 in both `Counter` and `BoundedCounter` (because `super` is first), it reads the correct field!
+
+### Memory Layout Visualization
+
+Here's the critical insight—both structs share the same initial layout:
+
+```
+Counter* (points to 0x1000):
+┌─────────────────────────┐
+│ base header (0x1000)    │
+├─────────────────────────┤
+│ vtable ptr (0x1008)     │ ← same offset
+├─────────────────────────┤
+│ value (0x1010)          │ ← same offset
+├─────────────────────────┤
+│ step (0x1018)           │ ← same offset
+└─────────────────────────┘
+
+BoundedCounter* (points to 0x1000):
+┌─────────────────────────┐
+│ super (Counter part)    │ ← same memory as above!
+│   ├── base header       │
+│   ├── vtable ptr        │
+│   ├── value             │
+│   └── step              │
+├─────────────────────────┤
+│ min_val (0x1020)        │ ← extra fields after parent
+├─────────────────────────┤
+│ max_val (0x1028)        │
+└─────────────────────────┘
+```
+
+When we cast `BoundedCounter*` to `Counter*`, we're not moving any data. We're just telling the compiler: "Treat this pointer as pointing to a Counter." Since the memory layout matches at the beginning, all parent field accesses work correctly.
+
+### The MicroPython Wrapper Layer
+
+The native functions work with typed pointers. But MicroPython calls methods through generic `mp_obj_t` objects. We bridge this with **wrapper functions**:
+
+```c
+// MicroPython wrapper for Counter.get
+static mp_obj_t counter_Counter_get_mp(mp_obj_t self_in) {
+    // Convert generic MicroPython object to typed pointer
+    counter_Counter_obj_t *self = MP_OBJ_TO_PTR(self_in);
+    
+    // Call native implementation
+    mp_int_t result = counter_Counter_get_native(self);
+    
+    // Box result back to MicroPython object
+    return mp_obj_new_int(result);
+}
+```
+
+For `BoundedCounter` to expose `get()`, we simply reference `Counter`'s existing wrapper:
+
+```c
+static const mp_rom_map_elem_t counter_BoundedCounter_locals_dict_table[] = {
+    { MP_ROM_QSTR(MP_QSTR_increment), MP_ROM_PTR(&counter_BoundedCounter_increment_obj) },
+    { MP_ROM_QSTR(MP_QSTR_get), MP_ROM_PTR(&counter_Counter_get_obj) },  // ← Same wrapper!
+};
+```
+
+When Python calls `bc.get()`:
+
+1. MicroPython looks up "get" in `BoundedCounter`'s `locals_dict`
+2. Finds `counter_Counter_get_obj` (parent's wrapper)
+3. Wrapper receives `bc` as `mp_obj_t`
+4. Converts to `counter_Counter_obj_t*` (valid cast!)
+5. Calls `Counter_get_native()` which accesses `self->value`
+6. Returns correct result because memory layout matches
+
+### Why This Required a Compiler Change
+
+The mechanism always worked at the C level. The issue was in the **compiler's method discovery**:
+
+- Before: Compiler only listed methods defined directly on `BoundedCounter`
+- After: Compiler walks inheritance chain and includes all parent methods
+
+This is why the fix was minimal—we just needed to **advertise** the inherited methods, not create new implementations. The pointer casting and struct embedding already made it possible.
+
+### The Complete Picture: Inheritance as Composition
+
+What we're doing is essentially:
+
+```python
+# Python view
+class BoundedCounter(Counter):
+    pass
+
+# C implementation view
+class BoundedCounter:
+    super = Counter()  # Composition!
+    min_val = 0
+    max_val = 0
+
+# But with memory layout magic so that:
+BoundedCounter_instance.super is at the same address as BoundedCounter_instance
+```
+
+This is why C programmers say "inheritance is composition with automatic forwarding." The struct embedding gives us the composition, and the pointer casting gives us the automatic forwarding.
+
+### Implications for Method Overriding
+
+When `BoundedCounter` overrides `increment()`:
+
+```c
+static const counter_BoundedCounter_vtable_t counter_BoundedCounter_vtable_inst = {
+    .increment = counter_BoundedCounter_increment_native,  // ← Own implementation
+    .get = (mp_int_t (*)(counter_BoundedCounter_obj_t *))counter_Counter_get_native,
+                                              // ↑ Parent's implementation
+};
+```
+
+The child vtable has:
+- **Overridden methods**: Point to child's implementation
+- **Inherited methods**: Point to parent's implementation (with cast)
+
+This is exactly how C++ virtual functions work, and it's how we achieve polymorphism.
+
+### Casting Safety
+
+You might worry: is the cast safe? In this specific case, yes:
+
+1. **Standard-layout structs**: Our generated structs are standard-layout (no virtual inheritance, no multiple inheritance complications)
+2. **First member guarantee**: C guarantees that a pointer to a struct points to its first member
+3. **No offset calculations needed**: Parent fields are at identical offsets in parent and child
+
+The C standard explicitly allows this pattern. It's the foundation of how C++ implements single inheritance.
+
 ## What's Next?
 
-Our vtable infrastructure is in place and working. Future improvements include:
+Our vtable infrastructure and inherited method propagation are now working. Future improvements include:
 
-1. **True vtable dispatch**: Call methods through `self->vtable->method(self)` for polymorphic cases
-2. **Inherited method propagation**: Non-overridden parent methods should be callable on child instances
-3. **`super()` support**: Allow child methods to call parent's implementation
-4. **Interface support**: Multiple interface inheritance via additional vtable pointers
+1. **`super()` support**: Allow child methods to explicitly call parent's implementation (e.g., `super().reset()`)
+2. **True vtable dispatch**: Use `self->vtable->method(self)` for polymorphic cases where the exact type isn't known at compile time
+3. **Interface support**: Multiple interface inheritance via additional vtable pointers
 
-All of these build on the foundation described in this post.
+These will build on the struct embedding and pointer casting foundation described in this post.
 
 ---
 
@@ -511,7 +704,7 @@ The generated C lives in `modules/usermod_*/`. Open it up and see the vtables in
 
 ---
 
-*Happy compiling!* 🚀
+*Happy compiling!*
 
 ---
 

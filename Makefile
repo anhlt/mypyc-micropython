@@ -21,7 +21,9 @@ MP_PORT_DIR := $(MICROPYTHON_DIR)/ports/esp32
 USER_C_MODULES := $(MODULES_DIR)/micropython.cmake
 
 .PHONY: help setup setup-idf setup-mpy compile build flash monitor clean \
-        test repl compile-all check-env
+        test test-device test-device-only run-device-tests \
+        test-factorial test-point test-counter test-sensor test-list test-dict test-all-modules \
+        repl compile-all check-env
 
 # Default target
 help:
@@ -45,7 +47,16 @@ help:
 	@echo "  make deploy         - Build + Flash + Monitor"
 	@echo ""
 	@echo "TESTING:"
-	@echo "  make test           - Run Python tests via mpremote"
+	@echo "  make test           - Run Python tests locally (pytest)"
+	@echo "  make test-device    - Full cycle: compile + build + flash + test"
+	@echo "  make test-device-only - Run device tests only (requires firmware flashed)"
+	@echo "  make test-all-modules - Quick test all modules on device"
+	@echo "  make test-factorial - Test factorial module"
+	@echo "  make test-point     - Test point module (classes)"
+	@echo "  make test-counter   - Test counter module"
+	@echo "  make test-sensor    - Test sensor module"
+	@echo "  make test-list      - Test list_operations module"
+	@echo "  make test-dict      - Test dict_operations module"
 	@echo "  make repl           - Open MicroPython REPL"
 	@echo ""
 	@echo "CLEANUP:"
@@ -173,8 +184,46 @@ deploy: build flash
 # ============================================================================
 
 test:
-	@echo "Running tests on device..."
-	mpremote connect $(PORT) mount projects/esp32c3-demo exec "import test_modules"
+	@echo "Running Python tests locally..."
+	pytest -x
+
+test-device: compile-all build flash run-device-tests
+	@echo "Device testing complete!"
+
+test-device-only:
+	@echo "Running comprehensive device tests..."
+	@python3 run_device_tests.py
+
+run-device-tests:
+	@echo "Running comprehensive device tests..."
+	@python3 run_device_tests.py
+
+test-factorial:
+	@echo "Testing factorial module on device..."
+	@mpremote connect $(PORT) exec "import factorial; print('factorial(5):', factorial.factorial(5)); print('fib(10):', factorial.fib(10))"
+
+test-point:
+	@echo "Testing point module on device..."
+	@mpremote connect $(PORT) exec "import point; p = point.Point(3, 4); print(p); print('distance_squared:', p.distance_squared())"
+
+test-counter:
+	@echo "Testing counter module on device..."
+	@mpremote connect $(PORT) exec "import counter; c = counter.Counter(10, 2); print(c); c.increment(); print('after inc:', c.get())"
+
+test-sensor:
+	@echo "Testing sensor module on device..."
+	@mpremote connect $(PORT) exec "import sensor; r = sensor.SensorReading(1, 25.5, 60.0); print(r); b = sensor.SensorBuffer(); b.add_reading(25.0, 55.0); print('avg temp:', b.avg_temperature())"
+
+test-list:
+	@echo "Testing list_operations module on device..."
+	@mpremote connect $(PORT) exec "import list_operations; print('sum_list:', list_operations.sum_list([1, 2, 3, 4, 5])); print('build_squares:', list_operations.build_squares(5))"
+
+test-dict:
+	@echo "Testing dict_operations module on device..."
+	@mpremote connect $(PORT) run test_device.py
+
+test-all-modules: test-factorial test-point test-counter test-sensor test-list
+	@echo "All module tests complete!"
 
 repl:
 	@echo "Opening MicroPython REPL on $(PORT)..."

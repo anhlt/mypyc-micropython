@@ -69,6 +69,9 @@ Key functions:
 
 ## Code Style
 
+### General Rules
+- **Never use emoji** in code, comments, commit messages, or documentation - strictly text-only
+
 ### Tooling (pyproject.toml)
 - **Linter**: ruff — rules `E`, `F`, `I`, `W`
 - **Line length**: 100
