@@ -28,6 +28,11 @@ A 6-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 - **Dicts**: Literals, indexing, assignment, `get()`, `keys()`, `values()`, `items()`, `copy()`,
   `clear()`, `setdefault()`, `pop()`, `popitem()`, `update()`, `in`/`not in`, `dict(d)` copy
 - **Built-ins**: `abs()`, `int()`, `float()`, `len()`, `range()` (1/2/3 args), `list()`, `dict()`
+- **Classes**: Class definitions with typed fields, `__init__`, instance methods, `@dataclass`,
+  single inheritance with vtable-based virtual dispatch, `__eq__`, `__len__`, `__getitem__`,
+  `__setitem__`, class fields with `list`/`dict` types, augmented assignment on fields
+- **IR pipeline**: Expression-level IR nodes, ContainerEmitter for list/dict, IR prelude pattern
+- **ESP32**: All 10 compiled modules verified on real ESP32-C3 hardware
 - **Other**: Local variables (typed and inferred), string literals, `None`, `True`/`False`
 
 ### What's Next ❌
@@ -37,7 +42,9 @@ A 6-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 - Remaining list methods (`extend`, `insert`, `remove`, `count`, `index`, `reverse`, `sort`)
 - List/dict slicing, concatenation, comprehensions
 - Default arguments, `*args`, `**kwargs`
-- Classes and methods
+- Inherited method propagation to child class (non-overridden parent methods)
+- `@property`, `@staticmethod`, `@classmethod`
+- `super()` calls
 - Exception handling
 - Closures and generators
 
@@ -50,8 +57,10 @@ Phase 1: Core Completion        ██████████░░░░░  ~
 Phase 2: Functions & Arguments  ░░░░░░░░░░░░░░░  TODO
   default args │ *args │ **kwargs │ enumerate │ zip │ sorted
 
-Phase 3: Classes                ░░░░░░░░░░░░░░░  TODO
-  class def │ __init__ │ methods │ @property │ inheritance
+Phase 3: Classes                ██████████████░  ~90% done
+  class def ✅ │ __init__ ✅ │ methods ✅ │ @dataclass ✅ │ inheritance ✅
+  vtable dispatch ✅ │ __eq__/__len__/__getitem__/__setitem__ ✅
+  @property │ @staticmethod │ @classmethod │ super() │ inherited method propagation
 
 Phase 4: Exception Handling     ░░░░░░░░░░░░░░░  TODO
   try/except │ try/finally │ raise │ custom exceptions
@@ -59,8 +68,8 @@ Phase 4: Exception Handling     ░░░░░░░░░░░░░░░  T
 Phase 5: Advanced Features      ░░░░░░░░░░░░░░░  TODO
   closures │ generators │ list comprehensions │ map/filter
 
-Phase 6: Integration & Polish   ░░░░░░░░░░░░░░░  TODO
-  ESP32 modules │ optimization │ error messages │ docs
+Phase 6: Integration & Polish   ██████░░░░░░░░░  ~40% done
+  ESP32 modules ✅ (10 modules on ESP32-C3) │ optimization │ error messages │ docs
 ```
 
 ---
@@ -294,30 +303,38 @@ Tasks:
 
 **Goal:** Basic OOP support.
 
-### 3.1 Basic Class Definition
+### 3.1 Basic Class Definition ✅ DONE
 
 ```python
-class Point:
-    def __init__(self, x: int, y: int) -> None:
-        self.x = x
-        self.y = y
+class Counter:
+    value: int
+    step: int
 
-    def distance(self) -> float:
-        return (self.x ** 2 + self.y ** 2) ** 0.5
+    def __init__(self, start: int, step: int) -> None:
+        self.value = start
+        self.step = step
+
+    def increment(self) -> int:
+        self.value += self.step
+        return self.value
 ```
 
 Tasks:
-- [ ] Parse class definitions
-- [ ] Generate struct for instance data
-- [ ] Generate `make_new` (constructor)
-- [ ] Generate type definition
+- [x] Parse class definitions
+- [x] Generate struct for instance data (native C types: `mp_int_t`, `mp_float_t`, `bool`, `mp_obj_t`)
+- [x] Generate `make_new` (constructor)
+- [x] Generate type definition with `attr` handler
+- [x] Support `@dataclass` classes with auto-generated `__init__` and `__eq__`
 
-### 3.2 Instance Methods
+### 3.2 Instance Methods ✅ DONE
 
 Tasks:
-- [ ] Translate methods with `self` parameter
-- [ ] Generate method binding
-- [ ] Handle method calls on instances
+- [x] Translate methods with `self` parameter (native and boxed calling conventions)
+- [x] Generate method binding (`MP_DEFINE_CONST_FUN_OBJ_*`)
+- [x] Handle method calls on instances via `locals_dict`
+- [x] Support `VAR_BETWEEN` calling convention for methods with >3 args
+- [x] Support list/dict fields in methods (container IR + prelude flush)
+- [x] Augmented assignment on `self.field` (e.g., `self.count += 1`)
 
 ### 3.3 Properties
 
@@ -332,23 +349,52 @@ Tasks:
 - [ ] `@staticmethod` — no self parameter
 - [ ] `@classmethod` — cls parameter
 
-### 3.5 Single Inheritance
+### 3.5 Single Inheritance ✅ DONE (with known limitations)
+
+```python
+class BoundedCounter(Counter):
+    min_val: int
+    max_val: int
+
+    def increment(self) -> int:   # overrides Counter.increment
+        self.value += self.step
+        if self.value > self.max_val:
+            self.value = self.max_val
+        return self.value
+```
 
 Tasks:
-- [ ] Parse inheritance
-- [ ] Set parent type in type definition
-- [ ] Method resolution (child overrides parent)
-- [ ] Super calls: `super().__init__()`
+- [x] Parse inheritance (`class Child(Parent)`)
+- [x] Struct embedding via `super` field for parent data
+- [x] Vtable-based virtual method dispatch
+- [x] Vtable type generation with function pointers
+- [x] Child class vtable with correct pointer casts for inherited methods
+- [x] Vtable access path computation for deep inheritance (`super.super.vtable`)
+- [x] `__eq__` using `mp_obj_get_type()` for correct runtime type checking
+- [x] Multi-level inheritance (grandchild classes)
+- [ ] Inherited method propagation — non-overridden parent methods not yet visible
+  in child class `locals_dict` (e.g., `BoundedCounter` missing `Counter.get()`)
+- [ ] `super()` calls in methods (e.g., `super().__init__(...)`)
 
-### 3.6 Special Methods
+### 3.6 Special Methods (Partial)
 
 Tasks:
 - [ ] `__str__` / `__repr__`
-- [ ] `__len__`
-- [ ] `__getitem__` / `__setitem__`
-- [ ] `__eq__` / `__ne__` / `__lt__` / etc.
+- [x] `__len__` — supported in `locals_dict`
+- [x] `__getitem__` / `__setitem__` — supported in `locals_dict`
+- [x] `__eq__` — auto-generated for `@dataclass`, field-by-field comparison
+- [ ] `__ne__` / `__lt__` / `__gt__` / `__le__` / `__ge__`
 - [ ] `__hash__`
 - [ ] `__iter__` / `__next__`
+
+### 3.7 Known Limitations & Future Improvements
+
+| Issue | Description | Workaround |
+|-------|-------------|------------|
+| Inherited method propagation | Non-overridden parent methods don't appear in child's `locals_dict`. Vtable dispatch for overridden methods works correctly. | Access parent state via attributes (e.g., `obj.value` instead of `obj.get()`) |
+| No `super()` calls | Cannot call parent's method implementation from child | Inline parent logic in child methods |
+| No `@property` | No getter/setter decorator support | Use explicit getter/setter methods |
+| No `@staticmethod`/`@classmethod` | Only instance methods supported | Use module-level functions instead |
 
 ---
 

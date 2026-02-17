@@ -249,7 +249,7 @@ make -C deps/micropython/ports/esp32 \
 mpremote connect /dev/cu.usbmodem101 exec "import factorial; print(factorial.factorial(5))"
 
 # Run test script
-mpremote connect /dev/cu.usbmodem101 run test_device.py
+python run_device_tests.py --port /dev/cu.usbmodem101
 
 # Interactive REPL
 mpremote connect /dev/cu.usbmodem101 repl

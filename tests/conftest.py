@@ -11,6 +11,7 @@ def _rewrite_generated_includes(c_code: str) -> str:
     return (
         c_code.replace('#include "py/runtime.h"', '#include "runtime.h"')
         .replace('#include "py/obj.h"', '#include "runtime.h"')
+        .replace('#include "py/objtype.h"', '#include "runtime.h"')
     )
 
 

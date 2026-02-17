@@ -13,8 +13,20 @@ This directory contains documentation for the mypyc-micropython project - a comp
 | [05-roadmap.md](05-roadmap.md) | 6-phase implementation roadmap with list/dict operation tracking |
 | [06-esp32-integration.md](06-esp32-integration.md) | Calling ESP32 MicroPython modules from compiled code |
 | [07-micropython-async-internals.md](07-micropython-async-internals.md) | Deep dive into MicroPython's async/await implementation |
+| [08-ir-design.md](08-ir-design.md) | IR design: expression-level IR nodes, ContainerEmitter, prelude pattern |
 | [esp-idf-setup-linux.md](esp-idf-setup-linux.md) | ESP-IDF + pyenv setup guide for Linux (Ubuntu/Debian) |
 | [esp-idf-setup-macos.md](esp-idf-setup-macos.md) | ESP-IDF + pyenv setup guide for macOS |
+
+### Blog Posts
+
+Located in [`/blogs/`](/blogs/) directory:
+
+| Post | Description |
+|------|-------------|
+| [01-list-and-forloop-support.md](/blogs/01-list-and-forloop-support.md) | Implementing list operations and for-loop support |
+| [02-dict-support.md](/blogs/02-dict-support.md) | Adding dictionary operations and methods |
+| [03-vtables-and-inheritance.md](/blogs/03-vtables-and-inheritance.md) | How we compile Python inheritance to C using vtables and pointers |
+| [04-ir-design.md](/blogs/04-ir-design.md) | Why we use an Intermediate Representation for compiling Python |
 
 ## Quick Links
 
@@ -27,6 +39,7 @@ This directory contains documentation for the mypyc-micropython project - a comp
 
 ### For Contributors
 - [Architecture Overview](01-architecture.md) - How the compiler works
+- [IR Design](08-ir-design.md) - Expression-level IR and ContainerEmitter design
 - [mypyc Reference](02-mypyc-reference.md) - Learn from mypyc's implementation
 - [Implementation Roadmap](05-roadmap.md) - What's planned next
 
@@ -45,10 +58,10 @@ This directory contains documentation for the mypyc-micropython project - a comp
 - Lists: literals, indexing, `append()`, `pop()`
 - Dicts: literals, indexing, `get()`, `keys()`, `values()`, `items()`, `copy()`, `clear()`, `setdefault()`, `pop()`, `popitem()`, `update()`, `in`/`not in`, `dict(d)` copy
 - Built-ins: `abs`, `int`, `float`, `len`, `range`
+- Classes: basic class compilation with methods, inheritance, and field access (via IR)
 
 **Coming Soon:**
 - Strings (beyond basic)
-- Simple classes
 - Exception handling
 
 ## External References
