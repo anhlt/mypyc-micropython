@@ -14,6 +14,7 @@ __pycache__/
 dist/
 build/
 .eggs/
+_site/
 
 # Generated C files (keep examples for reference)
 # usermod_*/

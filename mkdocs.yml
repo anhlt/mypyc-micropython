@@ -1,0 +1,13 @@
+site_name: mypyc-micropython Blog
+site_description: Blog posts generated from the repository blogs directory
+site_url: https://anhlt.github.io/mypyc-micropython/
+docs_dir: blogs
+site_dir: _site
+
+theme:
+  name: material
+
+markdown_extensions:
+  - toc
+  - tables
+  - fenced_code
