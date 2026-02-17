@@ -511,6 +511,61 @@ def test_tuple_operations():
         "(0, 1, 2, 3, 4)",
     )
 
+    # RTuple optimization tests
+    test(
+        "rtuple_point",
+        "import tuple_operations as t; print(t.rtuple_point())",
+        "(100, 200)",
+    )
+
+    test(
+        "rtuple_add_coords",
+        "import tuple_operations as t; print(t.rtuple_add_coords(10, 20, 30, 40))",
+        "(40, 60)",
+    )
+
+    test(
+        "rtuple_sum_fields",
+        "import tuple_operations as t; print(t.rtuple_sum_fields())",
+        "40",
+    )
+
+    test(
+        "rtuple_distance_squared",
+        "import tuple_operations as t; print(t.rtuple_distance_squared(0, 0, 3, 4))",
+        "25",
+    )
+
+    test(
+        "rtuple_rgb",
+        "import tuple_operations as t; print(t.rtuple_rgb())",
+        "(255, 128, 64)",
+    )
+
+    test(
+        "rtuple_sum_rgb",
+        "import tuple_operations as t; print(t.rtuple_sum_rgb(100, 150, 200))",
+        "450",
+    )
+
+    test(
+        "rtuple_blend_colors",
+        "import tuple_operations as t; print(t.rtuple_blend_colors(200, 100, 50, 100, 200, 150))",
+        "(150, 150, 100)",
+    )
+
+    test(
+        "rtuple_benchmark_internal",
+        "import tuple_operations as t; print(t.rtuple_benchmark_internal(10))",
+        "135",
+    )
+
+    test(
+        "sum_points_list",
+        "import tuple_operations as t; points = [(1, 2, 3), (4, 5, 6), (7, 8, 9)]; print(t.sum_points_list(points, 3))",
+        "45",
+    )
+
 
 def test_set_operations():
     """Test set_operations module."""

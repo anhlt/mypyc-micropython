@@ -186,6 +186,67 @@ end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
+    # RTuple optimization - direct field access vs boxed tuple
+    (
+        "rtuple ops x10000",
+        """
+import tuple_operations as t
+import time
+start = time.ticks_us()
+for _ in range(10000):
+    t.rtuple_sum_fields()
+    t.rtuple_distance_squared(0, 0, 3, 4)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def sum_fields():
+    point = (15, 25)
+    return point[0] + point[1]
+def distance_squared(x1, y1, x2, y2):
+    p1 = (x1, y1)
+    p2 = (x2, y2)
+    dx = p2[0] - p1[0]
+    dy = p2[1] - p1[1]
+    return dx * dx + dy * dy
+start = time.ticks_us()
+for _ in range(10000):
+    sum_fields()
+    distance_squared(0, 0, 3, 4)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    # RTuple internal benchmark - no boxing overhead on return
+    (
+        "rtuple internal x100",
+        """
+import tuple_operations as t
+import time
+start = time.ticks_us()
+for _ in range(100):
+    t.rtuple_benchmark_internal(1000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def benchmark_internal(n):
+    total = 0
+    i = 0
+    while i < n:
+        point = (i, i * 2)
+        total += point[0] + point[1]
+        i += 1
+    return total
+start = time.ticks_us()
+for _ in range(100):
+    benchmark_internal(1000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
     # Set operations - add and membership
     (
         "set build+check x1000",
@@ -208,6 +269,35 @@ def build_set_incremental(n):
 start = time.ticks_us()
 for _ in range(1000):
     build_set_incremental(50)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    # Dataclass - object creation and method calls
+    (
+        "Point class x10000",
+        """
+import point
+import time
+start = time.ticks_us()
+for _ in range(10000):
+    p = point.Point(3, 4)
+    p.distance_squared()
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    def distance_squared(self):
+        return self.x * self.x + self.y * self.y
+start = time.ticks_us()
+for _ in range(10000):
+    p = Point(3, 4)
+    p.distance_squared()
 end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,

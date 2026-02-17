@@ -669,3 +669,256 @@ int main(void) {
 """
     stdout = compile_and_run(source, "test", test_main_c)
     assert stdout.strip() == "5"
+
+
+def test_c_rtuple_create_and_access(compile_and_run):
+    source = """
+def make_point() -> tuple[int, int]:
+    point: tuple[int, int] = (10, 20)
+    return point
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result = test_make_point();
+    mp_obj_t x = mp_obj_subscr(result, mp_obj_new_int(0), MP_OBJ_SENTINEL);
+    mp_obj_t y = mp_obj_subscr(result, mp_obj_new_int(1), MP_OBJ_SENTINEL);
+    printf("%ld %ld\\n", (long)mp_obj_get_int(x), (long)mp_obj_get_int(y));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "10 20"
+
+
+def test_c_rtuple_field_access_optimization(compile_and_run):
+    source = """
+def get_x_plus_y() -> int:
+    point: tuple[int, int] = (15, 25)
+    return point[0] + point[1]
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result = test_get_x_plus_y();
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "40"
+
+
+def test_c_rtuple_with_variables(compile_and_run):
+    source = """
+def make_pair(a: int, b: int) -> tuple[int, int]:
+    pair: tuple[int, int] = (a, b)
+    return pair
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result = test_make_pair(mp_obj_new_int(100), mp_obj_new_int(200));
+    mp_obj_t x = mp_obj_subscr(result, mp_obj_new_int(0), MP_OBJ_SENTINEL);
+    mp_obj_t y = mp_obj_subscr(result, mp_obj_new_int(1), MP_OBJ_SENTINEL);
+    printf("%ld %ld\\n", (long)mp_obj_get_int(x), (long)mp_obj_get_int(y));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "100 200"
+
+
+def test_c_rtuple_mixed_types(compile_and_run):
+    source = """
+def make_record() -> tuple[int, bool]:
+    rec: tuple[int, bool] = (42, True)
+    return rec
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result = test_make_record();
+    mp_obj_t val = mp_obj_subscr(result, mp_obj_new_int(0), MP_OBJ_SENTINEL);
+    mp_obj_t flag = mp_obj_subscr(result, mp_obj_new_int(1), MP_OBJ_SENTINEL);
+    printf("%ld %d\\n", (long)mp_obj_get_int(val), mp_obj_is_true(flag));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "42 1"
+
+
+def test_c_rtuple_three_elements(compile_and_run):
+    source = """
+def make_triple() -> tuple[int, int, int]:
+    t: tuple[int, int, int] = (10, 20, 30)
+    return t
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result = test_make_triple();
+    mp_obj_t a = mp_obj_subscr(result, mp_obj_new_int(0), MP_OBJ_SENTINEL);
+    mp_obj_t b = mp_obj_subscr(result, mp_obj_new_int(1), MP_OBJ_SENTINEL);
+    mp_obj_t c = mp_obj_subscr(result, mp_obj_new_int(2), MP_OBJ_SENTINEL);
+    printf("%ld %ld %ld\\n", (long)mp_obj_get_int(a), (long)mp_obj_get_int(b), (long)mp_obj_get_int(c));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "10 20 30"
+
+
+def test_c_rtuple_three_element_sum(compile_and_run):
+    source = """
+def sum_triple() -> int:
+    t: tuple[int, int, int] = (100, 200, 300)
+    return t[0] + t[1] + t[2]
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result = test_sum_triple();
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "600"
+
+
+def test_c_list_optimized_index(compile_and_run):
+    source = """
+def sum_first_three(lst: list) -> int:
+    return lst[0] + lst[1] + lst[2]
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t items[] = {
+        mp_obj_new_int(10),
+        mp_obj_new_int(20),
+        mp_obj_new_int(30),
+    };
+    mp_obj_t list = mp_obj_new_list(3, items);
+    mp_obj_t result = test_sum_first_three(list);
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "60"
+
+
+def test_c_list_optimized_variable_index(compile_and_run):
+    source = """
+def get_at(lst: list, i: int) -> int:
+    return lst[i]
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t items[] = {
+        mp_obj_new_int(100),
+        mp_obj_new_int(200),
+        mp_obj_new_int(300),
+    };
+    mp_obj_t list = mp_obj_new_list(3, items);
+    mp_obj_t result = test_get_at(list, mp_obj_new_int(1));
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "200"
+
+
+def test_c_list_optimized_negative_index(compile_and_run):
+    source = """
+def get_last(lst: list) -> int:
+    return lst[-1]
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t items[] = {
+        mp_obj_new_int(10),
+        mp_obj_new_int(20),
+        mp_obj_new_int(30),
+    };
+    mp_obj_t list = mp_obj_new_list(3, items);
+    mp_obj_t result = test_get_last(list);
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "30"
+
+
+def test_c_list_optimized_len(compile_and_run):
+    source = """
+def list_length(lst: list) -> int:
+    return len(lst)
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t items[] = {
+        mp_obj_new_int(1),
+        mp_obj_new_int(2),
+        mp_obj_new_int(3),
+        mp_obj_new_int(4),
+        mp_obj_new_int(5),
+    };
+    mp_obj_t list = mp_obj_new_list(5, items);
+    mp_obj_t result = test_list_length(list);
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "5"
+
+
+def test_c_list_optimized_sum_loop(compile_and_run):
+    source = """
+def sum_list_opt(lst: list) -> int:
+    total: int = 0
+    n: int = len(lst)
+    i: int = 0
+    while i < n:
+        total += lst[i]
+        i += 1
+    return total
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t items[] = {
+        mp_obj_new_int(1),
+        mp_obj_new_int(2),
+        mp_obj_new_int(3),
+        mp_obj_new_int(4),
+        mp_obj_new_int(5),
+    };
+    mp_obj_t list = mp_obj_new_list(5, items);
+    mp_obj_t result = test_sum_list_opt(list);
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "15"

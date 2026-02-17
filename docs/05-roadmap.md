@@ -525,11 +525,57 @@ Tasks:
 
 ### 6.2 Optimization
 
+**Research Finding (from mypyc analysis):**
+mypyc uses **type erasure** for container element types - `list[int]` and `list[str]` generate
+identical code. However, **fixed-length tuples** (`tuple[int, int]`) are special: they become
+**unboxed C structs** allocated on stack/registers, not heap-allocated Python objects.
+
+| Type | Representation | Boxing |
+|------|----------------|--------|
+| `int`, `float`, `bool` | Native C types | Unboxed (value type) |
+| `tuple[int, int]` | C struct | Unboxed until passed to Python |
+| `tuple[int, ...]` | Python tuple | Always boxed |
+| `list[int]`, `set[int]` | Python objects | Always boxed (elements too) |
+
+**Optimization Phases:**
+
+#### Phase A: Native Fixed-Length Tuples (RTuple-style) ❌ TODO
+
+For `tuple[int, int]`, generate C struct instead of Python tuple:
+```c
+typedef struct { mp_int_t f0; mp_int_t f1; } tuple_int_int_t;
+static tuple_int_int_t make_point(void) { return (tuple_int_int_t){10, 20}; }
+```
+
+Tasks:
+- [ ] Track tuple element types in IR (`TupleType` with element `CType` list)
+- [ ] Generate C struct typedefs for fixed-length tuples
+- [ ] Emit struct literals instead of `mp_obj_new_tuple()`
+- [ ] Direct field access instead of `mp_obj_subscr()`
+- [ ] Box to `mp_obj_t` only when passing to MicroPython APIs
+
+#### Phase B: Optimized Iteration Patterns ❌ TODO
+
+When iterating typed containers, inline unboxing:
+```c
+// Instead of mp_obj_subscr + mp_obj_get_int per element:
+mp_obj_list_t *list = MP_OBJ_TO_PTR(lst);
+for (size_t i = 0; i < list->len; i++) {
+    sum += mp_obj_get_int(list->items[i]);
+}
+```
+
+Tasks:
+- [ ] Detect `for x in lst` where `lst: list[int]`
+- [ ] Use direct `mp_obj_list_t` struct access
+- [ ] Inline `mp_obj_get_int()` in loop body
+
+#### Phase C: Additional Optimizations ❌ TODO
+
 Tasks:
 - [ ] Constant folding
 - [ ] Dead code elimination
 - [ ] Inline small functions
-- [ ] Reduce boxing/unboxing operations
 
 ### 6.3 Error Messages
 

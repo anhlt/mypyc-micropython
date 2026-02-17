@@ -63,9 +63,87 @@ class CType(Enum):
             "tuple": CType.MP_OBJ_T,
             "object": CType.MP_OBJ_T,
         }
-        # Handle generic types like list[int]
         base_type = type_str.split("[")[0].strip()
         return mapping.get(base_type, CType.MP_OBJ_T)
+
+
+@dataclass
+class RTuple:
+    """Fixed-length unboxed tuple type (represented as a C struct).
+
+    Similar to mypyc's RTuple - when we know the exact element types at compile
+    time, we can use a C struct instead of a Python tuple object. This avoids
+    heap allocation and boxing/unboxing overhead.
+
+    Example: tuple[int, int] -> struct { mp_int_t f0; mp_int_t f1; }
+    """
+
+    element_types: tuple[CType, ...]
+
+    def __hash__(self) -> int:
+        return hash(self.element_types)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, RTuple):
+            return False
+        return self.element_types == other.element_types
+
+    @property
+    def arity(self) -> int:
+        return len(self.element_types)
+
+    def get_c_struct_name(self) -> str:
+        """Generate C struct type name, e.g., 'rtuple_int_int_t'."""
+        type_names = []
+        for ct in self.element_types:
+            if ct == CType.MP_INT_T:
+                type_names.append("int")
+            elif ct == CType.MP_FLOAT_T:
+                type_names.append("float")
+            elif ct == CType.BOOL:
+                type_names.append("bool")
+            else:
+                type_names.append("obj")
+        return f"rtuple_{'_'.join(type_names)}_t"
+
+    def get_c_struct_typedef(self) -> str:
+        """Generate C struct typedef."""
+        struct_name = self.get_c_struct_name()
+        fields = []
+        for i, ct in enumerate(self.element_types):
+            fields.append(f"    {ct.to_c_type_str()} f{i};")
+        return "typedef struct {\n" + "\n".join(fields) + f"\n}} {struct_name};"
+
+    def is_all_primitive(self) -> bool:
+        """Check if all elements are primitive (unboxed) types."""
+        return all(
+            ct in (CType.MP_INT_T, CType.MP_FLOAT_T, CType.BOOL) for ct in self.element_types
+        )
+
+    @staticmethod
+    def from_annotation(annotation: ast.Subscript) -> RTuple | None:
+        """Parse tuple[int, int] annotation to RTuple, or None if not fixed-length."""
+        if not isinstance(annotation.value, ast.Name) or annotation.value.id != "tuple":
+            return None
+
+        slice_node = annotation.slice
+        if isinstance(slice_node, ast.Tuple):
+            element_types = []
+            for elt in slice_node.elts:
+                if isinstance(elt, ast.Ellipsis):
+                    return None
+                if isinstance(elt, ast.Name):
+                    ct = CType.from_python_type(elt.id)
+                    element_types.append(ct)
+                else:
+                    return None
+            if element_types:
+                return RTuple(tuple(element_types))
+        elif isinstance(slice_node, ast.Name):
+            ct = CType.from_python_type(slice_node.id)
+            return RTuple((ct,))
+
+        return None
 
 
 class CallTarget(Enum):

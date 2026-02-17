@@ -106,3 +106,80 @@ def step_slice(t: tuple) -> tuple:
 def from_range(n: int) -> tuple:
     """Create a tuple from a range"""
     return tuple(range(n))
+
+
+def rtuple_point() -> tuple[int, int]:
+    """Create an optimized 2D point using RTuple"""
+    point: tuple[int, int] = (100, 200)
+    return point
+
+
+def rtuple_add_coords(x1: int, y1: int, x2: int, y2: int) -> tuple[int, int]:
+    """Add two coordinate pairs using RTuple optimization"""
+    p1: tuple[int, int] = (x1, y1)
+    p2: tuple[int, int] = (x2, y2)
+    result: tuple[int, int] = (p1[0] + p2[0], p1[1] + p2[1])
+    return result
+
+
+def rtuple_sum_fields() -> int:
+    """Sum fields of an RTuple using direct access"""
+    point: tuple[int, int] = (15, 25)
+    return point[0] + point[1]
+
+
+def rtuple_distance_squared(x1: int, y1: int, x2: int, y2: int) -> int:
+    """Calculate squared distance between two points using RTuple"""
+    p1: tuple[int, int] = (x1, y1)
+    p2: tuple[int, int] = (x2, y2)
+    dx: int = p2[0] - p1[0]
+    dy: int = p2[1] - p1[1]
+    return dx * dx + dy * dy
+
+
+def rtuple_rgb() -> tuple[int, int, int]:
+    """Create an RGB color tuple using RTuple optimization"""
+    color: tuple[int, int, int] = (255, 128, 64)
+    return color
+
+
+def rtuple_sum_rgb(r: int, g: int, b: int) -> int:
+    """Sum RGB components using RTuple direct field access"""
+    color: tuple[int, int, int] = (r, g, b)
+    return color[0] + color[1] + color[2]
+
+
+def rtuple_blend_colors(
+    r1: int, g1: int, b1: int, r2: int, g2: int, b2: int
+) -> tuple[int, int, int]:
+    """Blend two RGB colors by averaging components"""
+    c1: tuple[int, int, int] = (r1, g1, b1)
+    c2: tuple[int, int, int] = (r2, g2, b2)
+    result: tuple[int, int, int] = (
+        (c1[0] + c2[0]) // 2,
+        (c1[1] + c2[1]) // 2,
+        (c1[2] + c2[2]) // 2,
+    )
+    return result
+
+
+def rtuple_benchmark_internal(n: int) -> int:
+    """Benchmark RTuple internal ops - returns int to avoid boxing overhead"""
+    total: int = 0
+    i: int = 0
+    while i < n:
+        point: tuple[int, int] = (i, i * 2)
+        total += point[0] + point[1]
+        i += 1
+    return total
+
+
+def sum_points_list(points: list, count: int) -> int:
+    """Sum x+y+z for each point in a list of 3D points (RTuple from list)"""
+    total: int = 0
+    i: int = 0
+    while i < count:
+        p: tuple[int, int, int] = points[i]
+        total = total + p[0] + p[1] + p[2]
+        i = i + 1
+    return total
