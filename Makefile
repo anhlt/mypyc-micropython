@@ -198,6 +198,10 @@ run-device-tests:
 	@echo "Running comprehensive device tests..."
 	@python3 run_device_tests.py --port $(PORT)
 
+benchmark:
+	@echo "Running benchmarks: Native C vs Vanilla MicroPython..."
+	@python3 run_benchmarks.py --port $(PORT)
+
 test-factorial:
 	@echo "Testing factorial module on device..."
 	@mpremote connect $(PORT) exec "import factorial; print('factorial(5):', factorial.factorial(5)); print('fib(10):', factorial.fib(10))"

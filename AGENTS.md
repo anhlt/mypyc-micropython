@@ -20,6 +20,7 @@ make build BOARD=ESP32_GENERIC_C6                # Build firmware for ESP32-C6
 make flash BOARD=ESP32_GENERIC_C6                # Flash to device
 make test-device BOARD=ESP32_GENERIC_C6 PORT=/dev/cu.usbmodem2101  # Full device test
 make run-device-tests PORT=/dev/cu.usbmodem2101  # Run device tests only
+make benchmark PORT=/dev/cu.usbmodem2101         # Benchmark native vs vanilla MicroPython
 ```
 
 **IMPORTANT**: Always use `make` commands for compiling and testing. Never call `mpy-compile` directly.
