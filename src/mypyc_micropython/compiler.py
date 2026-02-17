@@ -206,6 +206,7 @@ class TypedPythonTranslator:
         self._container_emitter = ContainerEmitter()
         self._loop_depth = 0
         self._var_types: dict[str, str] = {}
+        self._uses_print = False
 
         self._module_ir = ModuleIR(name=module_name, c_name=self.c_name)
         self._current_class: ClassIR | None = None
@@ -970,6 +971,13 @@ class TypedPythonTranslator:
         for stmt in node.body:
             body_lines.extend(self._translate_statement(stmt, return_type, local_vars))
 
+        needs_fallthrough_return = True
+        if node.body and isinstance(node.body[-1], ast.Return):
+            needs_fallthrough_return = False
+
+        if needs_fallthrough_return:
+            body_lines.append("    return mp_const_none;")
+
         func_code = [c_sig + " {"] + body_lines + ["}", obj_def, ""]
         self._function_code.append("\n".join(func_code))
 
@@ -1070,6 +1078,13 @@ class TypedPythonTranslator:
                 return ["    continue;"]
             return ["    /* ERROR: continue outside loop */"]
         elif isinstance(stmt, ast.Expr):
+            # Check for print() call - handle as statement
+            if (
+                isinstance(stmt.value, ast.Call)
+                and isinstance(stmt.value.func, ast.Name)
+                and stmt.value.func.id == "print"
+            ):
+                return self._translate_print_stmt(stmt.value, locals_)
             lines = self._flush_ir_prelude()
             expr, _ = self._translate_expr(stmt.value, locals_)
             lines.extend(self._flush_ir_prelude())
@@ -1128,6 +1143,28 @@ class TypedPythonTranslator:
         self._loop_depth -= 1
 
         lines.append("    }")
+        return lines
+
+    def _translate_print_stmt(self, call: ast.Call, locals_: list[str]) -> list[str]:
+        self._uses_print = True
+        lines = self._flush_ir_prelude()
+
+        args = []
+        for arg in call.args:
+            arg_expr, arg_type = self._translate_expr(arg, locals_)
+            lines.extend(self._flush_ir_prelude())
+            boxed = self._box_value(arg_expr, arg_type)
+            args.append(boxed)
+
+        if not args:
+            lines.append('    mp_print_str(&mp_plat_print, "\\n");')
+        else:
+            for i, arg in enumerate(args):
+                if i > 0:
+                    lines.append('    mp_print_str(&mp_plat_print, " ");')
+                lines.append(f"    mp_obj_print_helper(&mp_plat_print, {arg}, PRINT_STR);")
+            lines.append('    mp_print_str(&mp_plat_print, "\\n");')
+
         return lines
 
     def _translate_for(
@@ -1715,8 +1752,12 @@ class TypedPythonTranslator:
             '#include "py/obj.h"',
             '#include "py/objtype.h"',
             "#include <stddef.h>",
-            "",
         ]
+
+        if self._uses_print:
+            lines.append('#include "py/mpprint.h"')
+
+        lines.append("")
 
         if self._forward_decls:
             lines.extend(self._forward_decls)

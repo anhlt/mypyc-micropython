@@ -177,3 +177,28 @@ Always run `source ~/esp/esp-idf/export.sh` before firmware builds.
 | MicroPython submodule | v1.28.0-preview |
 | ESP-IDF (for firmware) | v5.4.2 |
 | mypy | ≥1.0.0 |
+
+## Changelog
+
+This project uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
+
+**When creating or updating a PR, ALWAYS update CHANGELOG.md:**
+
+1. Add entries under `## [Unreleased]` section
+2. Use appropriate category: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`
+3. Each entry should be a single line describing the change
+4. Reference PR numbers when available
+
+Example:
+```markdown
+## [Unreleased]
+
+### Added
+- `print()` builtin function support (#3)
+
+### Changed
+- Move generated usermod files from examples/ to modules/
+
+### Fixed
+- Void functions now return mp_const_none
+```
