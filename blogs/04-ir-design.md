@@ -1,9 +1,8 @@
 # Why IR Matters: Compiling Python Classes to C
 
-## Moving beyond direct AST translation for complex type systems in MicroPython
+*Moving beyond direct AST translation for complex type systems in MicroPython.*
 
-**Published:** February 13, 2026  
-**Author:** mypyc-micropython team
+---
 
 What happens when you try to compile Python classes to C for an embedded device?
 
@@ -391,4 +390,3 @@ If the IR is correct but the C is wrong, the bug is in the `ClassEmitter`. If th
 
 ---
 *Interested in the implementation? You can find the IR definitions in `src/mypyc_micropython/ir.py` and the generation logic in `src/mypyc_micropython/class_emitter.py`.*
-
