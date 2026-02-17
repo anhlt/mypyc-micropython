@@ -1666,7 +1666,7 @@ class Point:
         source = """
 class Counter:
     value: int
-    
+
     def __init__(self, start: int) -> None:
         self.value = start
 """
@@ -1684,10 +1684,10 @@ class Counter:
         source = """
 class Counter:
     value: int
-    
+
     def __init__(self, start: int) -> None:
         self.value = start
-    
+
     def increment(self) -> int:
         self.value += 1
         return self.value
@@ -1708,7 +1708,7 @@ class Counter:
         source = """
 class Calculator:
     result: int
-    
+
     def add(self, a: int, b: int) -> int:
         return a + b
 """
@@ -1787,7 +1787,7 @@ class TestClassInheritance:
         source = """
 class Animal:
     name: str
-    
+
     def speak(self) -> str:
         return self.name
 
@@ -1814,7 +1814,7 @@ class TestMethodDispatch:
 class Box:
     width: int
     height: int
-    
+
     def area(self) -> int:
         return self.width * self.height
 """
@@ -1827,7 +1827,7 @@ class Box:
         source = """
 class Container:
     items: int
-    
+
     def add(self, n: int) -> None:
         self.items += n
 """
@@ -1839,7 +1839,7 @@ class Container:
         source = """
 class Math:
     base: int
-    
+
     def square_plus(self, n: int) -> int:
         result: int = n * n
         return result + self.base
@@ -1854,7 +1854,7 @@ class Math:
         source = """
 class Classifier:
     threshold: int
-    
+
     def classify(self, value: int) -> int:
         if value > self.threshold:
             return 1
