@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 from mypyc_micropython.compiler import (
-    CompilationResult,
     TypedPythonTranslator,
     compile_source,
     compile_to_micropython,
@@ -45,7 +44,7 @@ def add(a: int, b: int) -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-        
+
         assert "static mp_obj_t test_add" in result
         assert "mp_obj_get_int" in result
         assert "mp_obj_new_int" in result
@@ -58,7 +57,7 @@ def get_answer() -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-        
+
         assert "static mp_obj_t test_get_answer(void)" in result
         assert "MP_DEFINE_CONST_FUN_OBJ_0" in result
         assert "return mp_obj_new_int(42)" in result
@@ -70,7 +69,7 @@ def square(x: int) -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-        
+
         assert "static mp_obj_t test_square(mp_obj_t x_obj)" in result
         assert "MP_DEFINE_CONST_FUN_OBJ_1" in result
 
@@ -81,7 +80,7 @@ def add3(a: int, b: int, c: int) -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-        
+
         assert "MP_DEFINE_CONST_FUN_OBJ_3" in result
 
     def test_function_with_four_args(self):
@@ -91,7 +90,7 @@ def add4(a: int, b: int, c: int, d: int) -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-        
+
         assert "MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN" in result
         assert "size_t n_args" in result
 
@@ -102,7 +101,7 @@ def multiply(a: float, b: float) -> float:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-        
+
         assert "mp_float_t" in result
         assert "mp_get_float_checked" in result
         assert "mp_obj_new_float" in result
@@ -301,7 +300,7 @@ def abs_val(n: int) -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-        
+
         assert "if (" in result
         assert "} else {" in result
 
@@ -314,7 +313,7 @@ def factorial(n: int) -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-        
+
         assert "test_factorial(" in result
         assert result.count("test_factorial") >= 2
 
@@ -326,7 +325,7 @@ def compute(x: int) -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-        
+
         assert "result =" in result
 
     def test_multiple_functions(self):
@@ -339,7 +338,7 @@ def func2() -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-        
+
         assert "test_func1" in result
         assert "test_func2" in result
         assert "MP_QSTR_func1" in result
@@ -352,7 +351,7 @@ def hello() -> int:
 """
         translator = TypedPythonTranslator("mymod")
         result = translator.translate_source(source)
-        
+
         assert "MP_REGISTER_MODULE(MP_QSTR_mymod" in result
         assert "mymod_module_globals" in result
         assert "mymod_user_cmodule" in result
@@ -368,7 +367,7 @@ def count_down(n: int) -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-        
+
         assert "while (" in result
         assert "n > 0" in result
 
@@ -380,7 +379,7 @@ def test() -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-        
+
         assert "mp_int_t x = 10" in result
 
     def test_augmented_assignment(self):
@@ -391,7 +390,7 @@ def test(n: int) -> int:
 """
         translator = TypedPythonTranslator("test")
         result = translator.translate_source(source)
-        
+
         assert "n += 5" in result
 
 
@@ -401,7 +400,7 @@ class TestCompileSource:
     def test_basic_compilation(self):
         source = "def add(a: int, b: int) -> int:\n    return a + b\n"
         result = compile_source(source, "test")
-        
+
         assert '#include "py/runtime.h"' in result
         assert '#include "py/obj.h"' in result
         assert "test_add" in result
@@ -412,7 +411,7 @@ class TestCompileToMicropython:
 
     def test_file_not_found(self):
         result = compile_to_micropython("/nonexistent/path/file.py")
-        
+
         assert result.success is False
         assert "not found" in result.errors[0].lower()
 
@@ -420,13 +419,13 @@ class TestCompileToMicropython:
         with tempfile.TemporaryDirectory() as tmpdir:
             source_path = Path(tmpdir) / "mymodule.py"
             source_path.write_text("def hello() -> int:\n    return 42\n")
-            
+
             result = compile_to_micropython(source_path)
-            
+
             assert result.success is True
             assert result.module_name == "mymodule"
             assert "mymodule_hello" in result.c_code
-            
+
             output_dir = Path(tmpdir) / "usermod_mymodule"
             assert output_dir.exists()
             assert (output_dir / "mymodule.c").exists()
@@ -437,10 +436,10 @@ class TestCompileToMicropython:
         with tempfile.TemporaryDirectory() as tmpdir:
             source_path = Path(tmpdir) / "test.py"
             source_path.write_text("def foo() -> int:\n    return 1\n")
-            
+
             output_dir = Path(tmpdir) / "custom_output"
             result = compile_to_micropython(source_path, output_dir)
-            
+
             assert result.success is True
             assert output_dir.exists()
             assert (output_dir / "test.c").exists()
@@ -449,9 +448,9 @@ class TestCompileToMicropython:
         with tempfile.TemporaryDirectory() as tmpdir:
             source_path = Path(tmpdir) / "mymod.py"
             source_path.write_text("def x() -> int:\n    return 0\n")
-            
+
             result = compile_to_micropython(source_path)
-            
+
             assert "MYMOD_MOD_DIR" in result.mk_code
             assert "SRC_USERMOD" in result.mk_code
             assert "CFLAGS_USERMOD" in result.mk_code
@@ -460,9 +459,9 @@ class TestCompileToMicropython:
         with tempfile.TemporaryDirectory() as tmpdir:
             source_path = Path(tmpdir) / "mymod.py"
             source_path.write_text("def x() -> int:\n    return 0\n")
-            
+
             result = compile_to_micropython(source_path)
-            
+
             assert "add_library(usermod_mymod" in result.cmake_code
             assert "target_sources" in result.cmake_code
             assert "target_include_directories" in result.cmake_code
