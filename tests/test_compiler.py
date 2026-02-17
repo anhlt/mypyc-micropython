@@ -117,7 +117,6 @@ def is_positive(n: int) -> bool:
 
 
 class TestClassContainerFields:
-
     def test_self_field_append(self):
         source = """
 class Bag:
@@ -288,7 +287,6 @@ class Bag:
 """
         result = compile_source(source, "test")
         assert "mp_int_t val = mp_obj_get_int(mp_obj_subscr(self->items" in result
-
 
     def test_if_else_statement(self):
         source = """
@@ -471,25 +469,31 @@ class TestCompileToMicropython:
 class TestArithmeticOperations:
     """Tests for arithmetic operation translation."""
 
-    @pytest.mark.parametrize("op,c_op", [
-        ("+", "+"),
-        ("-", "-"),
-        ("*", "*"),
-        ("/", "/"),
-        ("%", "%"),
-    ])
+    @pytest.mark.parametrize(
+        "op,c_op",
+        [
+            ("+", "+"),
+            ("-", "-"),
+            ("*", "*"),
+            ("/", "/"),
+            ("%", "%"),
+        ],
+    )
     def test_binary_ops(self, op, c_op):
         source = f"def calc(a: int, b: int) -> int:\n    return a {op} b\n"
         result = compile_source(source, "test")
         assert f"(a {c_op} b)" in result
 
-    @pytest.mark.parametrize("op,c_op", [
-        ("&", "&"),
-        ("|", "|"),
-        ("^", "^"),
-        ("<<", "<<"),
-        (">>", ">>"),
-    ])
+    @pytest.mark.parametrize(
+        "op,c_op",
+        [
+            ("&", "&"),
+            ("|", "|"),
+            ("^", "^"),
+            ("<<", "<<"),
+            (">>", ">>"),
+        ],
+    )
     def test_bitwise_ops(self, op, c_op):
         source = f"def calc(a: int, b: int) -> int:\n    return a {op} b\n"
         result = compile_source(source, "test")
@@ -499,14 +503,17 @@ class TestArithmeticOperations:
 class TestComparisonOperations:
     """Tests for comparison operation translation."""
 
-    @pytest.mark.parametrize("op,c_op", [
-        ("==", "=="),
-        ("!=", "!="),
-        ("<", "<"),
-        (">", ">"),
-        ("<=", "<="),
-        (">=", ">="),
-    ])
+    @pytest.mark.parametrize(
+        "op,c_op",
+        [
+            ("==", "=="),
+            ("!=", "!="),
+            ("<", "<"),
+            (">", ">"),
+            ("<=", "<="),
+            (">=", ">="),
+        ],
+    )
     def test_comparison_ops(self, op, c_op):
         source = f"def cmp(a: int, b: int) -> bool:\n    return a {op} b\n"
         result = compile_source(source, "test")
@@ -550,6 +557,60 @@ class TestBuiltinFunctions:
         result = compile_source(source, "test")
         assert "(mp_float_t)" in result
 
+    def test_print_string(self):
+        source = """
+def say_hello() -> None:
+    print("hello")
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_print_helper(&mp_plat_print" in result
+        assert "PRINT_STR" in result
+        assert 'mp_print_str(&mp_plat_print, "\\n")' in result
+        assert '#include "py/mpprint.h"' in result
+
+    def test_print_int(self):
+        source = """
+def print_num() -> None:
+    print(42)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_print_helper(&mp_plat_print, mp_obj_new_int(42), PRINT_STR)" in result
+
+    def test_print_multiple_args(self):
+        source = """
+def print_multiple() -> None:
+    print("a", "b", "c")
+"""
+        result = compile_source(source, "test")
+        assert result.count("mp_obj_print_helper") == 3
+        assert result.count('mp_print_str(&mp_plat_print, " ")') == 2
+
+    def test_print_empty(self):
+        source = """
+def print_newline() -> None:
+    print()
+"""
+        result = compile_source(source, "test")
+        assert 'mp_print_str(&mp_plat_print, "\\n")' in result
+        assert "mp_obj_print_helper" not in result
+
+    def test_print_variable(self):
+        source = """
+def print_var(x: int) -> None:
+    print(x)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_print_helper(&mp_plat_print, mp_obj_new_int(x), PRINT_STR)" in result
+
+    def test_print_expression(self):
+        source = """
+def print_expr(a: int, b: int) -> None:
+    print(a + b)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_print_helper(&mp_plat_print" in result
+        assert "a + b" in result or "(a + b)" in result
+
 
 class TestTernaryExpression:
     """Tests for ternary expression translation."""
@@ -591,7 +652,6 @@ class TestConstants:
 
 
 class TestListOperations:
-
     def test_empty_list_literal(self):
         source = """
 def get_empty() -> list:
@@ -656,7 +716,6 @@ def process(lst: list[int]) -> int:
 
 
 class TestForLoop:
-
     def test_for_range_single_arg(self):
         source = """
 def sum_range(n: int) -> int:
@@ -746,7 +805,6 @@ def nested(n: int) -> int:
 
 
 class TestListWithForLoop:
-
     def test_build_list_with_for(self):
         source = """
 def build_squares(n: int) -> list:
@@ -774,7 +832,6 @@ def sum_all(lst: list) -> int:
 
 
 class TestDictOperations:
-
     def test_empty_dict_literal(self):
         source = """
 def get_empty() -> dict:
@@ -1274,7 +1331,6 @@ def overwrite(d: dict, key: str) -> None:
 
 
 class TestDictMembership:
-
     def test_in_operator(self):
         source = """
 def has_key(d: dict) -> bool:
@@ -1324,7 +1380,6 @@ def check(d: dict) -> int:
 
 
 class TestDictCopy:
-
     def test_copy_basic(self):
         source = """
 def dup(d: dict):
@@ -1346,7 +1401,6 @@ def dup(d: dict):
 
 
 class TestDictClear:
-
     def test_clear_basic(self):
         source = """
 def wipe(d: dict):
@@ -1359,7 +1413,6 @@ def wipe(d: dict):
 
 
 class TestDictSetdefault:
-
     def test_setdefault_key_only(self):
         source = """
 def get_or_none(d: dict):
@@ -1390,7 +1443,6 @@ def get_or_empty(d: dict):
 
 
 class TestDictPop:
-
     def test_pop_key_only(self):
         source = """
 def remove_key(d: dict):
@@ -1430,7 +1482,6 @@ def remove_int(d: dict):
 
 
 class TestDictPopitem:
-
     def test_popitem_basic(self):
         source = """
 def take_last(d: dict):
@@ -1443,7 +1494,6 @@ def take_last(d: dict):
 
 
 class TestDictUpdate:
-
     def test_update_basic(self):
         source = """
 def merge(d1: dict, d2: dict):
@@ -1465,7 +1515,6 @@ def merge_and_return(d1: dict, d2: dict):
 
 
 class TestDictCopyConstructor:
-
     def test_dict_copy_constructor(self):
         source = """
 def dup(d: dict) -> dict:
@@ -1485,7 +1534,6 @@ def dup(d: dict) -> dict:
 
 
 class TestSanitizeReservedWords:
-
     def test_reserved_word_default(self):
         assert sanitize_name("default") == "default_"
 

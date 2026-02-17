@@ -27,7 +27,8 @@ A 6-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 - **Lists**: Literals, indexing, assignment, `append()`, `pop()`, `len()`, iteration
 - **Dicts**: Literals, indexing, assignment, `get()`, `keys()`, `values()`, `items()`, `copy()`,
   `clear()`, `setdefault()`, `pop()`, `popitem()`, `update()`, `in`/`not in`, `dict(d)` copy
-- **Built-ins**: `abs()`, `int()`, `float()`, `len()`, `range()` (1/2/3 args), `list()`, `dict()`
+- **Built-ins**: `abs()`, `int()`, `float()`, `len()`, `range()` (1/2/3 args), `list()`, `dict()`,
+  `print()`
 - **Classes**: Class definitions with typed fields, `__init__`, instance methods, `@dataclass`,
   single inheritance with vtable-based virtual dispatch, `__eq__`, `__len__`, `__getitem__`,
   `__setitem__`, class fields with `list`/`dict` types, augmented assignment on fields
@@ -38,11 +39,10 @@ A 6-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 ### What's Next ❌
 
 - Tuples, sets, string operations
-- `print()`, `bool()`, `min()`, `max()`, `sum()`
+- `bool()`, `min()`, `max()`, `sum()`
 - Remaining list methods (`extend`, `insert`, `remove`, `count`, `index`, `reverse`, `sort`)
 - List/dict slicing, concatenation, comprehensions
 - Default arguments, `*args`, `**kwargs`
-- Inherited method propagation to child class (non-overridden parent methods)
 - `@property`, `@staticmethod`, `@classmethod`
 - `super()` calls
 - Exception handling
@@ -57,10 +57,10 @@ Phase 1: Core Completion        ██████████░░░░░  ~
 Phase 2: Functions & Arguments  ░░░░░░░░░░░░░░░  TODO
   default args │ *args │ **kwargs │ enumerate │ zip │ sorted
 
-Phase 3: Classes                ██████████████░  ~90% done
+Phase 3: Classes                ███████████████  ~95% done
   class def ✅ │ __init__ ✅ │ methods ✅ │ @dataclass ✅ │ inheritance ✅
-  vtable dispatch ✅ │ __eq__/__len__/__getitem__/__setitem__ ✅
-  @property │ @staticmethod │ @classmethod │ super() │ inherited method propagation
+  vtable dispatch ✅ │ __eq__/__len__/__getitem__/__setitem__ ✅ │ inherited methods ✅
+  @property │ @staticmethod │ @classmethod │ super()
 
 Phase 4: Exception Handling     ░░░░░░░░░░░░░░░  TODO
   try/except │ try/finally │ raise │ custom exceptions
@@ -229,7 +229,7 @@ All for-loop forms are implemented:
 | `float(x)` | ✅ | Cast: `((mp_float_t)(x))` |
 | `list()` | ✅ | Empty list constructor |
 | `dict()` / `dict(d)` | ✅ | Empty or copy constructor |
-| `print(*args)` | ❌ TODO | |
+| `print(*args)` | ✅ | `mp_obj_print_helper()` with space separator |
 | `bool(obj)` | ❌ TODO | |
 | `min()` / `max()` | ❌ TODO | |
 | `sum(iterable)` | ❌ TODO | |
@@ -372,8 +372,8 @@ Tasks:
 - [x] Vtable access path computation for deep inheritance (`super.super.vtable`)
 - [x] `__eq__` using `mp_obj_get_type()` for correct runtime type checking
 - [x] Multi-level inheritance (grandchild classes)
-- [ ] Inherited method propagation — non-overridden parent methods not yet visible
-  in child class `locals_dict` (e.g., `BoundedCounter` missing `Counter.get()`)
+- [x] Inherited method propagation — non-overridden parent methods now visible
+  in child class `locals_dict`
 - [ ] `super()` calls in methods (e.g., `super().__init__(...)`)
 
 ### 3.6 Special Methods (Partial)
@@ -391,7 +391,6 @@ Tasks:
 
 | Issue | Description | Workaround |
 |-------|-------------|------------|
-| Inherited method propagation | Non-overridden parent methods don't appear in child's `locals_dict`. Vtable dispatch for overridden methods works correctly. | Access parent state via attributes (e.g., `obj.value` instead of `obj.get()`) |
 | No `super()` calls | Cannot call parent's method implementation from child | Inline parent logic in child methods |
 | No `@property` | No getter/setter decorator support | Use explicit getter/setter methods |
 | No `@staticmethod`/`@classmethod` | Only instance methods supported | Use module-level functions instead |
