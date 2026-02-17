@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `print()` builtin function support with space separator and trailing newline
 - `print_test.py` example demonstrating print functionality
 - Fallthrough `return mp_const_none;` for void functions without explicit return
+- **Tuple support**: literals `(1, 2, 3)`, indexing `t[n]`, slicing `t[n:m]`, `len(t)`, iteration
+- **Tuple operations**: concatenation `t1 + t2`, repetition `t * n`, unpacking `a, b, c = t`
+- **Tuple constructors**: `tuple()`, `tuple(iterable)`
+- **Set support**: literals `{1, 2, 3}`, `len(s)`, `in` operator, iteration
+- **Set methods**: `add()`, `remove()`, `discard()`, `update()`, `clear()`, `copy()`, `pop()`
+- **Set constructors**: `set()`, `set(iterable)`
+- **Slicing support**: `lst[n:m]`, `lst[n:]`, `lst[:m]`, `lst[:]`, `lst[::step]` for lists and tuples
+- **Container operations**: concatenation `+` and repetition `*` for lists and tuples
+- `examples/tuple_operations.py` - comprehensive tuple examples (20 functions)
+- `examples/set_operations.py` - comprehensive set examples (17 functions)
+- C runtime tests for tuple operations (7 tests)
+- C runtime tests for set operations (5 tests)
 
 ### Changed
 - Move generated usermod files from `examples/` to `modules/`
@@ -19,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Void functions now properly return `mp_const_none` instead of falling through
+- Tuple unpacking with typed variables now correctly unboxes values (e.g., `a: int; b: int; a, b = t`)
+- `set.add()` and other void-returning methods no longer generate invalid C code
 
 ## [0.1.0] - 2024-02-07
 

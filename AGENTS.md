@@ -16,9 +16,13 @@ ruff check src/ tests/                           # Lint
 ruff check src/ tests/ --fix                     # Lint with auto-fix
 make compile SRC=examples/factorial.py           # Compile one Python file → C module
 make compile-all                                 # Compile all examples
-make build BOARD=ESP32_GENERIC_C3                # Build firmware for ESP32-C3
-make flash BOARD=ESP32_GENERIC_C3                # Flash to device
+make build BOARD=ESP32_GENERIC_C6                # Build firmware for ESP32-C6
+make flash BOARD=ESP32_GENERIC_C6                # Flash to device
+make test-device BOARD=ESP32_GENERIC_C6 PORT=/dev/cu.usbmodem2101  # Full device test
+make run-device-tests PORT=/dev/cu.usbmodem2101  # Run device tests only
 ```
+
+**IMPORTANT**: Always use `make` commands for compiling and testing. Never call `mpy-compile` directly.
 
 ## Project Layout
 
@@ -154,19 +158,70 @@ def test_c_sum_range(compile_and_run):
     assert stdout.strip() == "10"
 ```
 
+### Device tests (run_device_tests.py)
+
+**IMPORTANT**: When adding or updating features, ALWAYS update `run_device_tests.py` with corresponding device tests.
+
+```bash
+# Run all device tests (compiles, builds, flashes, then tests)
+make test-device BOARD=ESP32_GENERIC_C6 PORT=/dev/cu.usbmodem2101
+
+# Run device tests only (skip compile/build/flash if already done)
+make run-device-tests PORT=/dev/cu.usbmodem2101
+```
+
+Test pattern in `run_device_tests.py`:
+```python
+def test_tuple_operations():
+    test(
+        "make_point",
+        "import tuple_operations as t; print(t.make_point())",
+        "(10, 20)",
+    )
+```
+
+Each module should have a `test_<module>()` function added to `run_all_tests()`.
+
 ## ESP-IDF / Firmware
 
 For building firmware and flashing to ESP32, see platform-specific guides:
 - **Linux**: [docs/esp-idf-setup-linux.md](docs/esp-idf-setup-linux.md)
 - **macOS**: [docs/esp-idf-setup-macos.md](docs/esp-idf-setup-macos.md)
 
-Key commands: `make build BOARD=ESP32_GENERIC_C3`, `make flash`, `make deploy`.
+### Device Testing Workflow
+
+**IMPORTANT**: Always detect the connected board type before building firmware.
+
+```bash
+# 1. Check connected device
+ls /dev/cu.usb*                                  # macOS - find USB serial port
+
+# 2. Detect board type via esptool (run BEFORE building)
+source ~/esp/esp-idf/export.sh
+esptool.py --port /dev/cu.usbmodem2101 chip_id  # Shows chip type (ESP32-C6, C3, S3, etc.)
+
+# 3. Build with correct board type
+make build BOARD=ESP32_GENERIC_C6               # Match detected chip!
+make flash BOARD=ESP32_GENERIC_C6 PORT=/dev/cu.usbmodem2101
+```
+
+### Current Development Hardware
+
+| Item | Value |
+|------|-------|
+| Board | ESP32-C6 DevKit |
+| Port (macOS) | `/dev/cu.usbmodem2101` |
+| Board variable | `ESP32_GENERIC_C6` |
+
+### Build Commands
+
+Key commands: `make build BOARD=ESP32_GENERIC_C6`, `make flash`, `make deploy`.
 Always run `source ~/esp/esp-idf/export.sh` before firmware builds.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BOARD` | `ESP32_GENERIC` | Target board (`ESP32_GENERIC_C3`, `ESP32_GENERIC_S3`) |
-| `PORT` | `/dev/ttyACM0` | Serial port (macOS: `/dev/cu.usbmodem101`) |
+| `BOARD` | `ESP32_GENERIC` | Target board (`ESP32_GENERIC_C3`, `ESP32_GENERIC_C6`, `ESP32_GENERIC_S3`) |
+| `PORT` | `/dev/ttyACM0` | Serial port (macOS: `/dev/cu.usbmodem2101`) |
 | `ESP_IDF_DIR` | `~/esp/esp-idf` | ESP-IDF installation path |
 
 ## Version Matrix

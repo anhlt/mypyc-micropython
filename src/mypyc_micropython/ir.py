@@ -21,11 +21,12 @@ from typing import Any
 
 class CType(Enum):
     """C types for MicroPython integration."""
-    MP_OBJ_T = auto()      # mp_obj_t (boxed, GC-visible)
-    MP_INT_T = auto()      # mp_int_t (unboxed integer)
-    MP_FLOAT_T = auto()    # mp_float_t (unboxed float)
-    BOOL = auto()          # bool
-    VOID = auto()          # void (for None returns)
+
+    MP_OBJ_T = auto()  # mp_obj_t (boxed, GC-visible)
+    MP_INT_T = auto()  # mp_int_t (unboxed integer)
+    MP_FLOAT_T = auto()  # mp_float_t (unboxed float)
+    BOOL = auto()  # bool
+    VOID = auto()  # void (for None returns)
 
     def to_c_type_str(self) -> str:
         """Return the C type string."""
@@ -69,22 +70,24 @@ class CType(Enum):
 
 class CallTarget(Enum):
     """How to dispatch a method call."""
-    DIRECT = auto()        # Direct C function call (exact type known)
-    VTABLE = auto()        # Via vtable slot (virtual call)
-    MP_DYNAMIC = auto()    # MicroPython dynamic dispatch (fallback)
+
+    DIRECT = auto()  # Direct C function call (exact type known)
+    VTABLE = auto()  # Via vtable slot (virtual call)
+    MP_DYNAMIC = auto()  # MicroPython dynamic dispatch (fallback)
 
 
 @dataclass
 class FieldIR:
     """Represents a class field/attribute."""
+
     name: str
-    py_type: str                        # Python type annotation as string
-    c_type: CType                       # Resolved C type
-    offset: int = -1                    # Byte offset in struct (computed later)
+    py_type: str  # Python type annotation as string
+    c_type: CType  # Resolved C type
+    offset: int = -1  # Byte offset in struct (computed later)
     has_default: bool = False
-    default_value: Any = None           # Literal default value
+    default_value: Any = None  # Literal default value
     default_factory: str | None = None  # For dataclass field(default_factory=...)
-    default_ast: ast.expr | None = None # AST node for default value
+    default_ast: ast.expr | None = None  # AST node for default value
 
     def get_c_type_str(self) -> str:
         """Get the C type string for this field."""
@@ -94,34 +97,31 @@ class FieldIR:
 @dataclass
 class MethodIR:
     """Represents a class method."""
+
     name: str
-    c_name: str                         # Full C function name
-    params: list[tuple[str, CType]]     # (name, type) pairs (excluding self)
+    c_name: str  # Full C function name
+    params: list[tuple[str, CType]]  # (name, type) pairs (excluding self)
     return_type: CType
-    body_ast: ast.FunctionDef           # Original AST for body translation
-    is_virtual: bool = True             # Can be overridden?
-    is_static: bool = False             # @staticmethod
-    is_classmethod: bool = False        # @classmethod
-    is_property: bool = False           # @property
-    vtable_index: int = -1              # Index in vtable (if virtual)
-    is_special: bool = False            # __init__, __repr__, etc.
+    body_ast: ast.FunctionDef  # Original AST for body translation
+    is_virtual: bool = True  # Can be overridden?
+    is_static: bool = False  # @staticmethod
+    is_classmethod: bool = False  # @classmethod
+    is_property: bool = False  # @property
+    vtable_index: int = -1  # Index in vtable (if virtual)
+    is_special: bool = False  # __init__, __repr__, etc.
     docstring: str | None = None
 
     def get_native_signature(self, class_c_name: str) -> str:
         """Get the native C function signature (typed parameters)."""
         if self.is_static:
-            params_str = ", ".join(
-                f"{ctype.to_c_type_str()} {name}"
-                for name, ctype in self.params
-            )
+            params_str = ", ".join(f"{ctype.to_c_type_str()} {name}" for name, ctype in self.params)
             if not params_str:
                 params_str = "void"
         else:
             params_str = f"{class_c_name}_obj_t *self"
             if self.params:
                 params_str += ", " + ", ".join(
-                    f"{ctype.to_c_type_str()} {name}"
-                    for name, ctype in self.params
+                    f"{ctype.to_c_type_str()} {name}" for name, ctype in self.params
                 )
 
         return f"static {self.return_type.to_c_type_str()} {self.c_name}_native({params_str})"
@@ -144,6 +144,7 @@ class MethodIR:
 @dataclass
 class DataclassInfo:
     """Metadata for @dataclass decorated classes."""
+
     fields: list[FieldIR] = field(default_factory=list)
     frozen: bool = False
     eq: bool = True
@@ -160,13 +161,14 @@ class DataclassInfo:
 @dataclass
 class ClassIR:
     """Intermediate representation of a Python class."""
+
     name: str
-    c_name: str                                   # Sanitized C identifier
+    c_name: str  # Sanitized C identifier
     module_name: str
 
     # Inheritance (single inheritance only)
     base: ClassIR | None = None
-    base_name: str | None = None                  # For deferred resolution
+    base_name: str | None = None  # For deferred resolution
 
     # Members
     fields: list[FieldIR] = field(default_factory=list)
@@ -227,10 +229,7 @@ class ClassIR:
             if name in self.methods:
                 method = self.methods[name]
                 # Check if overriding
-                existing_idx = next(
-                    (i for i, (n, _) in enumerate(entries) if n == name),
-                    None
-                )
+                existing_idx = next((i for i, (n, _) in enumerate(entries) if n == name), None)
                 if existing_idx is not None:
                     entries[existing_idx] = (name, method)
                 elif name not in existing_names:
@@ -287,23 +286,25 @@ class ClassIR:
 @dataclass
 class FuncIR:
     """Function IR (standalone or method context)."""
+
     name: str
     c_name: str
-    params: list[tuple[str, CType]]      # (name, type) pairs
+    params: list[tuple[str, CType]]  # (name, type) pairs
     return_type: CType
-    body_ast: ast.FunctionDef            # Original AST for body translation
+    body_ast: ast.FunctionDef  # Original AST for body translation
     is_method: bool = False
-    class_ir: ClassIR | None = None      # Owning class (if method)
+    class_ir: ClassIR | None = None  # Owning class (if method)
     locals_: dict[str, CType] = field(default_factory=dict)
     docstring: str | None = None
 
 
 class IRType(Enum):
     """Runtime type tag for expression-level IR values."""
-    OBJ = auto()       # mp_obj_t (boxed)
-    INT = auto()       # mp_int_t (unboxed integer)
-    FLOAT = auto()     # mp_float_t (unboxed float)
-    BOOL = auto()      # bool
+
+    OBJ = auto()  # mp_obj_t (boxed)
+    INT = auto()  # mp_int_t (unboxed integer)
+    FLOAT = auto()  # mp_float_t (unboxed float)
+    BOOL = auto()  # bool
 
     def to_c_type_str(self) -> str:
         mapping = {
@@ -329,27 +330,32 @@ class IRType(Enum):
 # Expression-level IR values
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ValueIR:
     """Base for IR values (temps, constants, names)."""
+
     ir_type: IRType
 
 
 @dataclass
 class TempIR(ValueIR):
     """A compiler-generated temporary variable."""
+
     name: str
 
 
 @dataclass
 class ConstIR(ValueIR):
     """A compile-time constant value."""
+
     value: object  # int | float | bool | str | None
 
 
 @dataclass
 class NameIR(ValueIR):
     """A reference to a Python local / argument."""
+
     py_name: str
     c_name: str
 
@@ -358,15 +364,34 @@ class NameIR(ValueIR):
 # Expression-level IR instructions
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class InstrIR:
     """Base for IR instructions (each may produce an optional result)."""
+
     pass
 
 
 @dataclass
 class ListNewIR(InstrIR):
     """Create a new list from *items*."""
+
+    result: TempIR
+    items: list[ValueIR]
+
+
+@dataclass
+class TupleNewIR(InstrIR):
+    """Create a new tuple from *items*."""
+
+    result: TempIR
+    items: list[ValueIR]
+
+
+@dataclass
+class SetNewIR(InstrIR):
+    """Create a new set from *items*."""
+
     result: TempIR
     items: list[ValueIR]
 
@@ -374,6 +399,7 @@ class ListNewIR(InstrIR):
 @dataclass
 class DictNewIR(InstrIR):
     """Create a new dict from key/value pairs."""
+
     result: TempIR
     entries: list[tuple[ValueIR, ValueIR]]
 
@@ -381,6 +407,7 @@ class DictNewIR(InstrIR):
 @dataclass
 class GetItemIR(InstrIR):
     """container[key]  →  result."""
+
     result: TempIR
     container: ValueIR
     key: ValueIR
@@ -389,6 +416,7 @@ class GetItemIR(InstrIR):
 @dataclass
 class SetItemIR(InstrIR):
     """container[key] = value  (no result)."""
+
     container: ValueIR
     key: ValueIR
     value: ValueIR
@@ -397,6 +425,7 @@ class SetItemIR(InstrIR):
 @dataclass
 class MethodCallIR(InstrIR):
     """receiver.method(args)  →  optional result."""
+
     result: TempIR | None
     receiver: ValueIR
     method: str
@@ -406,6 +435,7 @@ class MethodCallIR(InstrIR):
 @dataclass
 class BoxIR(InstrIR):
     """Box a native value to mp_obj_t."""
+
     result: TempIR
     value: ValueIR
 
@@ -413,6 +443,7 @@ class BoxIR(InstrIR):
 @dataclass
 class UnboxIR(InstrIR):
     """Unbox mp_obj_t to a native type."""
+
     result: TempIR
     value: ValueIR
     target_type: IRType
@@ -422,6 +453,7 @@ class UnboxIR(InstrIR):
 # Lowered expression: prelude instructions + final value
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class LoweredExpr:
     """Result of lowering an AST expression to IR.
@@ -429,6 +461,7 @@ class LoweredExpr:
     ``prelude`` contains instructions that must be emitted *before* the
     statement that uses ``value``.
     """
+
     value: ValueIR
     prelude: list[InstrIR] = field(default_factory=list)
 

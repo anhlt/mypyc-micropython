@@ -33,12 +33,12 @@ A 6-phase roadmap for mypyc-micropython from proof-of-concept to production-read
   single inheritance with vtable-based virtual dispatch, `__eq__`, `__len__`, `__getitem__`,
   `__setitem__`, class fields with `list`/`dict` types, augmented assignment on fields
 - **IR pipeline**: Expression-level IR nodes, ContainerEmitter for list/dict, IR prelude pattern
-- **ESP32**: All 10 compiled modules verified on real ESP32-C3 hardware
+- **ESP32**: All 13 compiled modules verified on real ESP32-C6 hardware (98 device tests pass)
 - **Other**: Local variables (typed and inferred), string literals, `None`, `True`/`False`
 
 ### What's Next ❌
 
-- Tuples, sets, string operations
+- String operations
 - `bool()`, `min()`, `max()`, `sum()`
 - Remaining list methods (`extend`, `insert`, `remove`, `count`, `index`, `reverse`, `sort`)
 - List/dict slicing, concatenation, comprehensions
@@ -51,8 +51,8 @@ A 6-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 ## Phase Overview
 
 ```
-Phase 1: Core Completion        ██████████░░░░░  ~65% done
-  for loops ✅ │ lists (partial) │ dicts (86%) │ tuples │ sets │ builtins
+Phase 1: Core Completion        █████████████░░  ~85% done
+  for loops ✅ │ lists ✅ │ dicts ✅ │ tuples ✅ │ sets ✅ │ builtins (partial)
 
 Phase 2: Functions & Arguments  ░░░░░░░░░░░░░░░  TODO
   default args │ *args │ **kwargs │ enumerate │ zip │ sorted
@@ -69,7 +69,7 @@ Phase 5: Advanced Features      ░░░░░░░░░░░░░░░  T
   closures │ generators │ list comprehensions │ map/filter
 
 Phase 6: Integration & Polish   ██████░░░░░░░░░  ~40% done
-  ESP32 modules ✅ (10 modules on ESP32-C3) │ optimization │ error messages │ docs
+  ESP32 modules ✅ (13 modules on ESP32-C6) │ optimization │ error messages │ docs
 ```
 
 ---
@@ -202,21 +202,39 @@ All for-loop forms are implemented:
 
 ### 1.4 Tuple Support
 
-| Feature | Status |
-|---------|--------|
-| Tuple creation: `(1, 2, 3)` | ❌ TODO |
-| Tuple unpacking: `a, b, c = tup` | ❌ TODO |
-| Tuple indexing | ❌ TODO |
-| Named tuple | ❌ TODO (low priority) |
+| Feature | Status | C API |
+|---------|--------|-------|
+| Tuple creation: `(1, 2, 3)` | ✅ | `mp_obj_new_tuple()` |
+| Empty tuple: `()` | ✅ | `mp_const_empty_tuple` |
+| Tuple indexing: `t[n]` | ✅ | `mp_obj_subscr()` |
+| Tuple slicing: `t[n:m]` | ✅ | `mp_obj_subscr()` with `mp_obj_new_slice()` |
+| Tuple unpacking: `a, b, c = t` | ✅ | Sequential `mp_obj_subscr()` |
+| Tuple concatenation: `t1 + t2` | ✅ | `mp_binary_op(MP_BINARY_OP_ADD)` |
+| Tuple repetition: `t * n` | ✅ | `mp_binary_op(MP_BINARY_OP_MULTIPLY)` |
+| `tuple()` constructor | ✅ | `mp_const_empty_tuple` |
+| `tuple(iterable)` | ✅ | `mp_obj_tuple_make_new()` |
+| `len(t)` | ✅ | `mp_obj_len()` |
+| Tuple iteration | ✅ | `mp_getiter()`/`mp_iternext()` |
+| Named tuple | ❌ TODO (low priority) | |
 
 ### 1.5 Set Support
 
-| Feature | Status |
-|---------|--------|
-| Set creation: `{1, 2, 3}` | ❌ TODO |
-| Set operations: `union`, `intersection`, `difference` | ❌ TODO |
-| `in` operator | ❌ TODO |
-| Set iteration | ❌ TODO |
+| Feature | Status | C API |
+|---------|--------|-------|
+| Set creation: `{1, 2, 3}` | ✅ | `mp_obj_new_set()` |
+| Empty set: `set()` | ✅ | `mp_obj_new_set(0, NULL)` |
+| `set(iterable)` | ✅ | `mp_obj_set_make_new()` |
+| `in` operator | ✅ | `mp_binary_op(MP_BINARY_OP_IN)` |
+| `s.add(item)` | ✅ | `mp_obj_set_store()` |
+| `s.remove(item)` | ✅ | `mp_load_attr(MP_QSTR_remove)` + call |
+| `s.discard(item)` | ✅ | `mp_load_attr(MP_QSTR_discard)` + call |
+| `s.update(iterable)` | ✅ | `mp_load_attr(MP_QSTR_update)` + call |
+| `s.clear()` | ✅ | `mp_load_attr(MP_QSTR_clear)` + call |
+| `s.copy()` | ✅ | `mp_load_attr(MP_QSTR_copy)` + call |
+| `s.pop()` | ✅ | `mp_load_attr(MP_QSTR_pop)` + call |
+| `len(s)` | ✅ | `mp_obj_len()` |
+| Set iteration | ✅ | `mp_getiter()`/`mp_iternext()` |
+| Set operations: `union`, `intersection`, `difference` | ❌ TODO | |
 
 ### 1.6 Built-in Functions
 

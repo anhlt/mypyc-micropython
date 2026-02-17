@@ -391,6 +391,234 @@ def test_inventory():
     )
 
 
+def test_tuple_operations():
+    """Test tuple_operations module."""
+    print("\n[TEST] Testing tuple_operations module...")
+
+    # Tuple creation
+    test(
+        "make_point",
+        "import tuple_operations as t; print(t.make_point())",
+        "(10, 20)",
+    )
+
+    test(
+        "make_triple",
+        "import tuple_operations as t; print(t.make_triple(1, 2, 3))",
+        "(1, 2, 3)",
+    )
+
+    test(
+        "empty_tuple",
+        "import tuple_operations as t; print(t.empty_tuple())",
+        "()",
+    )
+
+    test(
+        "single_element",
+        "import tuple_operations as t; print(t.single_element())",
+        "(42,)",
+    )
+
+    # Tuple indexing
+    test(
+        "get_first",
+        "import tuple_operations as t; print(t.get_first((10, 20, 30)))",
+        "10",
+    )
+
+    test(
+        "get_last",
+        "import tuple_operations as t; print(t.get_last((10, 20, 30)))",
+        "30",
+    )
+
+    # Tuple operations
+    test(
+        "tuple_len",
+        "import tuple_operations as t; print(t.tuple_len((1, 2, 3, 4, 5)))",
+        "5",
+    )
+
+    test(
+        "tuple_contains (found)",
+        "import tuple_operations as t; print(t.tuple_contains((1, 2, 3), 2))",
+        "True",
+    )
+
+    test(
+        "tuple_contains (not found)",
+        "import tuple_operations as t; print(t.tuple_contains((1, 2, 3), 5))",
+        "False",
+    )
+
+    test(
+        "tuple_not_contains",
+        "import tuple_operations as t; print(t.tuple_not_contains((1, 2, 3), 5))",
+        "True",
+    )
+
+    # Tuple iteration
+    test(
+        "sum_tuple",
+        "import tuple_operations as t; print(t.sum_tuple((1, 2, 3, 4, 5)))",
+        "15",
+    )
+
+    test(
+        "nested_iteration",
+        "import tuple_operations as t; print(t.nested_iteration((10, 20, 30)))",
+        "80",
+    )
+
+    # Tuple unpacking
+    test(
+        "unpack_pair",
+        "import tuple_operations as t; print(t.unpack_pair((10, 20)))",
+        "30",
+    )
+
+    test(
+        "unpack_triple",
+        "import tuple_operations as t; print(t.unpack_triple((2, 3, 4)))",
+        "24",
+    )
+
+    # Tuple concat/repeat
+    test(
+        "concat_tuples",
+        "import tuple_operations as t; print(t.concat_tuples((1, 2), (3, 4)))",
+        "(1, 2, 3, 4)",
+    )
+
+    test(
+        "repeat_tuple",
+        "import tuple_operations as t; print(t.repeat_tuple((1, 2), 3))",
+        "(1, 2, 1, 2, 1, 2)",
+    )
+
+    # Tuple slicing
+    test(
+        "slice_tuple",
+        "import tuple_operations as t; print(t.slice_tuple((1, 2, 3, 4, 5)))",
+        "(2, 3)",
+    )
+
+    # Tuple from range
+    test(
+        "from_range",
+        "import tuple_operations as t; print(t.from_range(5))",
+        "(0, 1, 2, 3, 4)",
+    )
+
+
+def test_set_operations():
+    """Test set_operations module."""
+    print("\n[TEST] Testing set_operations module...")
+
+    # Set creation
+    test(
+        "make_set",
+        "import set_operations as s; r = s.make_set(); print(1 in r and 2 in r and 3 in r)",
+        "True",
+    )
+
+    test(
+        "empty_set",
+        "import set_operations as s; print(s.empty_set())",
+        "set()",
+    )
+
+    test(
+        "set_from_range",
+        "import set_operations as s; r = s.set_from_range(5); print(len(r) == 5 and 0 in r and 4 in r)",
+        "True",
+    )
+
+    # Set operations
+    test(
+        "set_len",
+        "import set_operations as s; print(s.set_len({1, 2, 3, 4, 5}))",
+        "5",
+    )
+
+    test(
+        "set_contains (found)",
+        "import set_operations as s; print(s.set_contains({1, 2, 3}, 2))",
+        "True",
+    )
+
+    test(
+        "set_contains (not found)",
+        "import set_operations as s; print(s.set_contains({1, 2, 3}, 5))",
+        "False",
+    )
+
+    test(
+        "set_not_contains",
+        "import set_operations as s; print(s.set_not_contains({1, 2, 3}, 5))",
+        "True",
+    )
+
+    # Set modification
+    test(
+        "set_add",
+        "import set_operations as s; r = s.set_add({1, 2}, 3); print(3 in r)",
+        "True",
+    )
+
+    test(
+        "set_discard",
+        "import set_operations as s; r = s.set_discard({1, 2, 3}, 2); print(2 not in r)",
+        "True",
+    )
+
+    test(
+        "set_remove",
+        "import set_operations as s; r = s.set_remove({1, 2, 3}, 2); print(2 not in r)",
+        "True",
+    )
+
+    test(
+        "set_clear",
+        "import set_operations as s; r = s.set_clear({1, 2, 3}); print(len(r))",
+        "0",
+    )
+
+    # Set copy and update
+    test(
+        "set_copy",
+        "import set_operations as s; r = s.set_copy({1, 2, 3}); print(len(r))",
+        "3",
+    )
+
+    test(
+        "set_update",
+        "import set_operations as s; r = s.set_update({1, 2}, {3, 4}); print(len(r))",
+        "4",
+    )
+
+    # Set iteration
+    test(
+        "sum_set",
+        "import set_operations as s; print(s.sum_set({1, 2, 3, 4, 5}))",
+        "15",
+    )
+
+    # Practical examples
+    test(
+        "build_set_incremental",
+        "import set_operations as s; print(s.build_set_incremental(20))",
+        "10",
+    )
+
+    test(
+        "filter_duplicates",
+        "import set_operations as s; print(s.filter_duplicates(10))",
+        "10",
+    )
+
+
 def run_all_tests():
     """Run all test suites."""
     global total_tests, passed_tests, failed_tests
@@ -415,6 +643,8 @@ def run_all_tests():
     test_algorithms()
     test_dict_operations()
     test_inventory()
+    test_tuple_operations()
+    test_set_operations()
 
     # Print summary
     print("\n" + "=" * 70)

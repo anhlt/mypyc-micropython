@@ -36,6 +36,7 @@ def compile_and_run(tmp_path: Path):
             "-Werror",
             "-Wno-unused-function",
             "-Wno-unused-const-variable",
+            "-Wno-parentheses-equality",
             "-I",
             str(mock_include_dir),
             str(test_c_path),
