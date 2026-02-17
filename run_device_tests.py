@@ -14,12 +14,16 @@ This script:
 Requires: mpremote, ESP32 device connected
 """
 
+import argparse
 import subprocess
 import sys
 from typing import Callable
 
-# Configuration
-PORT = "/dev/ttyACM0"
+# Default configuration
+DEFAULT_PORT = "/dev/ttyACM0"
+
+# Global port (set from command line args)
+PORT = DEFAULT_PORT
 
 # Test tracking
 total_tests = 0
@@ -27,11 +31,12 @@ passed_tests = 0
 failed_tests: list[tuple[str, str]] = []
 
 
-def run_on_device(code: str, timeout: int = 30) -> tuple[bool, str]:
+def run_on_device(code: str, port: str = "", timeout: int = 30) -> tuple[bool, str]:
     """Execute Python code on device via mpremote."""
+    device_port = port if port else PORT
     try:
         result = subprocess.run(
-            ["mpremote", "connect", PORT, "exec", code],
+            ["mpremote", "connect", device_port, "exec", code],
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -339,8 +344,60 @@ def test_dict_operations():
     )
 
 
+def test_inventory():
+    """Test inventory module."""
+    print("\n[TEST] Testing inventory module...")
+
+    test(
+        "Inventory instance",
+        "import inventory; inv = inventory.Inventory(); print(type(inv).__name__)",
+        "Inventory",
+    )
+
+    test(
+        "Inventory total_count starts at 0",
+        "import inventory; inv = inventory.Inventory(); print(inv.total_count)",
+        "0",
+    )
+
+    test(
+        "Inventory add_item and get_quantity",
+        "import inventory; inv = inventory.Inventory(); inv.add_item(100, 5); print(inv.get_quantity(100))",
+        "5",
+    )
+
+    test(
+        "Inventory item_count",
+        "import inventory; inv = inventory.Inventory(); inv.add_item(100, 5); inv.add_item(200, 3); print(inv.item_count())",
+        "2",
+    )
+
+    test(
+        "Inventory total_quantity",
+        "import inventory; inv = inventory.Inventory(); inv.add_item(100, 5); inv.add_item(200, 3); print(inv.total_quantity())",
+        "8",
+    )
+
+    test(
+        "Inventory has_item existing",
+        "import inventory; inv = inventory.Inventory(); inv.add_item(100, 5); print(inv.has_item(100))",
+        "True",
+    )
+
+    test(
+        "Inventory has_item missing",
+        "import inventory; inv = inventory.Inventory(); print(inv.has_item(999))",
+        "False",
+    )
+
+
 def run_all_tests():
     """Run all test suites."""
+    global total_tests, passed_tests, failed_tests
+    total_tests = 0
+    passed_tests = 0
+    failed_tests = []
+
     print("=" * 70)
     print("[TEST SUITE] mypyc-micropython Comprehensive Device Test Suite")
     print("=" * 70)
@@ -357,6 +414,7 @@ def run_all_tests():
     test_bitwise()
     test_algorithms()
     test_dict_operations()
+    test_inventory()
 
     # Print summary
     print("\n" + "=" * 70)
@@ -390,7 +448,22 @@ def run_all_tests():
     return len(failed_tests) == 0
 
 
-if __name__ == "__main__":
+def main():
+    """Main entry point with argument parsing."""
+    global PORT
+
+    parser = argparse.ArgumentParser(
+        description="Comprehensive device test runner for mypyc-micropython"
+    )
+    parser.add_argument(
+        "--port",
+        default=DEFAULT_PORT,
+        help=f"Serial port for ESP32 device (default: {DEFAULT_PORT})",
+    )
+    args = parser.parse_args()
+
+    PORT = args.port
+
     print("[CHECK] Checking device connection...")
     success, output = run_on_device("print('Device ready')")
     if not success:
@@ -398,7 +471,7 @@ if __name__ == "__main__":
         print(f"Error: {output}")
         print("\nMake sure:")
         print("  1. ESP32 device is connected via USB")
-        print("  2. Device port is correct (current: {PORT})")
+        print(f"  2. Device port is correct (current: {PORT})")
         print("  3. Firmware has been flashed with 'make deploy'")
         sys.exit(1)
 
@@ -406,3 +479,7 @@ if __name__ == "__main__":
 
     success = run_all_tests()
     sys.exit(0 if success else 1)
+
+
+if __name__ == "__main__":
+    main()

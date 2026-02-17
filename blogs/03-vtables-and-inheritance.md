@@ -697,7 +697,7 @@ make build BOARD=ESP32_GENERIC_C3
 make flash BOARD=ESP32_GENERIC_C3
 
 # Test on device
-mpremote connect /dev/ttyACM0 run test_device_inventory.py
+python run_device_tests.py --port /dev/ttyACM0
 ```
 
 The generated C lives in `modules/usermod_*/`. Open it up and see the vtables in action!

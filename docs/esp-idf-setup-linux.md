@@ -261,7 +261,7 @@ make -C deps/micropython/ports/esp32 \
 mpremote connect /dev/ttyACM0 exec "import factorial; print(factorial.factorial(5))"
 
 # Run test script
-mpremote connect /dev/ttyACM0 run test_device.py
+python run_device_tests.py --port /dev/ttyACM0
 
 # Interactive REPL
 mpremote connect /dev/ttyACM0 repl

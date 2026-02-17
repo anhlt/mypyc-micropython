@@ -192,11 +192,11 @@ test-device: compile-all build flash run-device-tests
 
 test-device-only:
 	@echo "Running comprehensive device tests..."
-	@python3 run_device_tests.py
+	@python3 run_device_tests.py --port $(PORT)
 
 run-device-tests:
 	@echo "Running comprehensive device tests..."
-	@python3 run_device_tests.py
+	@python3 run_device_tests.py --port $(PORT)
 
 test-factorial:
 	@echo "Testing factorial module on device..."
@@ -220,7 +220,7 @@ test-list:
 
 test-dict:
 	@echo "Testing dict_operations module on device..."
-	@mpremote connect $(PORT) run test_device.py
+	@python3 run_device_tests.py --port $(PORT)
 
 test-all-modules: test-factorial test-point test-counter test-sensor test-list
 	@echo "All module tests complete!"
