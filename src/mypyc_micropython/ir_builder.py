@@ -129,6 +129,7 @@ class IRBuilder:
         return f"_tmp{self._temp_counter}"
 
     def build_function(self, node: ast.FunctionDef) -> FuncIR:
+        self._temp_counter = 0
         self._var_types = {}
         self._list_vars = set()
         self._rtuple_types = {}
@@ -191,6 +192,7 @@ class IRBuilder:
             used_rtuples=set(self._used_rtuples),
             rtuple_types=dict(self._rtuple_types),
             list_vars=set(self._list_vars),
+            max_temp=self._temp_counter,
         )
 
     def _build_statement(self, stmt: ast.stmt, locals_: list[str]) -> StmtIR | None:
@@ -1081,6 +1083,7 @@ class IRBuilder:
             return []
 
         # Reset state for this method
+        self._temp_counter = 0
         self._var_types = {}
         self._list_vars = set()
         self._rtuple_types = {}
@@ -1108,6 +1111,7 @@ class IRBuilder:
             if stmt_ir is not None:
                 body_ir.append(stmt_ir)
 
+        method_ir.max_temp = self._temp_counter
         return body_ir
 
     def _build_method_statement(

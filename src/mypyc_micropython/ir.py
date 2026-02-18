@@ -188,6 +188,7 @@ class MethodIR:
     vtable_index: int = -1  # Index in vtable (if virtual)
     is_special: bool = False  # __init__, __repr__, etc.
     docstring: str | None = None
+    max_temp: int = 0
 
     def get_native_signature(self, class_c_name: str) -> str:
         """Get the native C function signature (typed parameters)."""
@@ -381,6 +382,7 @@ class FuncIR:
     used_rtuples: set[RTuple] = field(default_factory=set)
     rtuple_types: dict[str, RTuple] = field(default_factory=dict)
     list_vars: set[str] = field(default_factory=set)
+    max_temp: int = 0  # Highest temp counter used by IR builder
 
 
 class IRType(Enum):

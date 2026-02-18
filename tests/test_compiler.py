@@ -2507,3 +2507,150 @@ def get_first(item: object) -> int:
         assert "->items[1]" in result
         assert "mp_obj_get_int" in result
         assert "p.f0" in result
+
+
+class TestTempVariableCollision:
+    """Tests to prevent temp variable name collisions between IR builder and emitter."""
+
+    def test_multiple_for_iter_loops_no_collision(self):
+        """Multiple for-iter loops should use unique temp variable names."""
+        source = """
+def merge_dicts(d1: dict, d2: dict) -> dict:
+    result: dict = {}
+    key: object
+    for key in d1.keys():
+        result[key] = d1[key]
+    for key in d2.keys():
+        result[key] = d2[key]
+    return result
+"""
+        result = compile_source(source, "test")
+        import re
+
+        temp_decls = re.findall(r"(mp_obj_t|mp_obj_iter_buf_t)\s+(_tmp\d+)", result)
+        temp_names = [name for _, name in temp_decls]
+        assert len(temp_names) == len(set(temp_names)), (
+            f"Duplicate temp variable declarations found: {temp_names}"
+        )
+
+    def test_for_iter_after_prelude_instructions(self):
+        """For-iter temps should not collide with prelude instruction temps."""
+        source = """
+def process_items(items: list) -> int:
+    total: int = 0
+    item: object
+    for item in items:
+        total = total + len(item)
+    return total
+"""
+        result = compile_source(source, "test")
+        import re
+
+        temp_decls = re.findall(r"(mp_obj_t|mp_obj_iter_buf_t)\s+(_tmp\d+)", result)
+        temp_names = [name for _, name in temp_decls]
+        assert len(temp_names) == len(set(temp_names)), (
+            f"Duplicate temp variable declarations found: {temp_names}"
+        )
+
+    def test_nested_calls_with_for_iter(self):
+        """Complex expressions with for-iter should have unique temps."""
+        source = """
+def sum_values(d: dict) -> int:
+    total: int = 0
+    k: object
+    for k in d.keys():
+        v: int = d.get(k, 0)
+        total = total + v
+    return total
+"""
+        result = compile_source(source, "test")
+        import re
+
+        temp_decls = re.findall(r"(mp_obj_t|mp_obj_iter_buf_t)\s+(_tmp\d+)", result)
+        temp_names = [name for _, name in temp_decls]
+        assert len(temp_names) == len(set(temp_names)), (
+            f"Duplicate temp variable declarations found: {temp_names}"
+        )
+
+
+class TestEmptyContainerEmission:
+    """Tests for proper emission of empty containers in various contexts."""
+
+    def test_empty_list_in_class_init(self):
+        """Empty list assignment in __init__ should emit mp_obj_new_list(0, NULL)."""
+        source = """
+class Container:
+    items: list
+
+    def __init__(self) -> None:
+        self.items = []
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_list(0, NULL)" in result
+        assert "/* unknown constant */" not in result
+
+    def test_empty_dict_in_class_init(self):
+        """Empty dict assignment in __init__ should emit mp_obj_new_dict(0)."""
+        source = """
+class Cache:
+    data: dict
+
+    def __init__(self) -> None:
+        self.data = {}
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_dict(0)" in result
+        assert "/* unknown constant */" not in result
+
+    def test_empty_list_and_dict_in_same_init(self):
+        """Multiple empty containers in same __init__ should all emit properly."""
+        source = """
+class Inventory:
+    items: list
+    counts: dict
+
+    def __init__(self) -> None:
+        self.items = []
+        self.counts = {}
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_list(0, NULL)" in result
+        assert "mp_obj_new_dict(0)" in result
+        assert "/* unknown constant */" not in result
+
+    def test_empty_containers_in_regular_method(self):
+        """Empty containers in non-init methods should also emit properly."""
+        source = """
+class Resettable:
+    items: list
+
+    def __init__(self) -> None:
+        self.items = []
+
+    def reset(self) -> None:
+        self.items = []
+"""
+        result = compile_source(source, "test")
+        assert result.count("mp_obj_new_list(0, NULL)") == 2
+        assert "/* unknown constant */" not in result
+
+    def test_no_unknown_constant_comments(self):
+        """Compiled code should never contain unknown constant placeholders."""
+        source = """
+class DataStore:
+    items: list
+    cache: dict
+    total: int
+
+    def __init__(self) -> None:
+        self.items = []
+        self.cache = {}
+        self.total = 0
+
+    def clear(self) -> None:
+        self.items = []
+        self.cache = {}
+        self.total = 0
+"""
+        result = compile_source(source, "test")
+        assert "/* unknown constant */" not in result

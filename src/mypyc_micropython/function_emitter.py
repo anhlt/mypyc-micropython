@@ -107,7 +107,7 @@ class FunctionEmitter:
     def __init__(self, func_ir: FuncIR):
         self.func_ir = func_ir
         self._container_emitter = ContainerEmitter()
-        self._temp_counter = 0
+        self._temp_counter = func_ir.max_temp  # Continue from IR builder's counter
         self._loop_depth = 0
 
     def _fresh_temp(self) -> str:
@@ -796,7 +796,7 @@ class MethodEmitter:
         self.method_ir = method_ir
         self.class_ir = class_ir
         self._container_emitter = ContainerEmitter()
-        self._temp_counter = 0
+        self._temp_counter = method_ir.max_temp  # Continue from IR builder's counter
         self._loop_depth = 0
 
     def _fresh_temp(self) -> str:
@@ -1198,6 +1198,14 @@ class MethodEmitter:
         elif isinstance(val, str):
             escaped = val.replace("\\", "\\\\").replace('"', '\\"')
             return f'mp_obj_new_str("{escaped}", {len(val)})', "mp_obj_t"
+        elif isinstance(val, list) and len(val) == 0:
+            return "mp_obj_new_list(0, NULL)", "mp_obj_t"
+        elif isinstance(val, tuple) and len(val) == 0:
+            return "mp_const_empty_tuple", "mp_obj_t"
+        elif isinstance(val, set) and len(val) == 0:
+            return "mp_obj_new_set(0, NULL)", "mp_obj_t"
+        elif isinstance(val, dict) and len(val) == 0:
+            return "mp_obj_new_dict(0)", "mp_obj_t"
         return "/* unknown constant */", "mp_obj_t"
 
     def _emit_binop(self, op: BinOpIR, native: bool) -> tuple[str, str]:
