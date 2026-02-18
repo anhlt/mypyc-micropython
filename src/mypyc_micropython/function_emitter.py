@@ -11,7 +11,6 @@ import re
 from .container_emitter import ContainerEmitter
 from .ir import (
     AnnAssignIR,
-    ArgKind,
     AssignIR,
     AttrAssignIR,
     AugAssignIR,
@@ -34,7 +33,6 @@ from .ir import (
     IRType,
     MethodIR,
     NameIR,
-    ParamIR,
     PassIR,
     PrintIR,
     ReturnIR,
