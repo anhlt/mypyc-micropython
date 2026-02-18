@@ -25,6 +25,7 @@ from .ir import (
     ContinueIR,
     CType,
     DataclassInfo,
+    DefaultArg,
     DictNewIR,
     ExprStmtIR,
     FieldIR,
@@ -159,6 +160,8 @@ class IRBuilder:
                 if is_list:
                     self._list_vars[arg.arg] = elem_type
 
+        defaults = self._parse_defaults(node.args, len(params))
+
         return_type = (
             CType.from_python_type(self._annotation_to_py_type(node.returns))
             if node.returns
@@ -195,6 +198,7 @@ class IRBuilder:
             rtuple_types=dict(self._rtuple_types),
             list_vars=dict(self._list_vars),
             max_temp=self._temp_counter,
+            defaults=defaults,
         )
 
     def _build_statement(self, stmt: ast.stmt, locals_: list[str]) -> StmtIR | None:
@@ -982,6 +986,67 @@ class IRBuilder:
         if isinstance(annotation, ast.Subscript):
             return RTuple.from_annotation(annotation)
         return None
+
+    def _parse_defaults(self, args: ast.arguments, num_params: int) -> dict[int, DefaultArg]:
+        """Parse default argument values from AST.
+
+        AST stores defaults aligned to the *last* N parameters.
+        For `def f(a, b=1, c=2)`, args.defaults = [1, 2] for params at index 1, 2.
+        """
+        defaults: dict[int, DefaultArg] = {}
+        num_defaults = len(args.defaults)
+        if num_defaults == 0:
+            return defaults
+
+        first_default_idx = num_params - num_defaults
+        for i, default_ast in enumerate(args.defaults):
+            param_idx = first_default_idx + i
+            default_value, c_expr = self._eval_default_value(default_ast)
+            defaults[param_idx] = DefaultArg(value=default_value, c_expr=c_expr)
+
+        return defaults
+
+    def _eval_default_value(self, node: ast.expr) -> tuple[object, str | None]:
+        """Evaluate a default argument value at compile time.
+
+        Returns (python_value, c_expression) where c_expression is used for code gen.
+        """
+        if isinstance(node, ast.Constant):
+            val = node.value
+            if val is None:
+                return None, "mp_const_none"
+            elif isinstance(val, bool):
+                return val, "mp_const_true" if val else "mp_const_false"
+            elif isinstance(val, int):
+                return val, f"mp_obj_new_int({val})"
+            elif isinstance(val, float):
+                return val, f"mp_obj_new_float({val})"
+            elif isinstance(val, str):
+                escaped = val.replace("\\", "\\\\").replace('"', '\\"')
+                return val, f'mp_obj_new_str("{escaped}", {len(val)})'
+            return val, None
+
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            if isinstance(node.operand, ast.Constant):
+                val = node.operand.value
+                if isinstance(val, int):
+                    return -val, f"mp_obj_new_int({-val})"
+                elif isinstance(val, float):
+                    return -val, f"mp_obj_new_float({-val})"
+
+        if isinstance(node, ast.List) and len(node.elts) == 0:
+            return [], "mp_obj_new_list(0, NULL)"
+
+        if isinstance(node, ast.Dict) and len(node.keys) == 0:
+            return {}, "mp_obj_new_dict(0)"
+
+        if isinstance(node, ast.Tuple) and len(node.elts) == 0:
+            return (), "mp_const_empty_tuple"
+
+        if isinstance(node, ast.Set) and len(node.elts) == 0:
+            return set(), "mp_obj_new_set(0, NULL)"
+
+        return None, None
 
     # -------------------------------------------------------------------------
     # Class Building

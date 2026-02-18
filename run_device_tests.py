@@ -804,6 +804,119 @@ def test_builtins_demo():
     )
 
 
+def test_default_args():
+    """Test default_args module (default argument support)."""
+    print("\n[TEST] Testing default_args module...")
+
+    test(
+        "add_with_default(5, 3)",
+        "import default_args as d; print(d.add_with_default(5, 3))",
+        "8",
+    )
+
+    test(
+        "add_with_default(5)",
+        "import default_args as d; print(d.add_with_default(5))",
+        "15",
+    )
+
+    test(
+        "clamp(150)",
+        "import default_args as d; print(d.clamp(150))",
+        "100",
+    )
+
+    test(
+        "clamp(-10)",
+        "import default_args as d; print(d.clamp(-10))",
+        "0",
+    )
+
+    test(
+        "clamp(50)",
+        "import default_args as d; print(d.clamp(50))",
+        "50",
+    )
+
+    test(
+        "clamp(50, 10, 40)",
+        "import default_args as d; print(d.clamp(50, 10, 40))",
+        "40",
+    )
+
+    test(
+        "increment(10)",
+        "import default_args as d; print(d.increment(10))",
+        "11",
+    )
+
+    test(
+        "increment(10, 5)",
+        "import default_args as d; print(d.increment(10, 5))",
+        "15",
+    )
+
+    test(
+        "double_if_flag(5)",
+        "import default_args as d; print(d.double_if_flag(5))",
+        "10",
+    )
+
+    test(
+        "double_if_flag(5, False)",
+        "import default_args as d; print(d.double_if_flag(5, False))",
+        "5",
+    )
+
+    test(
+        "all_defaults()",
+        "import default_args as d; print(d.all_defaults())",
+        "6",
+    )
+
+    test(
+        "all_defaults(10)",
+        "import default_args as d; print(d.all_defaults(10))",
+        "15",
+    )
+
+    test(
+        "all_defaults(10, 20)",
+        "import default_args as d; print(d.all_defaults(10, 20))",
+        "33",
+    )
+
+    test(
+        "all_defaults(10, 20, 30)",
+        "import default_args as d; print(d.all_defaults(10, 20, 30))",
+        "60",
+    )
+
+    test(
+        "power(2)",
+        "import default_args as d; print(d.power(2))",
+        "4",
+    )
+
+    test(
+        "power(2, 3)",
+        "import default_args as d; print(d.power(2, 3))",
+        "8",
+    )
+
+    test(
+        "sum_with_start([1,2,3])",
+        "import default_args as d; print(d.sum_with_start([1, 2, 3]))",
+        "6",
+    )
+
+    test(
+        "sum_with_start([1,2,3], 10)",
+        "import default_args as d; print(d.sum_with_start([1, 2, 3], 10))",
+        "16",
+    )
+
+
 def run_all_tests():
     """Run all test suites."""
     global total_tests, passed_tests, failed_tests
@@ -831,6 +944,7 @@ def run_all_tests():
     test_tuple_operations()
     test_set_operations()
     test_builtins_demo()
+    test_default_args()
 
     # Print summary
     print("\n" + "=" * 70)

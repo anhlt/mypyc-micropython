@@ -766,6 +766,13 @@ class FunctionEmitter(BaseEmitter):
         num_args = len(self.func_ir.params)
         arg_names = [p[0] for p in self.func_ir.params]
 
+        if self.func_ir.has_defaults:
+            min_args = self.func_ir.num_required_args
+            return (
+                f"static mp_obj_t {self.func_ir.c_name}(size_t n_args, const mp_obj_t *args)",
+                f"MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN({self.func_ir.c_name}_obj, {min_args}, {num_args}, {self.func_ir.c_name});",
+            )
+
         if num_args == 0:
             return (
                 f"static mp_obj_t {self.func_ir.c_name}(void)",
@@ -795,20 +802,67 @@ class FunctionEmitter(BaseEmitter):
     def _emit_unbox_arguments(self) -> list[str]:
         lines = []
         num_args = len(self.func_ir.params)
+        has_defaults = self.func_ir.has_defaults
+
         for i, (arg_name, _) in enumerate(self.func_ir.params):
-            src = f"{arg_name}_obj" if num_args <= 3 else f"args[{i}]"
             c_arg_name = sanitize_name(arg_name)
             c_type_str = (
                 self.func_ir.arg_types[i] if i < len(self.func_ir.arg_types) else "mp_obj_t"
             )
 
-            if c_type_str == "mp_int_t":
-                lines.append(f"    mp_int_t {c_arg_name} = mp_obj_get_int({src});")
-            elif c_type_str == "mp_float_t":
-                lines.append(f"    mp_float_t {c_arg_name} = mp_get_float_checked({src});")
+            if has_defaults:
+                src = f"args[{i}]"
+                default_arg = self.func_ir.defaults.get(i)
+
+                if default_arg is not None and default_arg.c_expr is not None:
+                    default_c = self._get_unboxed_default(default_arg, c_type_str)
+                    if c_type_str == "mp_int_t":
+                        lines.append(
+                            f"    mp_int_t {c_arg_name} = (n_args > {i}) ? mp_obj_get_int({src}) : {default_c};"
+                        )
+                    elif c_type_str == "mp_float_t":
+                        lines.append(
+                            f"    mp_float_t {c_arg_name} = (n_args > {i}) ? mp_get_float_checked({src}) : {default_c};"
+                        )
+                    elif c_type_str == "bool":
+                        lines.append(
+                            f"    bool {c_arg_name} = (n_args > {i}) ? mp_obj_is_true({src}) : {default_c};"
+                        )
+                    else:
+                        lines.append(
+                            f"    mp_obj_t {c_arg_name} = (n_args > {i}) ? {src} : {default_arg.c_expr};"
+                        )
+                else:
+                    if c_type_str == "mp_int_t":
+                        lines.append(f"    mp_int_t {c_arg_name} = mp_obj_get_int({src});")
+                    elif c_type_str == "mp_float_t":
+                        lines.append(f"    mp_float_t {c_arg_name} = mp_get_float_checked({src});")
+                    elif c_type_str == "bool":
+                        lines.append(f"    bool {c_arg_name} = mp_obj_is_true({src});")
+                    else:
+                        lines.append(f"    mp_obj_t {c_arg_name} = {src};")
             else:
-                lines.append(f"    mp_obj_t {c_arg_name} = {src};")
+                src = f"{arg_name}_obj" if num_args <= 3 else f"args[{i}]"
+                if c_type_str == "mp_int_t":
+                    lines.append(f"    mp_int_t {c_arg_name} = mp_obj_get_int({src});")
+                elif c_type_str == "mp_float_t":
+                    lines.append(f"    mp_float_t {c_arg_name} = mp_get_float_checked({src});")
+                elif c_type_str == "bool":
+                    lines.append(f"    bool {c_arg_name} = mp_obj_is_true({src});")
+                else:
+                    lines.append(f"    mp_obj_t {c_arg_name} = {src};")
         return lines
+
+    def _get_unboxed_default(self, default_arg, c_type_str: str) -> str:
+        """Get the unboxed C literal for a default value."""
+        val = default_arg.value
+        if c_type_str == "mp_int_t":
+            return str(int(val)) if isinstance(val, (int, float)) else "0"
+        elif c_type_str == "mp_float_t":
+            return str(float(val)) if isinstance(val, (int, float)) else "0.0"
+        elif c_type_str == "bool":
+            return "true" if val else "false"
+        return default_arg.c_expr or "mp_const_none"
 
     def _emit_return(self, stmt: ReturnIR, native: bool = False) -> list[str]:
         del native

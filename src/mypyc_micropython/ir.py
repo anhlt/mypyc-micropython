@@ -363,6 +363,14 @@ class ClassIR:
 
 
 @dataclass
+class DefaultArg:
+    """Represents a default argument value."""
+
+    value: Any  # Literal value (int, float, bool, str, None)
+    c_expr: str | None = None  # Pre-computed C expression for the default
+
+
+@dataclass
 class FuncIR:
     """Function IR (standalone or method context)."""
 
@@ -384,6 +392,18 @@ class FuncIR:
     rtuple_types: dict[str, RTuple] = field(default_factory=dict)
     list_vars: dict[str, str | None] = field(default_factory=dict)
     max_temp: int = 0  # Highest temp counter used by IR builder
+    # Default arguments: maps param index to DefaultArg
+    defaults: dict[int, DefaultArg] = field(default_factory=dict)
+
+    @property
+    def num_required_args(self) -> int:
+        """Number of required (non-default) arguments."""
+        return len(self.params) - len(self.defaults)
+
+    @property
+    def has_defaults(self) -> bool:
+        """True if function has any default arguments."""
+        return len(self.defaults) > 0
 
 
 class IRType(Enum):

@@ -63,8 +63,8 @@ A 6-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 Phase 1: Core Completion        █████████████░░  ~85% done
   for loops ✅ │ lists ✅ │ dicts ✅ │ tuples ✅ │ sets ✅ │ builtins (partial)
 
-Phase 2: Functions & Arguments  ░░░░░░░░░░░░░░░  TODO
-  default args │ *args │ **kwargs │ enumerate │ zip │ sorted
+Phase 2: Functions & Arguments  ███░░░░░░░░░░░░░  ~20% done
+  default args ✅ │ *args │ **kwargs │ enumerate │ zip │ sorted
 
 Phase 3: Classes                ███████████████  ~95% done
   class def ✅ │ __init__ ✅ │ methods ✅ │ @dataclass ✅ │ inheritance ✅
@@ -269,18 +269,21 @@ All for-loop forms are implemented:
 
 **Goal:** Full function signature support.
 
-### 2.1 Default Arguments
+### 2.1 Default Arguments ✅ DONE
 
 ```python
 def greet(name: str, greeting: str = "Hello") -> str:
     return f"{greeting}, {name}!"
 ```
 
-Tasks:
-- [ ] Parse default argument values in function signatures
-- [ ] Generate wrapper with argument count checking (`MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN`)
-- [ ] Store defaults as module constants
-- [ ] Handle mutable defaults correctly (warn or error)
+Implemented:
+- [x] Parse default argument values in function signatures
+- [x] Generate wrapper with argument count checking (`MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN`)
+- [x] Store defaults as inline C literals in ternary expressions
+- [x] Support for `int`, `float`, `bool`, `str`, `None` defaults
+- [x] Support for empty container defaults: `[]`, `{}`, `()`
+- [x] Negative numeric defaults
+- [x] Mixed required + optional parameters
 
 ### 2.2 *args Support
 

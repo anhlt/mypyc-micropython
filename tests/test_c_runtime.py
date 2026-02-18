@@ -1159,3 +1159,129 @@ int main(void) {
 """
     stdout = compile_and_run(source, "test", test_main_c)
     assert stdout.strip() == "0"
+
+
+def test_c_default_int_arg_with_value(compile_and_run):
+    source = """
+def add_with_default(a: int, b: int = 10) -> int:
+    return a + b
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t args[2] = {mp_obj_new_int(5), mp_obj_new_int(3)};
+    mp_obj_t result = test_add_with_default(2, args);
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "8"
+
+
+def test_c_default_int_arg_without_value(compile_and_run):
+    source = """
+def add_with_default(a: int, b: int = 10) -> int:
+    return a + b
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t args[1] = {mp_obj_new_int(5)};
+    mp_obj_t result = test_add_with_default(1, args);
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "15"
+
+
+def test_c_multiple_defaults_partial(compile_and_run):
+    source = """
+def multi(a: int, b: int = 5, c: int = 10) -> int:
+    return a + b + c
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t args1[1] = {mp_obj_new_int(1)};
+    mp_obj_t args2[2] = {mp_obj_new_int(1), mp_obj_new_int(2)};
+    mp_obj_t args3[3] = {mp_obj_new_int(1), mp_obj_new_int(2), mp_obj_new_int(3)};
+    printf("%ld\\n", (long)mp_obj_get_int(test_multi(1, args1)));
+    printf("%ld\\n", (long)mp_obj_get_int(test_multi(2, args2)));
+    printf("%ld\\n", (long)mp_obj_get_int(test_multi(3, args3)));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["16", "13", "6"]
+
+
+def test_c_bool_default_true(compile_and_run):
+    source = """
+def double_if_flag(x: int, flag: bool = True) -> int:
+    if flag:
+        return x * 2
+    return x
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t args_no_flag[1] = {mp_obj_new_int(5)};
+    mp_obj_t args_false[2] = {mp_obj_new_int(5), mp_const_false};
+    mp_obj_t args_true[2] = {mp_obj_new_int(5), mp_const_true};
+    printf("%ld\\n", (long)mp_obj_get_int(test_double_if_flag(1, args_no_flag)));
+    printf("%ld\\n", (long)mp_obj_get_int(test_double_if_flag(2, args_false)));
+    printf("%ld\\n", (long)mp_obj_get_int(test_double_if_flag(2, args_true)));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["10", "5", "10"]
+
+
+def test_c_float_default(compile_and_run):
+    source = """
+def scale(x: float, factor: float = 2.0) -> float:
+    return x * factor
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t args1[1] = {mp_obj_new_float(3.0)};
+    mp_obj_t args2[2] = {mp_obj_new_float(3.0), mp_obj_new_float(0.5)};
+    printf("%.1f\\n", mp_obj_float_get(test_scale(1, args1)));
+    printf("%.1f\\n", mp_obj_float_get(test_scale(2, args2)));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["6.0", "1.5"]
+
+
+def test_c_all_args_have_defaults(compile_and_run):
+    source = """
+def all_defaults(a: int = 100, b: int = 200) -> int:
+    return a + b
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t args0[1] = {mp_const_none};
+    mp_obj_t args1[1] = {mp_obj_new_int(10)};
+    mp_obj_t args2[2] = {mp_obj_new_int(10), mp_obj_new_int(20)};
+    printf("%ld\\n", (long)mp_obj_get_int(test_all_defaults(0, args0)));
+    printf("%ld\\n", (long)mp_obj_get_int(test_all_defaults(1, args1)));
+    printf("%ld\\n", (long)mp_obj_get_int(test_all_defaults(2, args2)));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["300", "210", "30"]

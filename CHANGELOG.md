@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Default argument support**: Functions can now have default parameter values (e.g., `def f(a: int, b: int = 10)`)
+- Support for `int`, `float`, `bool`, `str`, and `None` default values
+- Support for empty container defaults: `[]`, `{}`, `()`
+- Negative numeric defaults (e.g., `offset: int = -5`)
+- Functions with all parameters having defaults (e.g., `def f(a: int = 1, b: int = 2)`)
+- `examples/default_args.py` - demonstrating default argument functionality (10 functions)
+- 12 unit tests for default argument compilation
+- 6 C runtime tests verifying default argument behavior
+- 17 device tests for default_args module
 - `bool()` builtin function for truthiness checks via `mp_obj_is_true()`
 - `min()` builtin function with 2+ arguments (e.g., `min(a, b)`, `min(a, b, c)`)
 - `max()` builtin function with 2+ arguments (e.g., `max(a, b)`, `max(a, b, c)`)
