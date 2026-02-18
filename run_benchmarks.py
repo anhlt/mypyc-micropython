@@ -21,7 +21,107 @@ PORT = DEFAULT_PORT
 
 # Benchmark definitions: (name, native_code, python_code, iterations)
 BENCHMARKS = [
-    # Factorial - recursive function
+    (
+        "sum_range(1000) x100",
+        """
+import list_operations
+import time
+start = time.ticks_us()
+for _ in range(100):
+    list_operations.sum_range(1000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def sum_range(n):
+    total = 0
+    for i in range(n):
+        total += i
+    return total
+start = time.ticks_us()
+for _ in range(100):
+    sum_range(1000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "build_squares(500) x100",
+        """
+import list_operations
+import time
+start = time.ticks_us()
+for _ in range(100):
+    list_operations.build_squares(500)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def build_squares(n):
+    result = []
+    for i in range(n):
+        result.append(i * i)
+    return result
+start = time.ticks_us()
+for _ in range(100):
+    build_squares(500)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "matrix_sum(50,50) x100",
+        """
+import list_operations
+import time
+start = time.ticks_us()
+for _ in range(100):
+    list_operations.matrix_sum(50, 50)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def matrix_sum(rows, cols):
+    total = 0
+    for i in range(rows):
+        for j in range(cols):
+            total += i + j
+    return total
+start = time.ticks_us()
+for _ in range(100):
+    matrix_sum(50, 50)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "reverse_sum(1000) x100",
+        """
+import list_operations
+import time
+start = time.ticks_us()
+for _ in range(100):
+    list_operations.reverse_sum(1000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def reverse_sum(n):
+    total = 0
+    for i in range(n, 0, -1):
+        total += i
+    return total
+start = time.ticks_us()
+for _ in range(100):
+    reverse_sum(1000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
     (
         "factorial(12) x1000",
         """
@@ -46,7 +146,6 @@ end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
-    # Fibonacci - recursive with multiple calls
     (
         "fib(20) x100",
         """
@@ -71,7 +170,6 @@ end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
-    # Prime check - loop with arithmetic
     (
         "is_prime(9973) x1000",
         """
@@ -105,7 +203,6 @@ end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
-    # GCD - iterative algorithm
     (
         "gcd(46368, 28657) x10000",
         """
@@ -130,7 +227,6 @@ end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
-    # List sum - iteration over container
     (
         "sum_list([1..100]) x1000",
         """
@@ -158,7 +254,6 @@ end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
-    # Tuple operations - creation and unpacking
     (
         "tuple ops x10000",
         """
@@ -186,7 +281,6 @@ end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
-    # RTuple optimization - direct field access vs boxed tuple
     (
         "rtuple ops x10000",
         """
@@ -218,7 +312,6 @@ end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
-    # RTuple internal benchmark - no boxing overhead on return
     (
         "rtuple internal x100",
         """
@@ -247,7 +340,6 @@ end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
-    # List of tuples - RTuple unboxing with direct items[] access
     (
         "list[tuple] x500",
         """
@@ -278,7 +370,6 @@ end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
-    # Set operations - add and membership
     (
         "set build+check x1000",
         """
@@ -304,7 +395,6 @@ end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
-    # Dataclass - object creation and method calls
     (
         "Point class x10000",
         """
@@ -333,7 +423,6 @@ end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
-    # Bitwise operations - bit manipulation
     (
         "count_ones(0x7FFFFFFF) x10000",
         """
@@ -356,6 +445,161 @@ def count_ones(n):
 start = time.ticks_us()
 for _ in range(10000):
     count_ones(0x7FFFFFFF)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "sum_builtin(1000) x1000",
+        """
+import builtins_demo
+import time
+lst = list(range(1000))
+start = time.ticks_us()
+for _ in range(1000):
+    builtins_demo.sum_list(lst)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+lst = list(range(1000))
+start = time.ticks_us()
+for _ in range(1000):
+    sum(lst)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "sum_typed_list(1000) x1000",
+        """
+import builtins_demo
+import time
+lst = list(range(1000))
+start = time.ticks_us()
+for _ in range(1000):
+    builtins_demo.sum_int_list(lst)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+lst = list(range(1000))
+start = time.ticks_us()
+for _ in range(1000):
+    sum(lst)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "clamp_list(200) x1000",
+        """
+import builtins_demo
+import time
+values = list(range(-100, 100))
+start = time.ticks_us()
+for _ in range(1000):
+    builtins_demo.clamp_list(values, 0, 50)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def clamp_list(values, low, high):
+    result = []
+    for v in values:
+        clamped = max(low, min(v, high))
+        result.append(clamped)
+    return result
+values = list(range(-100, 100))
+start = time.ticks_us()
+for _ in range(1000):
+    clamp_list(values, 0, 50)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "find_extremes(1000) x1000",
+        """
+import builtins_demo
+import time
+lst = list(range(1, 1001))
+start = time.ticks_us()
+for _ in range(1000):
+    builtins_demo.find_extremes_sum(lst)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def find_extremes(lst):
+    return min(lst) + max(lst)
+lst = list(range(1, 1001))
+start = time.ticks_us()
+for _ in range(1000):
+    find_extremes(lst)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "sum_all(*100) x1000",
+        """
+import star_args
+import time
+args = tuple(range(100))
+start = time.ticks_us()
+for _ in range(1000):
+    star_args.sum_all(*args)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def sum_all(*numbers):
+    total = 0
+    for x in numbers:
+        total += x
+    return total
+args = tuple(range(100))
+start = time.ticks_us()
+for _ in range(1000):
+    sum_all(*args)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "max_of_args(*50) x1000",
+        """
+import star_args
+import time
+args = tuple(range(50))
+start = time.ticks_us()
+for _ in range(1000):
+    star_args.max_of_args(*args)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def max_of_args(*nums):
+    result = 0
+    first = True
+    for n in nums:
+        if first:
+            result = n
+            first = False
+        elif n > result:
+            result = n
+    return result
+args = tuple(range(50))
+start = time.ticks_us()
+for _ in range(1000):
+    max_of_args(*args)
 end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
@@ -425,7 +669,6 @@ def main():
     print(f"Device port: {PORT}")
     print()
 
-    # Check device connection
     print("Checking device connection...")
     success, output = run_on_device("print('ready')")
     if not success:

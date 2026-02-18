@@ -19,6 +19,25 @@ from enum import Enum, auto
 from typing import Any
 
 
+class ArgKind(Enum):
+    """Argument kind for function parameters (following mypyc conventions)."""
+
+    ARG_POS = 0  # Required positional: def f(a)
+    ARG_OPT = 1  # Optional positional (has default): def f(a=1)
+    ARG_STAR = 2  # Star args: def f(*args)
+    ARG_STAR2 = 3  # Star kwargs: def f(**kwargs)
+    ARG_NAMED = 4  # Keyword-only required: def f(*, a)
+    ARG_NAMED_OPT = 5  # Keyword-only optional: def f(*, a=1)
+
+    def is_optional(self) -> bool:
+        """Return True if this argument kind has a default value."""
+        return self in (ArgKind.ARG_OPT, ArgKind.ARG_NAMED_OPT)
+
+    def is_star(self) -> bool:
+        """Return True if this is *args or **kwargs."""
+        return self in (ArgKind.ARG_STAR, ArgKind.ARG_STAR2)
+
+
 class CType(Enum):
     """C types for MicroPython integration."""
 
@@ -371,6 +390,16 @@ class DefaultArg:
 
 
 @dataclass
+class ParamIR:
+    """Represents a function parameter with kind and optional default."""
+
+    name: str
+    c_type: CType
+    kind: ArgKind = ArgKind.ARG_POS
+    default: DefaultArg | None = None
+
+
+@dataclass
 class FuncIR:
     """Function IR (standalone or method context)."""
 
@@ -394,6 +423,8 @@ class FuncIR:
     max_temp: int = 0  # Highest temp counter used by IR builder
     # Default arguments: maps param index to DefaultArg
     defaults: dict[int, DefaultArg] = field(default_factory=dict)
+    star_args: ParamIR | None = None
+    star_kwargs: ParamIR | None = None
 
     @property
     def num_required_args(self) -> int:
@@ -404,6 +435,21 @@ class FuncIR:
     def has_defaults(self) -> bool:
         """True if function has any default arguments."""
         return len(self.defaults) > 0
+
+    @property
+    def has_star_args(self) -> bool:
+        """True if function has *args."""
+        return self.star_args is not None
+
+    @property
+    def has_star_kwargs(self) -> bool:
+        """True if function has **kwargs."""
+        return self.star_kwargs is not None
+
+    @property
+    def is_variadic(self) -> bool:
+        """True if function has *args or **kwargs."""
+        return self.has_star_args or self.has_star_kwargs
 
 
 class IRType(Enum):

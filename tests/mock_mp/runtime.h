@@ -66,6 +66,18 @@ static inline bool mp_obj_is_true(mp_obj_t obj) {
 #define MP_MOCK_TAG_STR (0x57A1)
 #define MP_MOCK_TAG_TUPLE (0x70B1E)
 #define MP_MOCK_TAG_SET (0x5E7)
+#define MP_MOCK_TAG_DICT (0xD1C7)
+
+typedef struct {
+    mp_obj_t key;
+    mp_obj_t value;
+} mp_map_elem_t;
+
+typedef struct {
+    size_t alloc;
+    size_t used;
+    mp_map_elem_t *table;
+} mp_map_t;
 
 typedef struct {
     int tag;
@@ -97,6 +109,13 @@ typedef struct {
     size_t len;
     mp_obj_t *items;
 } mp_obj_set_struct;
+
+typedef struct {
+    int tag;
+    size_t alloc;
+    size_t used;
+    mp_map_elem_t *table;
+} mp_obj_dict_struct;
 
 static void *mp_type_module = NULL;
 
@@ -259,7 +278,7 @@ static inline mp_obj_t mp_obj_new_list(size_t n, mp_obj_t *items) {
     return (mp_obj_t)list;
 }
 
-static inline mp_obj_t mp_obj_new_tuple(size_t n, mp_obj_t *items) {
+static inline mp_obj_t mp_obj_new_tuple(size_t n, const mp_obj_t *items) {
     mp_obj_tuple_struct *tuple = (mp_obj_tuple_struct *)malloc(sizeof(*tuple));
     if (tuple == NULL) {
         mp_mock_abort("out of memory while allocating tuple object");
@@ -582,6 +601,17 @@ static inline mp_obj_t mp_iternext(mp_obj_t iter_obj) {
         return as_list->items[iter->idx++];
     }
 
+    mp_obj_dict_struct *as_dict = (mp_obj_dict_struct *)container;
+    if (as_dict->tag == MP_MOCK_TAG_DICT) {
+        while (iter->idx < as_dict->alloc) {
+            if (as_dict->table[iter->idx].key != MP_OBJ_NULL) {
+                return as_dict->table[iter->idx++].key;
+            }
+            iter->idx++;
+        }
+        return MP_OBJ_NULL;
+    }
+
     return MP_OBJ_NULL;
 }
 
@@ -773,9 +803,77 @@ static inline mp_obj_t mp_call_function_n_kw(mp_obj_t fun, size_t n_args, size_t
 #define MP_DEFINE_CONST_FUN_OBJ_1(obj_name, fun_name) static const int obj_name = 0
 #define MP_DEFINE_CONST_FUN_OBJ_2(obj_name, fun_name) static const int obj_name = 0
 #define MP_DEFINE_CONST_FUN_OBJ_3(obj_name, fun_name) static const int obj_name = 0
+#define MP_DEFINE_CONST_FUN_OBJ_VAR(obj_name, min, fun_name) static const int obj_name = 0
 #define MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(obj_name, min, max, fun_name) \
     static const int obj_name = 0
+#define MP_DEFINE_CONST_FUN_OBJ_KW(obj_name, min, fun_name) static const int obj_name = 0
 #define MP_DEFINE_CONST_DICT(dict_name, table_name) static const int dict_name = 0
 #define MP_REGISTER_MODULE(qstr, mod)
+
+static inline bool mp_map_slot_is_filled(mp_map_t *map, size_t slot) {
+    return map->table[slot].key != MP_OBJ_NULL;
+}
+
+static inline mp_obj_t mp_obj_new_dict(size_t n) {
+    mp_obj_dict_struct *dict = (mp_obj_dict_struct *)malloc(sizeof(*dict));
+    if (dict == NULL) {
+        mp_mock_abort("out of memory while allocating dict object");
+    }
+
+    size_t alloc = n == 0 ? 4 : n * 2;
+    dict->table = (mp_map_elem_t *)calloc(alloc, sizeof(mp_map_elem_t));
+    if (dict->table == NULL) {
+        free(dict);
+        mp_mock_abort("out of memory while allocating dict table");
+    }
+
+    dict->tag = MP_MOCK_TAG_DICT;
+    dict->alloc = alloc;
+    dict->used = 0;
+    return (mp_obj_t)dict;
+}
+
+static inline void mp_obj_dict_store(mp_obj_t dict_obj, mp_obj_t key, mp_obj_t value) {
+    mp_obj_dict_struct *dict = (mp_obj_dict_struct *)dict_obj;
+    if (dict->tag != MP_MOCK_TAG_DICT) {
+        mp_mock_abort("mp_obj_dict_store: not a dict");
+    }
+
+    for (size_t i = 0; i < dict->alloc; i++) {
+        if (dict->table[i].key == MP_OBJ_NULL) {
+            dict->table[i].key = key;
+            dict->table[i].value = value;
+            dict->used++;
+            return;
+        }
+        if (dict->table[i].key == key) {
+            dict->table[i].value = value;
+            return;
+        }
+    }
+    mp_mock_abort("mp_obj_dict_store: dict full (should grow but not implemented)");
+}
+
+static inline mp_obj_t mp_obj_dict_get(mp_obj_t dict_obj, mp_obj_t key) {
+    mp_obj_dict_struct *dict = (mp_obj_dict_struct *)dict_obj;
+    if (dict->tag != MP_MOCK_TAG_DICT) {
+        mp_mock_abort("mp_obj_dict_get: not a dict");
+    }
+
+    for (size_t i = 0; i < dict->alloc; i++) {
+        if (dict->table[i].key == key) {
+            return dict->table[i].value;
+        }
+    }
+    return MP_OBJ_NULL;
+}
+
+static inline size_t mp_mock_dict_len(mp_obj_t dict_obj) {
+    mp_obj_dict_struct *dict = (mp_obj_dict_struct *)dict_obj;
+    if (dict->tag != MP_MOCK_TAG_DICT) {
+        mp_mock_abort("mp_mock_dict_len: not a dict");
+    }
+    return dict->used;
+}
 
 #endif

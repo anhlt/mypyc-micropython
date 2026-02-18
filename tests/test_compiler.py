@@ -2879,3 +2879,109 @@ def with_dict(d: dict = {}) -> int:
 """
         result = compile_source(source, "test")
         assert "(n_args > 0) ? args[0] : mp_obj_new_dict(0)" in result
+
+
+class TestStarArgs:
+    """Tests for *args and **kwargs support."""
+
+    def test_star_args_only(self):
+        source = """
+def sum_all(*numbers) -> int:
+    total: int = 0
+    for x in numbers:
+        total += x
+    return total
+"""
+        result = compile_source(source, "test")
+        assert "MP_DEFINE_CONST_FUN_OBJ_VAR" in result
+        assert "test_sum_all_obj, 0" in result
+        assert "mp_obj_new_tuple" in result
+        assert "_star_numbers" in result
+
+    def test_star_args_named_args(self):
+        source = """
+def sum_all(*args) -> int:
+    total: int = 0
+    for x in args:
+        total += x
+    return total
+"""
+        result = compile_source(source, "test")
+        assert "_star_args = mp_obj_new_tuple" in result
+        assert "mp_getiter(_star_args" in result
+
+    def test_star_args_with_positional(self):
+        source = """
+def log(prefix: str, *messages) -> int:
+    return len(messages)
+"""
+        result = compile_source(source, "test")
+        assert "MP_DEFINE_CONST_FUN_OBJ_VAR" in result
+        assert "test_log_obj, 1" in result
+        assert "n_args > 1 ? n_args - 1 : 0" in result
+
+    def test_star_kwargs_only(self):
+        source = """
+def make_dict(**kwargs) -> dict:
+    return kwargs
+"""
+        result = compile_source(source, "test")
+        assert "MP_DEFINE_CONST_FUN_OBJ_KW" in result
+        assert "test_make_dict_obj, 0" in result
+        assert "mp_map_t *kw_args" in result
+        assert "_star_kwargs = mp_obj_new_dict" in result
+
+    def test_star_kwargs_named_kw_args(self):
+        source = """
+def make_dict(**kw_args) -> dict:
+    return kw_args
+"""
+        result = compile_source(source, "test")
+        assert "_star_kw_args = mp_obj_new_dict" in result
+        assert "mp_obj_dict_store(_star_kw_args" in result
+
+    def test_star_kwargs_with_positional(self):
+        source = """
+def config(name: str, **options) -> dict:
+    return options
+"""
+        result = compile_source(source, "test")
+        assert "MP_DEFINE_CONST_FUN_OBJ_KW" in result
+        assert "test_config_obj, 1" in result
+        assert "mp_obj_t name = pos_args[0]" in result
+
+    def test_both_star_args_and_kwargs(self):
+        source = """
+def log_call(name: str, *args, **kwargs) -> dict:
+    result: dict = {"name": name}
+    return result
+"""
+        result = compile_source(source, "test")
+        assert "MP_DEFINE_CONST_FUN_OBJ_KW" in result
+        assert "test_log_call_obj, 1" in result
+        assert "_star_args = mp_obj_new_tuple" in result
+        assert "_star_kwargs = mp_obj_new_dict" in result
+        assert "const mp_obj_t *pos_args" in result
+
+    def test_star_args_iteration(self):
+        source = """
+def sum_all(*nums) -> int:
+    total: int = 0
+    for n in nums:
+        total += n
+    return total
+"""
+        result = compile_source(source, "test")
+        assert "mp_getiter(_star_nums" in result
+        assert "mp_iternext" in result
+
+    def test_star_kwargs_dict_iteration(self):
+        source = """
+def count_kwargs(**kw) -> int:
+    count: int = 0
+    for k in kw:
+        count += 1
+    return count
+"""
+        result = compile_source(source, "test")
+        assert "mp_getiter(_star_kw" in result

@@ -1285,3 +1285,155 @@ int main(void) {
 """
     stdout = compile_and_run(source, "test", test_main_c)
     assert stdout.strip().splitlines() == ["300", "210", "30"]
+
+
+def test_c_star_args_sum(compile_and_run):
+    source = """
+def sum_all(*numbers) -> int:
+    total: int = 0
+    for x in numbers:
+        total += x
+    return total
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t args3[] = {mp_obj_new_int(1), mp_obj_new_int(2), mp_obj_new_int(3)};
+    mp_obj_t args0[] = {mp_const_none};
+    printf("%ld\\n", (long)mp_obj_get_int(test_sum_all(3, args3)));
+    printf("%ld\\n", (long)mp_obj_get_int(test_sum_all(0, args0)));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["6", "0"]
+
+
+def test_c_star_args_with_positional(compile_and_run):
+    source = """
+def log_values(prefix: int, *values) -> int:
+    total: int = prefix
+    for v in values:
+        total += v
+    return total
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t args1[] = {mp_obj_new_int(100)};
+    mp_obj_t args3[] = {mp_obj_new_int(100), mp_obj_new_int(1), mp_obj_new_int(2)};
+    printf("%ld\\n", (long)mp_obj_get_int(test_log_values(1, args1)));
+    printf("%ld\\n", (long)mp_obj_get_int(test_log_values(3, args3)));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["100", "103"]
+
+
+def test_c_star_args_named_args(compile_and_run):
+    source = """
+def sum_args(*args) -> int:
+    total: int = 0
+    for x in args:
+        total += x
+    return total
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t items[] = {mp_obj_new_int(10), mp_obj_new_int(20), mp_obj_new_int(30)};
+    printf("%ld\\n", (long)mp_obj_get_int(test_sum_args(3, items)));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "60"
+
+
+def test_c_star_kwargs_count(compile_and_run):
+    source = """
+def count_kwargs(**kwargs) -> int:
+    count: int = 0
+    for k in kwargs:
+        count += 1
+    return count
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_map_elem_t table[4] = {
+        {mp_obj_new_str("a", 1), mp_obj_new_int(1)},
+        {mp_obj_new_str("b", 1), mp_obj_new_int(2)},
+        {MP_OBJ_NULL, MP_OBJ_NULL},
+        {MP_OBJ_NULL, MP_OBJ_NULL}
+    };
+    mp_map_t kw = {4, 2, table};
+    printf("%ld\\n", (long)mp_obj_get_int(test_count_kwargs(0, NULL, &kw)));
+
+    mp_map_t empty_kw = {0, 0, NULL};
+    printf("%ld\\n", (long)mp_obj_get_int(test_count_kwargs(0, NULL, &empty_kw)));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["2", "0"]
+
+
+def test_c_star_kwargs_return_dict(compile_and_run):
+    source = """
+def make_dict(**opts) -> dict:
+    return opts
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_map_elem_t table[4] = {
+        {mp_obj_new_str("x", 1), mp_obj_new_int(10)},
+        {mp_obj_new_str("y", 1), mp_obj_new_int(20)},
+        {MP_OBJ_NULL, MP_OBJ_NULL},
+        {MP_OBJ_NULL, MP_OBJ_NULL}
+    };
+    mp_map_t kw = {4, 2, table};
+    mp_obj_t result = test_make_dict(0, NULL, &kw);
+    printf("%ld\\n", (long)mp_mock_dict_len(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "2"
+
+
+def test_c_both_star_args_and_kwargs(compile_and_run):
+    source = """
+def mixed(name: int, *args, **kwargs) -> int:
+    total: int = name
+    for a in args:
+        total += a
+    for k in kwargs:
+        total += 1
+    return total
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t pos_args[] = {mp_obj_new_int(100), mp_obj_new_int(1), mp_obj_new_int(2)};
+    mp_map_elem_t table[4] = {
+        {mp_obj_new_str("a", 1), mp_obj_new_int(1)},
+        {mp_obj_new_str("b", 1), mp_obj_new_int(2)},
+        {MP_OBJ_NULL, MP_OBJ_NULL},
+        {MP_OBJ_NULL, MP_OBJ_NULL}
+    };
+    mp_map_t kw = {4, 2, table};
+    printf("%ld\\n", (long)mp_obj_get_int(test_mixed(3, pos_args, &kw)));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "105"

@@ -12,6 +12,7 @@ import re
 
 from .ir import (
     AnnAssignIR,
+    ArgKind,
     AssignIR,
     AttrAssignIR,
     AugAssignIR,
@@ -39,6 +40,7 @@ from .ir import (
     MethodCallIR,
     MethodIR,
     NameIR,
+    ParamIR,
     PassIR,
     PrintIR,
     ReturnIR,
@@ -118,6 +120,7 @@ class IRBuilder:
         self._known_classes = known_classes or {}
         self._temp_counter = 0
         self._var_types: dict[str, str] = {}
+        self._star_c_names: dict[str, str] = {}
         self._list_vars: dict[str, str | None] = {}
         self._rtuple_types: dict[str, RTuple] = {}
         self._used_rtuples: set[RTuple] = set()
@@ -132,6 +135,7 @@ class IRBuilder:
     def build_function(self, node: ast.FunctionDef) -> FuncIR:
         self._temp_counter = 0
         self._var_types = {}
+        self._star_c_names: dict[str, str] = {}
         self._list_vars: dict[str, str | None] = {}
         self._rtuple_types = {}
         self._used_rtuples = set()
@@ -162,6 +166,8 @@ class IRBuilder:
 
         defaults = self._parse_defaults(node.args, len(params))
 
+        star_args, star_kwargs = self._parse_star_args(node.args)
+
         return_type = (
             CType.from_python_type(self._annotation_to_py_type(node.returns))
             if node.returns
@@ -169,6 +175,15 @@ class IRBuilder:
         )
 
         local_vars = [arg.arg for arg in node.args.args]
+        if star_args:
+            local_vars.append(star_args.name)
+            self._var_types[star_args.name] = "mp_obj_t"
+            self._star_c_names[star_args.name] = f"_star_{sanitize_name(star_args.name)}"
+        if star_kwargs:
+            local_vars.append(star_kwargs.name)
+            self._var_types[star_kwargs.name] = "mp_obj_t"
+            self._star_c_names[star_kwargs.name] = f"_star_{sanitize_name(star_kwargs.name)}"
+
         body_ir: list[StmtIR] = []
         for stmt in node.body:
             stmt_ir = self._build_statement(stmt, local_vars)
@@ -199,6 +214,8 @@ class IRBuilder:
             list_vars=dict(self._list_vars),
             max_temp=self._temp_counter,
             defaults=defaults,
+            star_args=star_args,
+            star_kwargs=star_kwargs,
         )
 
     def _build_statement(self, stmt: ast.stmt, locals_: list[str]) -> StmtIR | None:
@@ -374,10 +391,13 @@ class IRBuilder:
         is_new_var = var_name not in locals_
         if is_new_var:
             locals_.append(var_name)
+            value_type = self._get_value_ir_type(value)
+            c_type = value_type.to_c_type_str()
+            self._var_types[var_name] = c_type
+        else:
+            c_type = self._var_types.get(var_name, "mp_obj_t")
 
         value_type = self._get_value_ir_type(value)
-        c_type = value_type.to_c_type_str()
-        self._var_types[var_name] = c_type
 
         return AssignIR(
             target=var_name,
@@ -547,7 +567,7 @@ class IRBuilder:
         elif name == "None":
             return ConstIR(ir_type=IRType.OBJ, value=None)
 
-        c_name = sanitize_name(name)
+        c_name = self._star_c_names.get(name, sanitize_name(name))
         var_type = self._var_types.get(name, "mp_int_t")
         ir_type = IRType.from_c_type_str(var_type)
         return NameIR(ir_type=ir_type, py_name=name, c_name=c_name)
@@ -1005,6 +1025,26 @@ class IRBuilder:
             defaults[param_idx] = DefaultArg(value=default_value, c_expr=c_expr)
 
         return defaults
+
+    def _parse_star_args(self, args: ast.arguments) -> tuple[ParamIR | None, ParamIR | None]:
+        star_args = None
+        star_kwargs = None
+
+        if args.vararg:
+            star_args = ParamIR(
+                name=args.vararg.arg,
+                c_type=CType.MP_OBJ_T,
+                kind=ArgKind.ARG_STAR,
+            )
+
+        if args.kwarg:
+            star_kwargs = ParamIR(
+                name=args.kwarg.arg,
+                c_type=CType.MP_OBJ_T,
+                kind=ArgKind.ARG_STAR2,
+            )
+
+        return star_args, star_kwargs
 
     def _eval_default_value(self, node: ast.expr) -> tuple[object, str | None]:
         """Evaluate a default argument value at compile time.
