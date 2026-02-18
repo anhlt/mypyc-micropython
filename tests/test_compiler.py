@@ -2376,7 +2376,8 @@ def get_x(p: tuple[int, int]) -> int:
 """
         result = compile_source(source, "test")
         assert "point.f0" in result
-        assert "mp_obj_subscr" in result
+        assert "mp_obj_tuple_t *" in result
+        assert "->items[" in result
         assert "mp_obj_get_int" in result
 
     def test_rtuple_direct_field_access_second_element(self):
@@ -2487,7 +2488,7 @@ def sum_triple() -> int:
         assert "t.f2" in result
 
     def test_rtuple_from_list_subscript(self):
-        """Test RTuple assignment from list element (not a literal)."""
+        """Test RTuple assignment from list element uses direct items[] access."""
         source = """
 def sum_points(points: list) -> int:
     total: int = 0
@@ -2500,14 +2501,17 @@ def sum_points(points: list) -> int:
 """
         result = compile_source(source, "test")
         assert "rtuple_int_int_int_t" in result
-        assert "mp_obj_subscr" in result
+        assert "mp_obj_tuple_t *" in result
+        assert "->items[0]" in result
+        assert "->items[1]" in result
+        assert "->items[2]" in result
         assert "mp_obj_get_int" in result
         assert "p.f0" in result
         assert "p.f1" in result
         assert "p.f2" in result
 
     def test_rtuple_unbox_from_variable(self):
-        """Test RTuple assignment from a variable (mp_obj_t)."""
+        """Test RTuple assignment from a variable uses direct items[] access."""
         source = """
 def get_first(item: object) -> int:
     p: tuple[int, int] = item
@@ -2515,6 +2519,8 @@ def get_first(item: object) -> int:
 """
         result = compile_source(source, "test")
         assert "rtuple_int_int_t" in result
-        assert "mp_obj_subscr" in result
+        assert "mp_obj_tuple_t *" in result
+        assert "->items[0]" in result
+        assert "->items[1]" in result
         assert "mp_obj_get_int" in result
         assert "p.f0" in result

@@ -230,6 +230,7 @@ class TypedPythonTranslator:
 
         self._list_vars: set[str] = set()
         self._uses_list_opt = False
+        self._uses_tuple_opt = False
 
     def translate_source(self, source: str) -> str:
         tree = ast.parse(source)
@@ -1605,18 +1606,24 @@ class TypedPythonTranslator:
     def _translate_rtuple_unbox(
         self, value: ast.expr, rtuple: RTuple, c_var_name: str, c_type: str, locals_: list[str]
     ) -> list[str]:
-        """Unbox mp_obj_t tuple into RTuple struct fields."""
+        """Unbox mp_obj_t tuple into RTuple struct fields.
+
+        Uses direct tuple items[] access for efficiency instead of mp_obj_subscr().
+        This reduces function calls from 2N+1 to N+1 for N-element tuples.
+        """
         lines: list[str] = []
         expr, _ = self._translate_expr(value, locals_)
         more_lines = self._flush_ir_prelude()
         lines.extend(more_lines)
 
         tmp = self._fresh_temp()
+        tup_ptr = self._fresh_temp()
         lines.append(f"    mp_obj_t {tmp} = {expr};")
+        lines.append(f"    mp_obj_tuple_t *{tup_ptr} = (mp_obj_tuple_t *)MP_OBJ_TO_PTR({tmp});")
         lines.append(f"    {c_type} {c_var_name};")
 
         for i, expected_type in enumerate(rtuple.element_types):
-            item_expr = f"mp_obj_subscr({tmp}, MP_OBJ_NEW_SMALL_INT({i}), MP_OBJ_SENTINEL)"
+            item_expr = f"{tup_ptr}->items[{i}]"
             if expected_type == CType.MP_INT_T:
                 unbox_expr = f"mp_obj_get_int({item_expr})"
             elif expected_type == CType.MP_FLOAT_T:

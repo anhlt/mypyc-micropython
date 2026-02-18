@@ -247,6 +247,37 @@ end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
+    # List of tuples - RTuple unboxing with direct items[] access
+    (
+        "list[tuple] x500",
+        """
+import tuple_operations as t
+import time
+points = [(i, i * 2, i * 3) for i in range(100)]
+start = time.ticks_us()
+for _ in range(500):
+    t.sum_points_list(points, 100)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def sum_points_list(points, count):
+    total = 0
+    i = 0
+    while i < count:
+        p = points[i]
+        total = total + p[0] + p[1] + p[2]
+        i = i + 1
+    return total
+points = [(i, i * 2, i * 3) for i in range(100)]
+start = time.ticks_us()
+for _ in range(500):
+    sum_points_list(points, 100)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
     # Set operations - add and membership
     (
         "set build+check x1000",

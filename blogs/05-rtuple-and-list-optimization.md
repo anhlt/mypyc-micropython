@@ -191,40 +191,50 @@ def sum_points(points: list, count: int) -> int:
     return total
 ```
 
-Here, `points[i]` returns an `mp_obj_t`, but we want to store it in an RTuple struct. We need to "unbox" the tuple:
+Here, `points[i]` returns an `mp_obj_t`, but we want to store it in an RTuple struct. We need to "unbox" the tuple.
 
-```python
-def _translate_rtuple_unbox(self, value: ast.expr, rtuple: RTuple, 
-                             c_var_name: str, c_type: str) -> list[str]:
-    lines = []
-    expr = self._translate_expr(value)
-    
-    tmp = self._fresh_temp()
-    lines.append(f"    mp_obj_t {tmp} = {expr};")
-    lines.append(f"    {c_type} {c_var_name};")
-    
-    for i, expected_type in enumerate(rtuple.element_types):
-        item_expr = f"mp_obj_subscr({tmp}, MP_OBJ_NEW_SMALL_INT({i}), MP_OBJ_SENTINEL)"
-        if expected_type == CType.MP_INT_T:
-            unbox_expr = f"mp_obj_get_int({item_expr})"
-        elif expected_type == CType.MP_FLOAT_T:
-            unbox_expr = f"mp_obj_get_float({item_expr})"
-        lines.append(f"    {c_var_name}.f{i} = {unbox_expr};")
-    
-    return lines
-```
+### Initial Implementation: mp_obj_subscr()
 
-Generated code:
+The first implementation used `mp_obj_subscr()` to extract each element:
+
 ```c
 mp_obj_t _tmp1 = mp_list_get_int(points, i);
 rtuple_int_int_int_t p;
 p.f0 = mp_obj_get_int(mp_obj_subscr(_tmp1, MP_OBJ_NEW_SMALL_INT(0), MP_OBJ_SENTINEL));
 p.f1 = mp_obj_get_int(mp_obj_subscr(_tmp1, MP_OBJ_NEW_SMALL_INT(1), MP_OBJ_SENTINEL));
 p.f2 = mp_obj_get_int(mp_obj_subscr(_tmp1, MP_OBJ_NEW_SMALL_INT(2), MP_OBJ_SENTINEL));
-total = total + p.f0 + p.f1 + p.f2;
 ```
 
-While we still need `mp_obj_subscr` calls to extract elements from the `mp_obj_t` tuple, all subsequent accesses to `p[0]`, `p[1]`, `p[2]` within the loop are free field lookups.
+This achieves a **3x speedup**, but each `mp_obj_subscr()` call involves:
+- Type checking the object
+- Method dispatch to find the subscript handler
+- Creating a small int for the index
+- Bounds checking
+
+### Optimized Implementation: Direct items[] Access
+
+MicroPython's tuple structure provides direct array access:
+
+```c
+typedef struct _mp_obj_tuple_t {
+    mp_obj_base_t base;
+    size_t len;
+    mp_obj_t items[];  // Flexible array member - direct access!
+} mp_obj_tuple_t;
+```
+
+We can cast and access elements directly:
+
+```c
+mp_obj_t _tmp1 = mp_list_get_int(points, i);
+mp_obj_tuple_t *_tup1 = (mp_obj_tuple_t *)MP_OBJ_TO_PTR(_tmp1);
+rtuple_int_int_int_t p;
+p.f0 = mp_obj_get_int(_tup1->items[0]);
+p.f1 = mp_obj_get_int(_tup1->items[1]);
+p.f2 = mp_obj_get_int(_tup1->items[2]);
+```
+
+This reduces function calls from 2N+1 to N+1 for an N-element tuple (one `mp_obj_get_int()` per element, plus the initial list access).
 
 ## Bonus: List Access Optimization
 
@@ -259,16 +269,27 @@ static inline size_t mp_list_len_fast(mp_obj_t list) {
 
 ## Benchmark Results (ESP32-C6)
 
+### Direct items[] Access Optimization
+
+The direct `items[]` access optimization provides a significant improvement over `mp_obj_subscr()`:
+
+| Version | list[tuple] x500 (us) | vs Python | Improvement |
+|---------|----------------------|-----------|-------------|
+| Before (mp_obj_subscr) | 146,605 | 2.83x | - |
+| After (direct items[]) | 61,669 | 6.72x | **2.38x faster** |
+
+### Full Benchmark Suite
+
 | Benchmark | Native (us) | Python (us) | Speedup |
 |-----------|-------------|-------------|---------|
-| rtuple_internal(1000) | 188 | 8719 | **46.4x** |
-| list_of_tuples(500) | 1356 | 4096 | **3.0x** |
-| sum_range(1000) | 91 | 3105 | 34.1x |
-| matrix_sum(50,50) | 267 | 9532 | 35.7x |
+| rtuple_internal x100 | 18,429 | 866,774 | **47.0x** |
+| list[tuple] x500 | 61,669 | 414,369 | **6.7x** |
+| sum_list x1000 | 49,557 | 246,492 | 5.0x |
+| Point class x10000 | 145,605 | 384,798 | 2.6x |
 
-The RTuple benchmark shows the full potential of the optimization: **47x faster** when tuples are created and accessed internally without crossing the Python boundary.
+The **rtuple_internal** benchmark shows the full potential: **47x faster** when tuples are created and accessed internally without crossing the Python boundary.
 
-The list_of_tuples benchmark shows a more modest **3x speedup** because we must still unbox elements from `mp_obj_t` tuples. However, once extracted into RTuple structs, all field accesses are free.
+The **list[tuple]** benchmark demonstrates the direct `items[]` access optimization: **6.7x speedup** for extracting RTuples from list elements - more than double the initial 2.83x speedup with `mp_obj_subscr()`.
 
 ## Key Takeaways
 
@@ -278,9 +299,11 @@ The list_of_tuples benchmark shows a more modest **3x speedup** because we must 
 
 3. **Direct field access beats function calls**: `point.f0` is orders of magnitude faster than `mp_obj_subscr(point, 0, ...)`.
 
-4. **Boxing is expensive**: The 47x vs 3x speedup difference shows how much boxing/unboxing costs.
+4. **Direct struct access beats method dispatch**: `tup->items[0]` is faster than `mp_obj_subscr(tup, 0, ...)`.
 
-5. **Gradual optimization works**: Even partial optimization (optimized access after unboxing) provides meaningful speedups.
+5. **Boxing is expensive**: The 47x vs 6.7x speedup difference shows how much boxing/unboxing costs.
+
+6. **Gradual optimization works**: Even partial optimization (optimized access after unboxing) provides meaningful speedups.
 
 ## What's Next
 
