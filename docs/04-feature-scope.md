@@ -59,9 +59,9 @@ This document defines what Python features mypyc-micropython will support, parti
 | Basic functions | ✅ Implemented | With type annotations |
 | Return values | ✅ Implemented | |
 | Recursion | ✅ Implemented | |
-| Default arguments | 📋 Planned | Phase 2 |
-| `*args` | 📋 Planned | Phase 2 |
-| `**kwargs` | 📋 Planned | Phase 2 |
+| Default arguments | ✅ Implemented | `int`, `float`, `bool`, `str`, `None`, empty containers |
+| `*args` | ✅ Implemented | Via `MP_DEFINE_CONST_FUN_OBJ_VAR` |
+| `**kwargs` | ✅ Implemented | Via `MP_DEFINE_CONST_FUN_OBJ_KW` |
 | Keyword-only arguments | 📋 Planned | Phase 2 |
 | Positional-only arguments | 📋 Planned | Phase 2 |
 
@@ -109,12 +109,12 @@ This document defines what Python features mypyc-micropython will support, parti
 | `abs()` | ✅ Implemented | |
 | `int()` | ✅ Implemented | |
 | `float()` | ✅ Implemented | |
-| `bool()` | 📋 Planned | Phase 2 |
+| `bool()` | ✅ Implemented | `mp_obj_is_true()` for truthiness |
 | `len()` | ✅ Implemented | For list, dict, tuple, set, and other collections |
 | `range()` | ✅ Implemented | 1, 2, and 3 argument forms |
 | `print()` | ✅ Implemented | With space separator |
-| `min()`/`max()` | 📋 Planned | Phase 2 |
-| `sum()` | 📋 Planned | Phase 2 |
+| `min()`/`max()` | ✅ Implemented | 2+ args, inline optimization for 2-3 int args |
+| `sum()` | ✅ Implemented | With optional start, inline optimization for `list[int]` |
 | `enumerate()` | 📋 Planned | Phase 2 |
 | `zip()` | 📋 Planned | Phase 2 |
 | `map()`/`filter()` | 📋 Planned | Phase 5 |
@@ -447,11 +447,11 @@ if (n := len(data)) > 10:
 | Phase | Features |
 |-------|----------|
 | **1 (Core)** | `for` loops ✅, `list` ✅, `tuple` ✅, `dict` ✅, `set` ✅, `range()` ✅, `len()` ✅, `print()` ✅ |
-| **2 (Functions)** | Default args, `*args`, `**kwargs`, `enumerate()`, `zip()` |
+| **2 (Functions)** | Default args ✅, `*args` ✅, `**kwargs` ✅, `bool()` ✅, `min()`/`max()` ✅, `sum()` ✅, `enumerate`, `zip`, `sorted` |
 | **3 (Classes)** | Basic classes ✅, methods ✅, @dataclass ✅, single inheritance ✅, properties, @staticmethod |
 | **4 (Exceptions)** | `try`/`except`/`finally`, `raise`, custom exceptions |
 | **5 (Advanced)** | Simple closures, simple generators, `map()`/`filter()` |
-| **6 (Polish)** | Full IR pipeline ✅, RTuple optimization ✅ (47x speedup), list access optimization ✅, 331 tests ✅ |
+| **6 (Polish)** | Full IR pipeline ✅, RTuple optimization ✅ (47x speedup), list access optimization ✅, 414 tests ✅ |
 
 ## See Also
 
