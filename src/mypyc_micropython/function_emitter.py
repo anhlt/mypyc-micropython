@@ -267,7 +267,10 @@ class BaseEmitter:
 
     def _emit_assign(self, stmt: AssignIR, native: bool = False) -> list[str]:
         lines = self._emit_prelude(stmt.prelude)
-        expr, _ = self._emit_expr(stmt.value, native)
+        expr, expr_type = self._emit_expr(stmt.value, native)
+
+        if stmt.c_type != expr_type:
+            expr = self._unbox_if_needed(expr, expr_type, stmt.c_type)
 
         if stmt.is_new_var:
             lines.append(f"    {stmt.c_type} {stmt.c_target} = {expr};")
@@ -766,6 +769,27 @@ class FunctionEmitter(BaseEmitter):
         num_args = len(self.func_ir.params)
         arg_names = [p[0] for p in self.func_ir.params]
 
+        if self.func_ir.has_star_kwargs:
+            min_args = self.func_ir.num_required_args
+            return (
+                f"static mp_obj_t {self.func_ir.c_name}(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args)",
+                f"MP_DEFINE_CONST_FUN_OBJ_KW({self.func_ir.c_name}_obj, {min_args}, {self.func_ir.c_name});",
+            )
+
+        if self.func_ir.has_star_args:
+            min_args = self.func_ir.num_required_args
+            return (
+                f"static mp_obj_t {self.func_ir.c_name}(size_t n_args, const mp_obj_t *args)",
+                f"MP_DEFINE_CONST_FUN_OBJ_VAR({self.func_ir.c_name}_obj, {min_args}, {self.func_ir.c_name});",
+            )
+
+        if self.func_ir.has_defaults:
+            min_args = self.func_ir.num_required_args
+            return (
+                f"static mp_obj_t {self.func_ir.c_name}(size_t n_args, const mp_obj_t *args)",
+                f"MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN({self.func_ir.c_name}_obj, {min_args}, {num_args}, {self.func_ir.c_name});",
+            )
+
         if num_args == 0:
             return (
                 f"static mp_obj_t {self.func_ir.c_name}(void)",
@@ -795,20 +819,97 @@ class FunctionEmitter(BaseEmitter):
     def _emit_unbox_arguments(self) -> list[str]:
         lines = []
         num_args = len(self.func_ir.params)
+        has_defaults = self.func_ir.has_defaults
+        has_star_args = self.func_ir.has_star_args
+        has_star_kwargs = self.func_ir.has_star_kwargs
+
+        args_array = "pos_args" if has_star_kwargs else "args"
+
         for i, (arg_name, _) in enumerate(self.func_ir.params):
-            src = f"{arg_name}_obj" if num_args <= 3 else f"args[{i}]"
             c_arg_name = sanitize_name(arg_name)
             c_type_str = (
                 self.func_ir.arg_types[i] if i < len(self.func_ir.arg_types) else "mp_obj_t"
             )
 
-            if c_type_str == "mp_int_t":
-                lines.append(f"    mp_int_t {c_arg_name} = mp_obj_get_int({src});")
-            elif c_type_str == "mp_float_t":
-                lines.append(f"    mp_float_t {c_arg_name} = mp_get_float_checked({src});")
+            if has_star_kwargs or has_star_args or has_defaults:
+                src = f"{args_array}[{i}]"
+                default_arg = self.func_ir.defaults.get(i)
+
+                if default_arg is not None and default_arg.c_expr is not None:
+                    default_c = self._get_unboxed_default(default_arg, c_type_str)
+                    if c_type_str == "mp_int_t":
+                        lines.append(
+                            f"    mp_int_t {c_arg_name} = (n_args > {i}) ? mp_obj_get_int({src}) : {default_c};"
+                        )
+                    elif c_type_str == "mp_float_t":
+                        lines.append(
+                            f"    mp_float_t {c_arg_name} = (n_args > {i}) ? mp_get_float_checked({src}) : {default_c};"
+                        )
+                    elif c_type_str == "bool":
+                        lines.append(
+                            f"    bool {c_arg_name} = (n_args > {i}) ? mp_obj_is_true({src}) : {default_c};"
+                        )
+                    else:
+                        lines.append(
+                            f"    mp_obj_t {c_arg_name} = (n_args > {i}) ? {src} : {default_arg.c_expr};"
+                        )
+                else:
+                    if c_type_str == "mp_int_t":
+                        lines.append(f"    mp_int_t {c_arg_name} = mp_obj_get_int({src});")
+                    elif c_type_str == "mp_float_t":
+                        lines.append(f"    mp_float_t {c_arg_name} = mp_get_float_checked({src});")
+                    elif c_type_str == "bool":
+                        lines.append(f"    bool {c_arg_name} = mp_obj_is_true({src});")
+                    else:
+                        lines.append(f"    mp_obj_t {c_arg_name} = {src};")
             else:
-                lines.append(f"    mp_obj_t {c_arg_name} = {src};")
+                src = f"{arg_name}_obj" if num_args <= 3 else f"args[{i}]"
+                if c_type_str == "mp_int_t":
+                    lines.append(f"    mp_int_t {c_arg_name} = mp_obj_get_int({src});")
+                elif c_type_str == "mp_float_t":
+                    lines.append(f"    mp_float_t {c_arg_name} = mp_get_float_checked({src});")
+                elif c_type_str == "bool":
+                    lines.append(f"    bool {c_arg_name} = mp_obj_is_true({src});")
+                else:
+                    lines.append(f"    mp_obj_t {c_arg_name} = {src};")
+
+        if has_star_args:
+            star_args_name = sanitize_name(self.func_ir.star_args.name)
+            # Prefix with _star_ to avoid conflict with C parameter 'args'
+            c_star_args_name = f"_star_{star_args_name}"
+            lines.append(
+                f"    mp_obj_t {c_star_args_name} = mp_obj_new_tuple(n_args > {num_args} ? n_args - {num_args} : 0, n_args > {num_args} ? {args_array} + {num_args} : NULL);"
+            )
+
+        if has_star_kwargs:
+            star_kwargs_name = sanitize_name(self.func_ir.star_kwargs.name)
+            # Prefix with _star_ to avoid conflict with C parameter 'kw_args'
+            c_star_kwargs_name = f"_star_{star_kwargs_name}"
+            lines.append(
+                f"    mp_obj_t {c_star_kwargs_name} = mp_obj_new_dict(kw_args ? kw_args->used : 0);"
+            )
+            lines.append("    if (kw_args) {")
+            lines.append("        for (size_t i = 0; i < kw_args->alloc; i++) {")
+            lines.append("            if (mp_map_slot_is_filled(kw_args, i)) {")
+            lines.append(
+                f"                mp_obj_dict_store({c_star_kwargs_name}, kw_args->table[i].key, kw_args->table[i].value);"
+            )
+            lines.append("            }")
+            lines.append("        }")
+            lines.append("    }")
+
         return lines
+
+    def _get_unboxed_default(self, default_arg, c_type_str: str) -> str:
+        """Get the unboxed C literal for a default value."""
+        val = default_arg.value
+        if c_type_str == "mp_int_t":
+            return str(int(val)) if isinstance(val, (int, float)) else "0"
+        elif c_type_str == "mp_float_t":
+            return str(float(val)) if isinstance(val, (int, float)) else "0.0"
+        elif c_type_str == "bool":
+            return "true" if val else "false"
+        return default_arg.c_expr or "mp_const_none"
 
     def _emit_return(self, stmt: ReturnIR, native: bool = False) -> list[str]:
         del native

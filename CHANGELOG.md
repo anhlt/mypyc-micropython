@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`*args` support**: Functions can accept unlimited positional arguments via `*args` (e.g., `def f(*args)`)
+- **`**kwargs` support**: Functions can accept keyword arguments via `**kwargs` (e.g., `def f(**kwargs)`)
+- Combined `*args` and `**kwargs` support (e.g., `def f(name, *args, **kwargs)`)
+- Uses `MP_DEFINE_CONST_FUN_OBJ_VAR` for `*args` only functions
+- Uses `MP_DEFINE_CONST_FUN_OBJ_KW` for `**kwargs` functions
+- `examples/star_args.py` - demonstrating variadic function patterns (12 functions)
+- 9 unit tests for `*args`/`**kwargs` compilation
+- 6 C runtime tests for variadic function behavior
+- Blog posts: `08-default-arguments.md` and `09-variadic-functions.md`
+- **Default argument support**: Functions can now have default parameter values (e.g., `def f(a: int, b: int = 10)`)
+- Support for `int`, `float`, `bool`, `str`, and `None` default values
+- Support for empty container defaults: `[]`, `{}`, `()`
+- Negative numeric defaults (e.g., `offset: int = -5`)
+- Functions with all parameters having defaults (e.g., `def f(a: int = 1, b: int = 2)`)
+- `examples/default_args.py` - demonstrating default argument functionality (10 functions)
+- 12 unit tests for default argument compilation
+- 6 C runtime tests verifying default argument behavior
+- 17 device tests for default_args module
 - `bool()` builtin function for truthiness checks via `mp_obj_is_true()`
 - `min()` builtin function with 2+ arguments (e.g., `min(a, b)`, `min(a, b, c)`)
 - `max()` builtin function with 2+ arguments (e.g., `max(a, b)`, `max(a, b, c)`)
@@ -42,6 +60,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Void functions now properly return `mp_const_none` instead of falling through
 - Tuple unpacking with typed variables now correctly unboxes values (e.g., `a: int; b: int; a, b = t`)
 - `set.add()` and other void-returning methods no longer generate invalid C code
+- **Type coercion in assignments**: Reassigning `mp_obj_t` values to typed variables (e.g., `result: int = 0; result = n` where `n` is a loop variable) now correctly preserves the declared type and inserts `mp_obj_get_int()`/`mp_obj_get_float()` conversion
+- Blog post: `10-type-coercion-fix.md` documenting the assignment type coercion bug and fix
 
 ## [0.1.0] - 2024-02-07
 

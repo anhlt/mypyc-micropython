@@ -12,6 +12,7 @@ import re
 
 from .ir import (
     AnnAssignIR,
+    ArgKind,
     AssignIR,
     AttrAssignIR,
     AugAssignIR,
@@ -25,6 +26,7 @@ from .ir import (
     ContinueIR,
     CType,
     DataclassInfo,
+    DefaultArg,
     DictNewIR,
     ExprStmtIR,
     FieldIR,
@@ -38,6 +40,7 @@ from .ir import (
     MethodCallIR,
     MethodIR,
     NameIR,
+    ParamIR,
     PassIR,
     PrintIR,
     ReturnIR,
@@ -117,6 +120,7 @@ class IRBuilder:
         self._known_classes = known_classes or {}
         self._temp_counter = 0
         self._var_types: dict[str, str] = {}
+        self._star_c_names: dict[str, str] = {}
         self._list_vars: dict[str, str | None] = {}
         self._rtuple_types: dict[str, RTuple] = {}
         self._used_rtuples: set[RTuple] = set()
@@ -131,6 +135,7 @@ class IRBuilder:
     def build_function(self, node: ast.FunctionDef) -> FuncIR:
         self._temp_counter = 0
         self._var_types = {}
+        self._star_c_names: dict[str, str] = {}
         self._list_vars: dict[str, str | None] = {}
         self._rtuple_types = {}
         self._used_rtuples = set()
@@ -159,6 +164,10 @@ class IRBuilder:
                 if is_list:
                     self._list_vars[arg.arg] = elem_type
 
+        defaults = self._parse_defaults(node.args, len(params))
+
+        star_args, star_kwargs = self._parse_star_args(node.args)
+
         return_type = (
             CType.from_python_type(self._annotation_to_py_type(node.returns))
             if node.returns
@@ -166,6 +175,15 @@ class IRBuilder:
         )
 
         local_vars = [arg.arg for arg in node.args.args]
+        if star_args:
+            local_vars.append(star_args.name)
+            self._var_types[star_args.name] = "mp_obj_t"
+            self._star_c_names[star_args.name] = f"_star_{sanitize_name(star_args.name)}"
+        if star_kwargs:
+            local_vars.append(star_kwargs.name)
+            self._var_types[star_kwargs.name] = "mp_obj_t"
+            self._star_c_names[star_kwargs.name] = f"_star_{sanitize_name(star_kwargs.name)}"
+
         body_ir: list[StmtIR] = []
         for stmt in node.body:
             stmt_ir = self._build_statement(stmt, local_vars)
@@ -195,6 +213,9 @@ class IRBuilder:
             rtuple_types=dict(self._rtuple_types),
             list_vars=dict(self._list_vars),
             max_temp=self._temp_counter,
+            defaults=defaults,
+            star_args=star_args,
+            star_kwargs=star_kwargs,
         )
 
     def _build_statement(self, stmt: ast.stmt, locals_: list[str]) -> StmtIR | None:
@@ -370,10 +391,13 @@ class IRBuilder:
         is_new_var = var_name not in locals_
         if is_new_var:
             locals_.append(var_name)
+            value_type = self._get_value_ir_type(value)
+            c_type = value_type.to_c_type_str()
+            self._var_types[var_name] = c_type
+        else:
+            c_type = self._var_types.get(var_name, "mp_obj_t")
 
         value_type = self._get_value_ir_type(value)
-        c_type = value_type.to_c_type_str()
-        self._var_types[var_name] = c_type
 
         return AssignIR(
             target=var_name,
@@ -543,7 +567,7 @@ class IRBuilder:
         elif name == "None":
             return ConstIR(ir_type=IRType.OBJ, value=None)
 
-        c_name = sanitize_name(name)
+        c_name = self._star_c_names.get(name, sanitize_name(name))
         var_type = self._var_types.get(name, "mp_int_t")
         ir_type = IRType.from_c_type_str(var_type)
         return NameIR(ir_type=ir_type, py_name=name, c_name=c_name)
@@ -982,6 +1006,87 @@ class IRBuilder:
         if isinstance(annotation, ast.Subscript):
             return RTuple.from_annotation(annotation)
         return None
+
+    def _parse_defaults(self, args: ast.arguments, num_params: int) -> dict[int, DefaultArg]:
+        """Parse default argument values from AST.
+
+        AST stores defaults aligned to the *last* N parameters.
+        For `def f(a, b=1, c=2)`, args.defaults = [1, 2] for params at index 1, 2.
+        """
+        defaults: dict[int, DefaultArg] = {}
+        num_defaults = len(args.defaults)
+        if num_defaults == 0:
+            return defaults
+
+        first_default_idx = num_params - num_defaults
+        for i, default_ast in enumerate(args.defaults):
+            param_idx = first_default_idx + i
+            default_value, c_expr = self._eval_default_value(default_ast)
+            defaults[param_idx] = DefaultArg(value=default_value, c_expr=c_expr)
+
+        return defaults
+
+    def _parse_star_args(self, args: ast.arguments) -> tuple[ParamIR | None, ParamIR | None]:
+        star_args = None
+        star_kwargs = None
+
+        if args.vararg:
+            star_args = ParamIR(
+                name=args.vararg.arg,
+                c_type=CType.MP_OBJ_T,
+                kind=ArgKind.ARG_STAR,
+            )
+
+        if args.kwarg:
+            star_kwargs = ParamIR(
+                name=args.kwarg.arg,
+                c_type=CType.MP_OBJ_T,
+                kind=ArgKind.ARG_STAR2,
+            )
+
+        return star_args, star_kwargs
+
+    def _eval_default_value(self, node: ast.expr) -> tuple[object, str | None]:
+        """Evaluate a default argument value at compile time.
+
+        Returns (python_value, c_expression) where c_expression is used for code gen.
+        """
+        if isinstance(node, ast.Constant):
+            val = node.value
+            if val is None:
+                return None, "mp_const_none"
+            elif isinstance(val, bool):
+                return val, "mp_const_true" if val else "mp_const_false"
+            elif isinstance(val, int):
+                return val, f"mp_obj_new_int({val})"
+            elif isinstance(val, float):
+                return val, f"mp_obj_new_float({val})"
+            elif isinstance(val, str):
+                escaped = val.replace("\\", "\\\\").replace('"', '\\"')
+                return val, f'mp_obj_new_str("{escaped}", {len(val)})'
+            return val, None
+
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            if isinstance(node.operand, ast.Constant):
+                val = node.operand.value
+                if isinstance(val, int):
+                    return -val, f"mp_obj_new_int({-val})"
+                elif isinstance(val, float):
+                    return -val, f"mp_obj_new_float({-val})"
+
+        if isinstance(node, ast.List) and len(node.elts) == 0:
+            return [], "mp_obj_new_list(0, NULL)"
+
+        if isinstance(node, ast.Dict) and len(node.keys) == 0:
+            return {}, "mp_obj_new_dict(0)"
+
+        if isinstance(node, ast.Tuple) and len(node.elts) == 0:
+            return (), "mp_const_empty_tuple"
+
+        if isinstance(node, ast.Set) and len(node.elts) == 0:
+            return set(), "mp_obj_new_set(0, NULL)"
+
+        return None, None
 
     # -------------------------------------------------------------------------
     # Class Building

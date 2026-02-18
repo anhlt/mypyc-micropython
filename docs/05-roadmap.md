@@ -20,7 +20,8 @@ A 6-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 
 ### What Works Now ✅
 
-- **Functions**: Typed parameters (`int`, `float`, `bool`), return values, recursion
+- **Functions**: Typed parameters (`int`, `float`, `bool`), return values, recursion, default
+  arguments, `*args`, `**kwargs`
 - **Operators**: Arithmetic, comparison, bitwise, logical, augmented assignment, ternary
 - **Control flow**: `if`/`elif`/`else`, `while` loops, `for` loops (range, list, dict, generic
   iterable), `break`, `continue`
@@ -33,16 +34,16 @@ A 6-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 - **Sets**: Literals, `set()`, `set(iterable)`, `add()`, `remove()`, `discard()`, `update()`,
   `clear()`, `copy()`, `pop()`, `in` operator, iteration
 - **Built-ins**: `abs()`, `int()`, `float()`, `len()`, `range()` (1/2/3 args), `list()`, `dict()`,
-  `print()`, `bool()`, `min()`, `max()`, `sum()` (with inline optimization for 2-3 int args on
-  min/max)
+  `print()`, `bool()`, `min()`, `max()`, `sum()` (with inline optimization for typed lists)
 - **Classes**: Class definitions with typed fields, `__init__`, instance methods, `@dataclass`,
   single inheritance with vtable-based virtual dispatch, `__eq__`, `__len__`, `__getitem__`,
   `__setitem__`, class fields with `list`/`dict` types, augmented assignment on fields
 - **IR pipeline**: Full two-phase architecture (IRBuilder → Emitters), StmtIR/ExprIR/ValueIR
   hierarchies, prelude pattern for side effects, BinOp type inference, RTuple optimization
-- **ESP32**: All 13 compiled modules verified on real ESP32-C6 hardware (107 device tests pass)
-- **Performance**: RTuple internal ops (47x speedup), list[tuple] (6.7x speedup), benchmarks suite
-- **Testing**: 331 tests (278 compiler + 53 IR builder), 37 C runtime tests
+- **ESP32**: All 16 compiled modules verified on real ESP32-C6 hardware (161 device tests pass)
+- **Performance**: RTuple internal ops (57x speedup), list[tuple] (9.2x speedup), 22 benchmarks
+  suite with 11.8x average speedup
+- **Testing**: 414 tests (unit + C runtime), comprehensive device test coverage
 - **Other**: Local variables (typed and inferred), string literals, `None`, `True`/`False`
 
 ### What's Next ❌
@@ -50,8 +51,8 @@ A 6-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 - String operations
 - `sum(generator_expr)` — inline loop optimization (Phase 5)
 - Remaining list methods (`extend`, `insert`, `remove`, `count`, `index`, `reverse`, `sort`)
-- List/dict slicing, concatenation, comprehensions
-- Default arguments, `*args`, `**kwargs`
+- List/dict comprehensions
+- Keyword-only arguments, positional-only arguments
 - `@property`, `@staticmethod`, `@classmethod`
 - `super()` calls
 - Exception handling
@@ -63,8 +64,9 @@ A 6-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 Phase 1: Core Completion        █████████████░░  ~85% done
   for loops ✅ │ lists ✅ │ dicts ✅ │ tuples ✅ │ sets ✅ │ builtins (partial)
 
-Phase 2: Functions & Arguments  ░░░░░░░░░░░░░░░  TODO
-  default args │ *args │ **kwargs │ enumerate │ zip │ sorted
+Phase 2: Functions & Arguments  ████████████░░░  ~80% done
+  default args ✅ │ *args ✅ │ **kwargs ✅ │ bool ✅ │ min/max ✅ │ sum ✅
+  enumerate │ zip │ sorted │ keyword-only args │ positional-only args
 
 Phase 3: Classes                ███████████████  ~95% done
   class def ✅ │ __init__ ✅ │ methods ✅ │ @dataclass ✅ │ inheritance ✅
@@ -77,10 +79,10 @@ Phase 4: Exception Handling     ░░░░░░░░░░░░░░░  T
 Phase 5: Advanced Features      ░░░░░░░░░░░░░░░  TODO
   closures │ generators │ list comprehensions │ map/filter
 
-Phase 6: Integration & Polish   ███████████░░░░  ~70% done
-  ESP32 modules ✅ (13 modules on ESP32-C6) │ RTuple optimization ✅ (47x speedup)
-  list access optimization ✅ │ benchmarks ✅ │ Full IR pipeline ✅
-  331 tests ✅ (278 compiler + 53 IR builder) │ error messages │ docs
+Phase 6: Integration & Polish   ████████████░░░  ~80% done
+  ESP32 modules ✅ (16 modules on ESP32-C6) │ RTuple optimization ✅ (57x speedup)
+  list access optimization ✅ │ benchmarks ✅ (22 tests, 11.8x avg) │ Full IR pipeline ✅
+  414 tests ✅ │ error messages │ docs
 ```
 
 ---
@@ -269,42 +271,49 @@ All for-loop forms are implemented:
 
 **Goal:** Full function signature support.
 
-### 2.1 Default Arguments
+### 2.1 Default Arguments ✅ DONE
 
 ```python
 def greet(name: str, greeting: str = "Hello") -> str:
     return f"{greeting}, {name}!"
 ```
 
-Tasks:
-- [ ] Parse default argument values in function signatures
-- [ ] Generate wrapper with argument count checking (`MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN`)
-- [ ] Store defaults as module constants
-- [ ] Handle mutable defaults correctly (warn or error)
+Implemented:
+- [x] Parse default argument values in function signatures
+- [x] Generate wrapper with argument count checking (`MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN`)
+- [x] Store defaults as inline C literals in ternary expressions
+- [x] Support for `int`, `float`, `bool`, `str`, `None` defaults
+- [x] Support for empty container defaults: `[]`, `{}`, `()`
+- [x] Negative numeric defaults
+- [x] Mixed required + optional parameters
 
-### 2.2 *args Support
+### 2.2 *args Support ✅ DONE
 
 ```python
 def sum_all(*args: int) -> int:
     return sum(args)
 ```
 
-Tasks:
-- [ ] Detect `*args` in function signature
-- [ ] Generate variadic function wrapper (`MP_DEFINE_CONST_FUN_OBJ_VAR`)
-- [ ] Handle mixed positional + `*args`
+Implemented:
+- [x] Detect `*args` in function signature
+- [x] Generate variadic function wrapper (`MP_DEFINE_CONST_FUN_OBJ_VAR`)
+- [x] Handle mixed positional + `*args`
+- [x] Create tuple from args via `mp_obj_new_tuple(n_args, args)`
+- [x] Use `_star_` prefix for C variable naming to avoid shadowing
 
-### 2.3 **kwargs Support
+### 2.3 **kwargs Support ✅ DONE
 
 ```python
 def configure(**kwargs: str) -> dict:
     return kwargs
 ```
 
-Tasks:
-- [ ] Detect `**kwargs` in function signature
-- [ ] Generate KW function wrapper (`MP_DEFINE_CONST_FUN_OBJ_KW`) using `mp_arg_parse_all`
-- [ ] Handle mixed positional + `*args` + `**kwargs`
+Implemented:
+- [x] Detect `**kwargs` in function signature
+- [x] Generate KW function wrapper (`MP_DEFINE_CONST_FUN_OBJ_KW`)
+- [x] Handle mixed positional + `*args` + `**kwargs`
+- [x] Create dict from `mp_map_t` by iterating slots
+- [x] Proper slot iteration with `mp_map_slot_is_filled()` check
 
 ### 2.4 Keyword-Only Arguments
 
@@ -321,6 +330,9 @@ Tasks:
 
 | Feature | Status |
 |---------|--------|
+| `bool(obj)` | ✅ Implemented |
+| `min()` / `max()` | ✅ Implemented |
+| `sum(iterable)` | ✅ Implemented |
 | `enumerate(iterable, start=0)` | ❌ TODO |
 | `zip(*iterables)` | ❌ TODO |
 | `sorted(iterable, key=None, reverse=False)` | ❌ TODO |
