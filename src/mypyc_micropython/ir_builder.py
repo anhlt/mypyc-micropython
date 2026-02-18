@@ -40,6 +40,7 @@ from .ir import (
     MethodCallIR,
     MethodIR,
     NameIR,
+    ParamAttrIR,
     ParamIR,
     PassIR,
     PrintIR,
@@ -127,6 +128,7 @@ class IRBuilder:
         self._uses_print = False
         self._uses_list_opt = False
         self._loop_depth = 0
+        self._class_typed_params: dict[str, str] = {}
 
     def _fresh_temp(self) -> str:
         self._temp_counter += 1
@@ -141,6 +143,7 @@ class IRBuilder:
         self._used_rtuples = set()
         self._uses_print = False
         self._uses_list_opt = False
+        self._class_typed_params = {}
 
         func_name = node.name
         c_func_name = f"{self.c_name}_{sanitize_name(func_name)}"
@@ -163,6 +166,10 @@ class IRBuilder:
                 is_list, elem_type = self._is_list_annotation(arg.annotation)
                 if is_list:
                     self._list_vars[arg.arg] = elem_type
+                if isinstance(arg.annotation, ast.Name):
+                    type_name = arg.annotation.id
+                    if type_name in self._known_classes:
+                        self._class_typed_params[arg.arg] = type_name
 
         defaults = self._parse_defaults(node.args, len(params))
 
@@ -542,6 +549,8 @@ class IRBuilder:
             return self._build_dict(expr, locals_)
         elif isinstance(expr, ast.Subscript):
             return self._build_subscript(expr, locals_)
+        elif isinstance(expr, ast.Attribute):
+            return self._build_attribute(expr, locals_)
         return ConstIR(ir_type=IRType.OBJ, value=None), []
 
     def _build_constant(self, expr: ast.Constant) -> ConstIR:
@@ -917,6 +926,40 @@ class IRBuilder:
             value_prelude=value_prelude,
             slice_prelude=slice_prelude,
         ), value_prelude + slice_prelude
+
+    def _build_attribute(self, expr: ast.Attribute, locals_: list[str]) -> tuple[ValueIR, list]:
+        if not isinstance(expr.value, ast.Name):
+            return ConstIR(ir_type=IRType.OBJ, value=None), []
+
+        var_name = expr.value.id
+        attr_name = expr.attr
+
+        if var_name in self._class_typed_params:
+            class_name = self._class_typed_params[var_name]
+            class_ir = self._known_classes[class_name]
+
+            for fld in class_ir.get_all_fields():
+                if fld.name == attr_name:
+                    result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
+                    return ParamAttrIR(
+                        ir_type=result_type,
+                        param_name=var_name,
+                        c_param_name=sanitize_name(var_name),
+                        attr_name=attr_name,
+                        class_c_name=class_ir.c_name,
+                        result_type=result_type,
+                    ), []
+
+            return ParamAttrIR(
+                ir_type=IRType.OBJ,
+                param_name=var_name,
+                c_param_name=sanitize_name(var_name),
+                attr_name=attr_name,
+                class_c_name=class_ir.c_name,
+                result_type=IRType.OBJ,
+            ), []
+
+        return ConstIR(ir_type=IRType.OBJ, value=None), []
 
     def _build_slice(self, slice_node: ast.Slice, locals_: list[str]) -> SliceIR:
         lower = None
@@ -1594,25 +1637,53 @@ class IRBuilder:
         self, expr: ast.expr, locals_: list[str], class_ir: ClassIR, native: bool
     ) -> tuple[ValueIR, list]:
         """Build expression in method context, handling self.attr and self.method()."""
-        # Handle self.attr
+        # Handle self.attr and param.attr for typed class params
         if isinstance(expr, ast.Attribute):
-            if isinstance(expr.value, ast.Name) and expr.value.id == "self":
+            if isinstance(expr.value, ast.Name):
+                var_name = expr.value.id
                 attr_name = expr.attr
-                for fld, path in class_ir.get_all_fields_with_path():
-                    if fld.name == attr_name:
-                        result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
-                        return SelfAttrIR(
-                            ir_type=result_type,
-                            attr_name=attr_name,
-                            attr_path=path,
-                            result_type=result_type,
-                        ), []
-                return SelfAttrIR(
-                    ir_type=IRType.OBJ,
-                    attr_name=attr_name,
-                    attr_path=attr_name,
-                    result_type=IRType.OBJ,
-                ), []
+
+                if var_name == "self":
+                    for fld, path in class_ir.get_all_fields_with_path():
+                        if fld.name == attr_name:
+                            result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
+                            return SelfAttrIR(
+                                ir_type=result_type,
+                                attr_name=attr_name,
+                                attr_path=path,
+                                result_type=result_type,
+                            ), []
+                    return SelfAttrIR(
+                        ir_type=IRType.OBJ,
+                        attr_name=attr_name,
+                        attr_path=attr_name,
+                        result_type=IRType.OBJ,
+                    ), []
+
+                if var_name in self._class_typed_params:
+                    param_class_name = self._class_typed_params[var_name]
+                    param_class_ir = self._known_classes[param_class_name]
+
+                    for fld in param_class_ir.get_all_fields():
+                        if fld.name == attr_name:
+                            result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
+                            return ParamAttrIR(
+                                ir_type=result_type,
+                                param_name=var_name,
+                                c_param_name=sanitize_name(var_name),
+                                attr_name=attr_name,
+                                class_c_name=param_class_ir.c_name,
+                                result_type=result_type,
+                            ), []
+
+                    return ParamAttrIR(
+                        ir_type=IRType.OBJ,
+                        param_name=var_name,
+                        c_param_name=sanitize_name(var_name),
+                        attr_name=attr_name,
+                        class_c_name=param_class_ir.c_name,
+                        result_type=IRType.OBJ,
+                    ), []
 
         # Handle self.method()
         if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute):
