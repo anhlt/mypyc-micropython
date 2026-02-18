@@ -117,7 +117,7 @@ class IRBuilder:
         self._known_classes = known_classes or {}
         self._temp_counter = 0
         self._var_types: dict[str, str] = {}
-        self._list_vars: set[str] = set()
+        self._list_vars: dict[str, str | None] = {}
         self._rtuple_types: dict[str, RTuple] = {}
         self._used_rtuples: set[RTuple] = set()
         self._uses_print = False
@@ -131,7 +131,7 @@ class IRBuilder:
     def build_function(self, node: ast.FunctionDef) -> FuncIR:
         self._temp_counter = 0
         self._var_types = {}
-        self._list_vars = set()
+        self._list_vars: dict[str, str | None] = {}
         self._rtuple_types = {}
         self._used_rtuples = set()
         self._uses_print = False
@@ -154,8 +154,10 @@ class IRBuilder:
             params.append((arg.arg, c_type))
             arg_types.append(c_type_str)
             self._var_types[arg.arg] = c_type_str
-            if arg.annotation and self._is_list_annotation(arg.annotation):
-                self._list_vars.add(arg.arg)
+            if arg.annotation:
+                is_list, elem_type = self._is_list_annotation(arg.annotation)
+                if is_list:
+                    self._list_vars[arg.arg] = elem_type
 
         return_type = (
             CType.from_python_type(self._annotation_to_py_type(node.returns))
@@ -191,7 +193,7 @@ class IRBuilder:
             uses_list_opt=self._uses_list_opt,
             used_rtuples=set(self._used_rtuples),
             rtuple_types=dict(self._rtuple_types),
-            list_vars=set(self._list_vars),
+            list_vars=dict(self._list_vars),
             max_temp=self._temp_counter,
         )
 
@@ -428,8 +430,9 @@ class IRBuilder:
             self._used_rtuples.add(rtuple)
             c_type = rtuple.get_c_struct_name()
 
-        if self._is_list_annotation(stmt.annotation):
-            self._list_vars.add(var_name)
+        is_list, elem_type = self._is_list_annotation(stmt.annotation)
+        if is_list:
+            self._list_vars[var_name] = elem_type
 
         is_new_var = var_name not in locals_
         if is_new_var:
@@ -665,18 +668,53 @@ class IRBuilder:
 
         all_preludes = [p for pl in arg_preludes for p in pl]
 
-        builtins = {"abs", "int", "float", "len", "range", "list", "tuple", "set", "dict"}
+        builtins = {
+            "abs",
+            "int",
+            "float",
+            "bool",
+            "len",
+            "range",
+            "list",
+            "tuple",
+            "set",
+            "dict",
+            "min",
+            "max",
+            "sum",
+        }
         if func_name in builtins:
             is_list_len_opt = False
+            is_typed_list_sum = False
+            sum_list_var: str | None = None
+            sum_element_type: str | None = None
+
             if func_name == "len" and len(args) == 1:
                 arg = args[0]
                 if isinstance(arg, NameIR) and arg.py_name in self._list_vars:
                     is_list_len_opt = True
                     self._uses_list_opt = True
+
+            if func_name == "sum" and len(args) >= 1:
+                arg = args[0]
+                if isinstance(arg, NameIR) and arg.py_name in self._list_vars:
+                    elem_type = self._list_vars.get(arg.py_name)
+                    if elem_type in ("int", "float"):
+                        is_typed_list_sum = True
+                        sum_list_var = arg.py_name
+                        sum_element_type = elem_type
+                        self._uses_list_opt = True
+
+            if func_name in ("abs", "int", "len", "sum"):
+                ir_type = IRType.INT
+            elif func_name == "float":
+                ir_type = IRType.FLOAT
+            elif func_name == "bool":
+                ir_type = IRType.BOOL
+            else:
+                ir_type = IRType.OBJ
             return CallIR(
-                ir_type=IRType.INT
-                if func_name in ("abs", "int", "len")
-                else (IRType.FLOAT if func_name == "float" else IRType.OBJ),
+                ir_type=ir_type,
                 func_name=func_name,
                 c_func_name=func_name,
                 args=args,
@@ -684,6 +722,9 @@ class IRBuilder:
                 is_builtin=True,
                 builtin_kind=func_name,
                 is_list_len_opt=is_list_len_opt,
+                is_typed_list_sum=is_typed_list_sum,
+                sum_list_var=sum_list_var,
+                sum_element_type=sum_element_type,
             ), all_preludes
 
         c_func_name = f"{self.c_name}_{sanitize_name(func_name)}"
@@ -919,15 +960,23 @@ class IRBuilder:
         }
         return type_map.get(c_type, "object")
 
-    def _is_list_annotation(self, annotation: ast.expr | None) -> bool:
+    def _is_list_annotation(self, annotation: ast.expr | None) -> tuple[bool, str | None]:
+        """Check if annotation is a list type and extract element type if present.
+
+        Returns (is_list, element_type) where element_type is "int", "float", or None.
+        """
         if annotation is None:
-            return False
+            return False, None
         if isinstance(annotation, ast.Name) and annotation.id == "list":
-            return True
+            return True, None
         if isinstance(annotation, ast.Subscript):
             if isinstance(annotation.value, ast.Name) and annotation.value.id == "list":
-                return True
-        return False
+                element_type = None
+                if isinstance(annotation.slice, ast.Name):
+                    if annotation.slice.id in ("int", "float"):
+                        element_type = annotation.slice.id
+                return True, element_type
+        return False, None
 
     def _try_parse_rtuple(self, annotation: ast.expr | None) -> RTuple | None:
         if isinstance(annotation, ast.Subscript):
@@ -1085,7 +1134,7 @@ class IRBuilder:
         # Reset state for this method
         self._temp_counter = 0
         self._var_types = {}
-        self._list_vars = set()
+        self._list_vars: dict[str, str | None] = {}
         self._rtuple_types = {}
         self._used_rtuples = set()
         self._uses_print = False
@@ -1658,12 +1707,32 @@ class IRBuilder:
 
         all_preludes = [p for pl in arg_preludes for p in pl]
 
-        builtins = {"abs", "int", "float", "len", "range", "list", "tuple", "set", "dict"}
+        builtins = {
+            "abs",
+            "int",
+            "float",
+            "bool",
+            "len",
+            "range",
+            "list",
+            "tuple",
+            "set",
+            "dict",
+            "min",
+            "max",
+            "sum",
+        }
         if func_name in builtins:
+            if func_name in ("abs", "int", "len", "sum"):
+                ir_type = IRType.INT
+            elif func_name == "float":
+                ir_type = IRType.FLOAT
+            elif func_name == "bool":
+                ir_type = IRType.BOOL
+            else:
+                ir_type = IRType.OBJ
             return CallIR(
-                ir_type=IRType.INT
-                if func_name in ("abs", "int", "len")
-                else (IRType.FLOAT if func_name == "float" else IRType.OBJ),
+                ir_type=ir_type,
                 func_name=func_name,
                 c_func_name=func_name,
                 args=args,

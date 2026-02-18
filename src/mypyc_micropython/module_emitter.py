@@ -69,12 +69,14 @@ class ModuleEmitter:
         module_ir: ModuleIR,
         uses_print: bool = False,
         uses_list_opt: bool = False,
+        uses_builtins: bool = False,
         used_rtuples: set[RTuple] | None = None,
     ):
         self.module_ir = module_ir
         self.c_name = module_ir.c_name
         self._uses_print = uses_print
         self._uses_list_opt = uses_list_opt
+        self._uses_builtins = uses_builtins
         self._used_rtuples = used_rtuples or set()
 
     def emit(
@@ -130,6 +132,8 @@ class ModuleEmitter:
         ]
         if self._uses_print:
             lines.append('#include "py/mpprint.h"')
+        if self._uses_builtins:
+            lines.append('#include "py/builtin.h"')
         return lines
 
     def _emit_float_helper(self) -> list[str]:
@@ -168,6 +172,29 @@ class ModuleEmitter:
             "",
             "static inline size_t mp_list_len_fast(mp_obj_t list) {",
             "    return ((mp_obj_list_t *)MP_OBJ_TO_PTR(list))->len;",
+            "}",
+            "",
+            "static inline mp_int_t mp_list_sum_int(mp_obj_t list) {",
+            "    mp_obj_list_t *self = MP_OBJ_TO_PTR(list);",
+            "    mp_int_t sum = 0;",
+            "    for (size_t i = 0; i < self->len; i++) {",
+            "        sum += mp_obj_get_int(self->items[i]);",
+            "    }",
+            "    return sum;",
+            "}",
+            "",
+            "static inline mp_float_t mp_list_sum_float(mp_obj_t list) {",
+            "    mp_obj_list_t *self = MP_OBJ_TO_PTR(list);",
+            "    mp_float_t sum = 0.0;",
+            "    for (size_t i = 0; i < self->len; i++) {",
+            "        mp_obj_t item = self->items[i];",
+            "        if (mp_obj_is_float(item)) {",
+            "            sum += mp_obj_float_get(item);",
+            "        } else {",
+            "            sum += (mp_float_t)mp_obj_get_int(item);",
+            "        }",
+            "    }",
+            "    return sum;",
             "}",
         ]
 

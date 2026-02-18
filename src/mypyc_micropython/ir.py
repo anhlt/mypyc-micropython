@@ -379,9 +379,10 @@ class FuncIR:
     arg_types: list[str] = field(default_factory=list)
     uses_print: bool = False
     uses_list_opt: bool = False
+    uses_builtins: bool = False  # min, max, sum builtins require py/builtin.h
     used_rtuples: set[RTuple] = field(default_factory=set)
     rtuple_types: dict[str, RTuple] = field(default_factory=dict)
-    list_vars: set[str] = field(default_factory=set)
+    list_vars: dict[str, str | None] = field(default_factory=dict)
     max_temp: int = 0  # Highest temp counter used by IR builder
 
 
@@ -801,8 +802,11 @@ class CallIR(ExprIR):
     arg_preludes: list[list[InstrIR]] = field(default_factory=list)
     # For builtin calls, the specific handling
     is_builtin: bool = False
-    builtin_kind: str | None = None  # "len", "abs", "int", "float", "range", etc.
-    is_list_len_opt: bool = False  # len() on typed list
+    builtin_kind: str | None = None
+    is_list_len_opt: bool = False
+    is_typed_list_sum: bool = False
+    sum_list_var: str | None = None
+    sum_element_type: str | None = None
 
 
 @dataclass

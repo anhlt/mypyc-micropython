@@ -33,7 +33,8 @@ A 6-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 - **Sets**: Literals, `set()`, `set(iterable)`, `add()`, `remove()`, `discard()`, `update()`,
   `clear()`, `copy()`, `pop()`, `in` operator, iteration
 - **Built-ins**: `abs()`, `int()`, `float()`, `len()`, `range()` (1/2/3 args), `list()`, `dict()`,
-  `print()`
+  `print()`, `bool()`, `min()`, `max()`, `sum()` (with inline optimization for 2-3 int args on
+  min/max)
 - **Classes**: Class definitions with typed fields, `__init__`, instance methods, `@dataclass`,
   single inheritance with vtable-based virtual dispatch, `__eq__`, `__len__`, `__getitem__`,
   `__setitem__`, class fields with `list`/`dict` types, augmented assignment on fields
@@ -47,7 +48,7 @@ A 6-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 ### What's Next ❌
 
 - String operations
-- `bool()`, `min()`, `max()`, `sum()`
+- `sum(generator_expr)` — inline loop optimization (Phase 5)
 - Remaining list methods (`extend`, `insert`, `remove`, `count`, `index`, `reverse`, `sort`)
 - List/dict slicing, concatenation, comprehensions
 - Default arguments, `*args`, `**kwargs`
@@ -258,9 +259,9 @@ All for-loop forms are implemented:
 | `list()` | ✅ | Empty list constructor |
 | `dict()` / `dict(d)` | ✅ | Empty or copy constructor |
 | `print(*args)` | ✅ | `mp_obj_print_helper()` with space separator |
-| `bool(obj)` | ❌ TODO | |
-| `min()` / `max()` | ❌ TODO | |
-| `sum(iterable)` | ❌ TODO | |
+| `bool(obj)` | ✅ | `mp_obj_is_true()` for truthiness check |
+| `min()` / `max()` | ✅ | 2+ args via `mp_builtin_min_obj`/`mp_builtin_max_obj` |
+| `sum(iterable)` | ✅ | Via `mp_builtin_sum_obj`, optional start value |
 
 ---
 
@@ -517,6 +518,7 @@ Tasks:
 - [ ] `map(func, iterable)`
 - [ ] `filter(func, iterable)`
 - [ ] `any(iterable)` / `all(iterable)`
+- [ ] `sum(generator_expr)` — inline loop optimization (mypyc-style)
 
 ---
 
