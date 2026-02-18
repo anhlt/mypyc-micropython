@@ -23,7 +23,9 @@ from .ir import (
     MethodCallIR,
     NameIR,
     SetItemIR,
+    SetNewIR,
     TempIR,
+    TupleNewIR,
     UnboxIR,
     ValueIR,
 )
@@ -36,6 +38,10 @@ class ContainerEmitter:
         """Dispatch an IR instruction to its specific emitter."""
         if isinstance(instr, ListNewIR):
             return self.emit_list_new(instr)
+        elif isinstance(instr, TupleNewIR):
+            return self.emit_tuple_new(instr)
+        elif isinstance(instr, SetNewIR):
+            return self.emit_set_new(instr)
         elif isinstance(instr, DictNewIR):
             return self.emit_dict_new(instr)
         elif isinstance(instr, GetItemIR):
@@ -62,7 +68,7 @@ class ContainerEmitter:
     # ------------------------------------------------------------------
 
     def emit_list_new(self, instr: ListNewIR) -> list[str]:
-        """ListNewIR → mp_obj_new_list(n, items)."""
+        """ListNewIR -> mp_obj_new_list(n, items)."""
         result_name = instr.result.name
         if not instr.items:
             return [f"    mp_obj_t {result_name} = mp_obj_new_list(0, NULL);"]
@@ -72,6 +78,32 @@ class ContainerEmitter:
         return [
             f"    mp_obj_t {result_name}_items[] = {{{items_str}}};",
             f"    mp_obj_t {result_name} = mp_obj_new_list({n}, {result_name}_items);",
+        ]
+
+    def emit_tuple_new(self, instr: TupleNewIR) -> list[str]:
+        """TupleNewIR -> mp_obj_new_tuple(n, items)."""
+        result_name = instr.result.name
+        if not instr.items:
+            return [f"    mp_obj_t {result_name} = mp_const_empty_tuple;"]
+
+        items_str = ", ".join(self._box_value_ir(v) for v in instr.items)
+        n = len(instr.items)
+        return [
+            f"    mp_obj_t {result_name}_items[] = {{{items_str}}};",
+            f"    mp_obj_t {result_name} = mp_obj_new_tuple({n}, {result_name}_items);",
+        ]
+
+    def emit_set_new(self, instr: SetNewIR) -> list[str]:
+        """SetNewIR -> mp_obj_new_set(n, items)."""
+        result_name = instr.result.name
+        if not instr.items:
+            return [f"    mp_obj_t {result_name} = mp_obj_new_set(0, NULL);"]
+
+        items_str = ", ".join(self._box_value_ir(v) for v in instr.items)
+        n = len(instr.items)
+        return [
+            f"    mp_obj_t {result_name}_items[] = {{{items_str}}};",
+            f"    mp_obj_t {result_name} = mp_obj_new_set({n}, {result_name}_items);",
         ]
 
     def emit_dict_new(self, instr: DictNewIR) -> list[str]:
@@ -220,6 +252,21 @@ class ContainerEmitter:
             return [f"    mp_obj_t {instr.result.name} = {call};"]
         return [f"    (void){call};"]
 
+    def _emit_set_add(self, instr: MethodCallIR, receiver: str) -> list[str]:
+        arg = self._box_value_ir(instr.args[0]) if instr.args else "mp_const_none"
+        return [f"    mp_obj_set_store({receiver}, {arg});"]
+
+    def _emit_one_arg_method(self, instr: MethodCallIR, receiver: str) -> list[str]:
+        method = instr.method
+        if instr.args:
+            arg_c = self._box_value_ir(instr.args[0])
+            call = f"mp_call_function_1(mp_load_attr({receiver}, MP_QSTR_{method}), {arg_c})"
+        else:
+            call = f"mp_call_function_0(mp_load_attr({receiver}, MP_QSTR_{method}))"
+        if instr.result:
+            return [f"    mp_obj_t {instr.result.name} = {call};"]
+        return [f"    (void){call};"]
+
     def _emit_generic_method_call(self, instr: MethodCallIR, receiver: str) -> list[str]:
         """Fallback for unknown methods: mp_load_method + mp_call_method."""
         n_args = len(instr.args)
@@ -282,13 +329,15 @@ class ContainerEmitter:
         return c_expr  # already mp_obj_t
 
 
-# Method dispatch table: method name → handler
+# Method dispatch table: method name -> handler
 _METHOD_TABLE: dict[
     str,
     Callable[[ContainerEmitter, MethodCallIR, str], list[str]],
 ] = {
+    # List methods
     "append": ContainerEmitter._emit_append,
     "pop": ContainerEmitter._emit_pop,
+    # Dict methods
     "get": ContainerEmitter._emit_get,
     "keys": ContainerEmitter._emit_zero_arg_method,
     "values": ContainerEmitter._emit_zero_arg_method,
@@ -298,4 +347,8 @@ _METHOD_TABLE: dict[
     "popitem": ContainerEmitter._emit_zero_arg_method,
     "setdefault": ContainerEmitter._emit_setdefault,
     "update": ContainerEmitter._emit_update,
+    # Set methods
+    "add": ContainerEmitter._emit_set_add,
+    "discard": ContainerEmitter._emit_one_arg_method,
+    "remove": ContainerEmitter._emit_one_arg_method,
 }

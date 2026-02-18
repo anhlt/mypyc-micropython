@@ -677,8 +677,23 @@ def get_item(lst: list, i: int):
     return lst[i]
 """
         result = compile_source(source, "test")
-        assert "mp_obj_subscr" in result
-        assert "MP_OBJ_SENTINEL" in result
+        assert "mp_list_get_int(lst, i)" in result
+
+    def test_list_indexing_get_constant(self):
+        source = """
+def get_first(lst: list):
+    return lst[0]
+"""
+        result = compile_source(source, "test")
+        assert "mp_list_get_fast(lst, 0)" in result
+
+    def test_list_indexing_get_negative(self):
+        source = """
+def get_last(lst: list):
+    return lst[-1]
+"""
+        result = compile_source(source, "test")
+        assert "mp_list_get_neg(lst, -1)" in result
 
     def test_list_indexing_set(self):
         source = """
@@ -695,8 +710,7 @@ def get_len(lst: list) -> int:
     return len(lst)
 """
         result = compile_source(source, "test")
-        assert "mp_obj_len" in result
-        assert "mp_obj_get_int" in result
+        assert "mp_list_len_fast(lst)" in result
 
     def test_list_append(self):
         source = """
@@ -713,6 +727,15 @@ def process(lst: list[int]) -> int:
 """
         result = compile_source(source, "test")
         assert "mp_obj_t lst" in result
+        assert "mp_list_len_fast(lst)" in result
+
+    def test_list_untyped_uses_subscr(self):
+        source = """
+def get_item(obj, i: int):
+    return obj[i]
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_subscr" in result
 
 
 class TestForLoop:
@@ -1650,7 +1673,7 @@ def check(lst: list, i: int) -> bool:
     return lst[i] < 0
 """
         result = compile_source(source, "test")
-        assert "mp_obj_get_int(mp_obj_subscr(" in result
+        assert "mp_obj_get_int(mp_list_get_int(" in result
 
     def test_subscript_in_aug_assign(self):
         """total += lst[i] should unbox the subscript result."""
@@ -1663,7 +1686,7 @@ def sum_list(lst: list) -> int:
     return total
 """
         result = compile_source(source, "test")
-        assert "mp_obj_get_int(mp_obj_subscr(" in result
+        assert "mp_obj_get_int(mp_list_get_int(" in result
 
     def test_subscript_in_binop(self):
         """lst[i] + lst[j] should unbox both sides."""
@@ -1672,8 +1695,7 @@ def add_elems(lst: list, i: int, j: int) -> int:
     return lst[i] + lst[j]
 """
         result = compile_source(source, "test")
-        # Both subscripts should be unboxed
-        assert result.count("mp_obj_get_int(mp_obj_subscr(") == 2
+        assert result.count("mp_obj_get_int(mp_list_get_int(") == 2
 
     def test_subscript_with_int_no_double_unbox(self):
         """lst[i] + 1 should only unbox the subscript, not the int literal."""
@@ -1682,8 +1704,7 @@ def inc_elem(lst: list, i: int) -> int:
     return lst[i] + 1
 """
         result = compile_source(source, "test")
-        assert "mp_obj_get_int(mp_obj_subscr(" in result
-        # The integer 1 should NOT be wrapped in mp_obj_get_int
+        assert "mp_obj_get_int(mp_list_get_int(" in result
         assert "mp_obj_get_int(1)" not in result
 
 
@@ -1982,3 +2003,524 @@ class Mixed:
         assert "mp_obj_new_int" in result
         assert "mp_obj_new_float" in result
         assert "mp_const_true" in result or "mp_const_false" in result
+
+
+class TestTupleOperations:
+    def test_empty_tuple_literal(self):
+        source = """
+def get_empty() -> tuple:
+    return ()
+"""
+        result = compile_source(source, "test")
+        assert "mp_const_empty_tuple" in result
+
+    def test_tuple_literal_with_ints(self):
+        source = """
+def get_tuple() -> tuple:
+    return (1, 2, 3)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_tuple(3" in result
+        assert "mp_obj_new_int(1)" in result
+        assert "mp_obj_new_int(2)" in result
+        assert "mp_obj_new_int(3)" in result
+
+    def test_tuple_literal_with_mixed_types(self):
+        source = """
+def get_mixed() -> tuple:
+    return (1, 3.14, True)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_tuple(3" in result
+        assert "mp_obj_new_int(1)" in result
+        assert "mp_obj_new_float(3.14)" in result
+        assert "mp_const_true" in result
+
+    def test_tuple_indexing_get(self):
+        source = """
+def get_item(t: tuple, i: int):
+    return t[i]
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_subscr" in result
+        assert "MP_OBJ_SENTINEL" in result
+
+    def test_tuple_len(self):
+        source = """
+def get_len(t: tuple) -> int:
+    return len(t)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_len" in result
+        assert "mp_obj_get_int" in result
+
+    def test_tuple_constructor_empty(self):
+        source = """
+def make_tuple() -> tuple:
+    return tuple()
+"""
+        result = compile_source(source, "test")
+        assert "mp_const_empty_tuple" in result
+
+    def test_tuple_type_annotation(self):
+        source = """
+def process(t: tuple[int, int]) -> int:
+    return len(t)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_t t" in result
+
+    def test_tuple_in_return(self):
+        source = """
+def pair(a: int, b: int) -> tuple:
+    return (a, b)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_tuple(2" in result
+
+    def test_for_over_tuple(self):
+        source = """
+def sum_tuple(t: tuple) -> int:
+    total: int = 0
+    for x in t:
+        total += 1
+    return total
+"""
+        result = compile_source(source, "test")
+        assert "mp_getiter" in result
+        assert "mp_iternext" in result
+        assert "MP_OBJ_STOP_ITERATION" in result
+
+
+class TestSetOperations:
+    def test_empty_set_literal(self):
+        source = """
+def get_empty() -> set:
+    s: set = set()
+    return s
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_set(0, NULL)" in result
+
+    def test_set_literal_with_ints(self):
+        source = """
+def get_set() -> set:
+    return {1, 2, 3}
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_set(3" in result
+        assert "mp_obj_new_int(1)" in result
+        assert "mp_obj_new_int(2)" in result
+        assert "mp_obj_new_int(3)" in result
+
+    def test_set_add(self):
+        source = """
+def add_to_set(s: set, val: int) -> None:
+    s.add(val)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_set_store" in result
+
+    def test_set_discard(self):
+        source = """
+def remove_from_set(s: set, val: int) -> None:
+    s.discard(val)
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_discard" in result
+
+    def test_set_remove(self):
+        source = """
+def remove_from_set(s: set, val: int) -> None:
+    s.remove(val)
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_remove" in result
+
+    def test_set_in_operator(self):
+        source = """
+def has_item(s: set, val: int) -> bool:
+    return val in s
+"""
+        result = compile_source(source, "test")
+        assert "mp_binary_op(MP_BINARY_OP_IN," in result
+
+    def test_set_not_in_operator(self):
+        source = """
+def missing_item(s: set, val: int) -> bool:
+    return val not in s
+"""
+        result = compile_source(source, "test")
+        assert "mp_binary_op(MP_BINARY_OP_IN," in result
+        assert "!" in result
+
+    def test_set_len(self):
+        source = """
+def get_len(s: set) -> int:
+    return len(s)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_len" in result
+        assert "mp_obj_get_int" in result
+
+    def test_set_type_annotation(self):
+        source = """
+def process(s: set[int]) -> int:
+    return len(s)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_t s" in result
+
+    def test_for_over_set(self):
+        source = """
+def count_set(s: set) -> int:
+    count: int = 0
+    for x in s:
+        count += 1
+    return count
+"""
+        result = compile_source(source, "test")
+        assert "mp_getiter" in result
+        assert "mp_iternext" in result
+        assert "MP_OBJ_STOP_ITERATION" in result
+
+    def test_set_clear(self):
+        source = """
+def clear_set(s: set) -> None:
+    s.clear()
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_clear" in result
+
+    def test_set_copy(self):
+        source = """
+def copy_set(s: set):
+    return s.copy()
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_copy" in result
+
+    def test_build_set_with_for(self):
+        source = """
+def build_squares(n: int) -> set:
+    result: set = set()
+    for i in range(n):
+        result.add(i * i)
+    return result
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_set(0, NULL)" in result
+        assert "mp_obj_set_store" in result
+        assert "for (" in result
+
+    def test_set_update(self):
+        source = """
+def update_set(s: set, other: set) -> None:
+    s.update(other)
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_update" in result
+
+    def test_set_pop(self):
+        source = """
+def pop_from_set(s: set):
+    return s.pop()
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_pop" in result
+
+    def test_set_from_iterable(self):
+        source = """
+def set_from_list(lst: list) -> set:
+    return set(lst)
+"""
+        result = compile_source(source, "test")
+        assert "mp_call_function_1(MP_OBJ_FROM_PTR(&mp_type_set)" in result
+
+
+class TestTupleAdvanced:
+    def test_tuple_slicing_full(self):
+        source = """
+def get_slice(t: tuple):
+    return t[1:3]
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_slice" in result
+        assert "mp_obj_subscr" in result
+
+    def test_tuple_slicing_start_only(self):
+        source = """
+def get_slice_start(t: tuple):
+    return t[1:]
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_slice" in result
+        assert "mp_const_none" in result
+
+    def test_tuple_slicing_end_only(self):
+        source = """
+def get_slice_end(t: tuple):
+    return t[:3]
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_slice" in result
+        assert "mp_const_none" in result
+
+    def test_tuple_slicing_all(self):
+        source = """
+def copy_tuple(t: tuple):
+    return t[:]
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_slice(mp_const_none, mp_const_none, mp_const_none)" in result
+
+    def test_tuple_concatenation(self):
+        source = """
+def concat_tuples(a: tuple, b: tuple):
+    return a + b
+"""
+        result = compile_source(source, "test")
+        assert "mp_binary_op(MP_BINARY_OP_ADD" in result
+
+    def test_tuple_repetition(self):
+        source = """
+def repeat_tuple(t: tuple, n: int):
+    return t * n
+"""
+        result = compile_source(source, "test")
+        assert "mp_binary_op(MP_BINARY_OP_MULTIPLY" in result
+
+    def test_tuple_unpacking(self):
+        source = """
+def unpack_tuple(t: tuple):
+    a, b, c = t
+    return a
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_subscr" in result
+        assert "mp_obj_new_int(0)" in result
+        assert "mp_obj_new_int(1)" in result
+        assert "mp_obj_new_int(2)" in result
+
+    def test_tuple_from_list(self):
+        source = """
+def tuple_from_list(lst: list) -> tuple:
+    return tuple(lst)
+"""
+        result = compile_source(source, "test")
+        assert "mp_call_function_1(MP_OBJ_FROM_PTR(&mp_type_tuple)" in result
+
+
+class TestListSlicing:
+    def test_list_slicing_full(self):
+        source = """
+def get_slice(lst: list):
+    return lst[1:3]
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_slice" in result
+
+    def test_list_slicing_with_step(self):
+        source = """
+def get_every_other(lst: list):
+    return lst[::2]
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_slice" in result
+        assert "mp_obj_new_int(2)" in result
+
+    def test_list_concatenation(self):
+        source = """
+def concat_lists(a: list, b: list):
+    return a + b
+"""
+        result = compile_source(source, "test")
+        assert "mp_binary_op(MP_BINARY_OP_ADD" in result
+
+    def test_list_repetition(self):
+        source = """
+def repeat_list(lst: list, n: int):
+    return lst * n
+"""
+        result = compile_source(source, "test")
+        assert "mp_binary_op(MP_BINARY_OP_MULTIPLY" in result
+
+
+class TestRTupleOptimization:
+    def test_rtuple_struct_typedef_generated(self):
+        source = """
+def make_point() -> tuple[int, int]:
+    point: tuple[int, int] = (10, 20)
+    return point
+"""
+        result = compile_source(source, "test")
+        assert "typedef struct {" in result
+        assert "mp_int_t f0;" in result
+        assert "mp_int_t f1;" in result
+        assert "rtuple_int_int_t" in result
+
+    def test_rtuple_struct_initialization(self):
+        source = """
+def make_point() -> tuple[int, int]:
+    point: tuple[int, int] = (10, 20)
+    return point
+"""
+        result = compile_source(source, "test")
+        assert "rtuple_int_int_t point = {10, 20};" in result
+
+    def test_rtuple_direct_field_access(self):
+        source = """
+def get_x(p: tuple[int, int]) -> int:
+    point: tuple[int, int] = p
+    return point[0]
+"""
+        result = compile_source(source, "test")
+        assert "point.f0" in result
+        assert "mp_obj_tuple_t *" in result
+        assert "->items[" in result
+        assert "mp_obj_get_int" in result
+
+    def test_rtuple_direct_field_access_second_element(self):
+        source = """
+def get_y() -> int:
+    point: tuple[int, int] = (10, 20)
+    return point[1]
+"""
+        result = compile_source(source, "test")
+        assert "point.f1" in result
+
+    def test_rtuple_mixed_types(self):
+        source = """
+def make_record() -> tuple[int, float, bool]:
+    rec: tuple[int, float, bool] = (42, 3.14, True)
+    return rec
+"""
+        result = compile_source(source, "test")
+        assert "rtuple_int_float_bool_t" in result
+        assert "mp_int_t f0;" in result
+        assert "mp_float_t f1;" in result
+        assert "bool f2;" in result
+        assert "{42, 3.14, true}" in result
+
+    def test_rtuple_multiple_types_in_function(self):
+        source = """
+def multi_tuples():
+    p1: tuple[int, int] = (1, 2)
+    p2: tuple[float, float] = (1.0, 2.0)
+    return p1[0]
+"""
+        result = compile_source(source, "test")
+        assert "rtuple_int_int_t" in result
+        assert "rtuple_float_float_t" in result
+
+    def test_rtuple_return_type_annotation(self):
+        source = """
+def make_pair(x: int, y: int) -> tuple[int, int]:
+    result: tuple[int, int] = (x, y)
+    return result
+"""
+        result = compile_source(source, "test")
+        assert "rtuple_int_int_t result = {x, y};" in result
+
+    def test_rtuple_single_element(self):
+        source = """
+def wrap_int(x: int) -> tuple[int]:
+    t: tuple[int] = (x,)
+    return t
+"""
+        result = compile_source(source, "test")
+        assert "rtuple_int_t" in result
+        assert "mp_int_t f0;" in result
+
+    def test_regular_tuple_not_affected(self):
+        source = """
+def make_regular_tuple():
+    t = (1, 2, 3)
+    return t
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_tuple" in result
+        assert "rtuple_" not in result
+
+    def test_rtuple_return_boxing(self):
+        source = """
+def make_point() -> tuple[int, int]:
+    point: tuple[int, int] = (10, 20)
+    return point
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_tuple(2" in result
+        assert "mp_obj_new_int(point.f0)" in result
+        assert "mp_obj_new_int(point.f1)" in result
+
+    def test_rtuple_float_return_boxing(self):
+        source = """
+def make_coords() -> tuple[float, float]:
+    coords: tuple[float, float] = (1.5, 2.5)
+    return coords
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_float(coords.f0)" in result
+        assert "mp_obj_new_float(coords.f1)" in result
+
+    def test_rtuple_three_elements(self):
+        source = """
+def make_triple() -> tuple[int, int, int]:
+    t: tuple[int, int, int] = (1, 2, 3)
+    return t
+"""
+        result = compile_source(source, "test")
+        assert "rtuple_int_int_int_t" in result
+        assert "mp_int_t f0;" in result
+        assert "mp_int_t f1;" in result
+        assert "mp_int_t f2;" in result
+        assert "{1, 2, 3}" in result
+
+    def test_rtuple_three_element_access(self):
+        source = """
+def sum_triple() -> int:
+    t: tuple[int, int, int] = (10, 20, 30)
+    return t[0] + t[1] + t[2]
+"""
+        result = compile_source(source, "test")
+        assert "t.f0" in result
+        assert "t.f1" in result
+        assert "t.f2" in result
+
+    def test_rtuple_from_list_subscript(self):
+        """Test RTuple assignment from list element uses direct items[] access."""
+        source = """
+def sum_points(points: list) -> int:
+    total: int = 0
+    i: int = 0
+    while i < len(points):
+        p: tuple[int, int, int] = points[i]
+        total = total + p[0] + p[1] + p[2]
+        i = i + 1
+    return total
+"""
+        result = compile_source(source, "test")
+        assert "rtuple_int_int_int_t" in result
+        assert "mp_obj_tuple_t *" in result
+        assert "->items[0]" in result
+        assert "->items[1]" in result
+        assert "->items[2]" in result
+        assert "mp_obj_get_int" in result
+        assert "p.f0" in result
+        assert "p.f1" in result
+        assert "p.f2" in result
+
+    def test_rtuple_unbox_from_variable(self):
+        """Test RTuple assignment from a variable uses direct items[] access."""
+        source = """
+def get_first(item: object) -> int:
+    p: tuple[int, int] = item
+    return p[0]
+"""
+        result = compile_source(source, "test")
+        assert "rtuple_int_int_t" in result
+        assert "mp_obj_tuple_t *" in result
+        assert "->items[0]" in result
+        assert "->items[1]" in result
+        assert "mp_obj_get_int" in result
+        assert "p.f0" in result

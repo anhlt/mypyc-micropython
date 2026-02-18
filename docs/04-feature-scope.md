@@ -69,26 +69,28 @@ This document defines what Python features mypyc-micropython will support, parti
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| `list` | ✅ Implemented | Literals, indexing, `append()`, `pop()`, `len()` |
-| `tuple` | 📋 Planned | Phase 2 |
-| `dict` | ✅ Implemented | Literals, indexing, `get()`, `keys()`, `values()`, `items()` |
-| `set` | 📋 Planned | Phase 2 |
+| `list` | ✅ Implemented | Literals, indexing, `append()`, `pop()`, `len()`, optimized access |
+| `tuple` | ✅ Implemented | Literals, indexing, slicing, unpacking, concatenation, RTuple optimization |
+| `dict` | ✅ Implemented | Literals, indexing, `get()`, `keys()`, `values()`, `items()`, full API |
+| `set` | ✅ Implemented | Literals, `add()`, `remove()`, `discard()`, `in` operator, iteration |
 | `frozenset` | 📋 Planned | Lower priority |
 
-### Classes 📋
+### Classes ✅
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Class definition | 📋 Planned | Phase 3 |
-| `__init__` | 📋 Planned | Phase 3 |
-| Instance methods | 📋 Planned | Phase 3 |
-| Instance attributes | 📋 Planned | Phase 3 |
+| Class definition | ✅ Implemented | With typed fields |
+| `__init__` | ✅ Implemented | Auto-generated for @dataclass |
+| Instance methods | ✅ Implemented | With vtable dispatch |
+| Instance attributes | ✅ Implemented | Native C types |
 | Class attributes | 📋 Planned | Phase 3 |
 | `@property` | 📋 Planned | Phase 3 |
 | `@staticmethod` | 📋 Planned | Phase 3 |
 | `@classmethod` | 📋 Planned | Phase 3 |
-| Single inheritance | 📋 Planned | Phase 3 |
+| Single inheritance | ✅ Implemented | With vtable-based virtual dispatch |
 | `__str__`/`__repr__` | 📋 Planned | Phase 3 |
+| `__eq__`/`__len__`/`__getitem__`/`__setitem__` | ✅ Implemented | Special methods |
+| `@dataclass` | ✅ Implemented | Auto-generated `__init__` and `__eq__` |
 
 ### Exception Handling 📋
 
@@ -108,9 +110,9 @@ This document defines what Python features mypyc-micropython will support, parti
 | `int()` | ✅ Implemented | |
 | `float()` | ✅ Implemented | |
 | `bool()` | 📋 Planned | Phase 2 |
-| `len()` | ✅ Implemented | For list, dict, and other collections |
+| `len()` | ✅ Implemented | For list, dict, tuple, set, and other collections |
 | `range()` | ✅ Implemented | 1, 2, and 3 argument forms |
-| `print()` | 📋 Planned | Phase 2 |
+| `print()` | ✅ Implemented | With space separator |
 | `min()`/`max()` | 📋 Planned | Phase 2 |
 | `sum()` | 📋 Planned | Phase 2 |
 | `enumerate()` | 📋 Planned | Phase 2 |
@@ -121,7 +123,9 @@ This document defines what Python features mypyc-micropython will support, parti
 | `type()` | 📋 Planned | Phase 3 |
 | `hasattr()`/`getattr()`/`setattr()` | 📋 Planned | Phase 3 |
 | `list()` | ✅ Implemented | Empty list constructor |
-| `dict()` | ✅ Implemented | Empty dict constructor |
+| `dict()` | ✅ Implemented | Empty and copy constructor |
+| `tuple()` | ✅ Implemented | Empty and from-iterable constructor |
+| `set()` | ✅ Implemented | Empty and from-iterable constructor |
 
 ## Partially In-Scope Features
 
@@ -442,12 +446,12 @@ if (n := len(data)) > 10:
 
 | Phase | Features |
 |-------|----------|
-| **1 (Core)** | `for` loops, `list`, `tuple`, `dict`, `set`, `range()`, `len()`, `print()` |
+| **1 (Core)** | `for` loops ✅, `list` ✅, `tuple` ✅, `dict` ✅, `set` ✅, `range()` ✅, `len()` ✅, `print()` ✅ |
 | **2 (Functions)** | Default args, `*args`, `**kwargs`, `enumerate()`, `zip()` |
-| **3 (Classes)** | Basic classes, methods, properties, single inheritance |
+| **3 (Classes)** | Basic classes ✅, methods ✅, @dataclass ✅, single inheritance ✅, properties, @staticmethod |
 | **4 (Exceptions)** | `try`/`except`/`finally`, `raise`, custom exceptions |
 | **5 (Advanced)** | Simple closures, simple generators, `map()`/`filter()` |
-| **6 (Polish)** | Optimization, edge cases, documentation |
+| **6 (Polish)** | RTuple optimization ✅ (47x speedup), list access optimization ✅, error messages, docs |
 
 ## See Also
 

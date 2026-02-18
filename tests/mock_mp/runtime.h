@@ -42,11 +42,21 @@ typedef struct {
 /* Match real MicroPython sentinel values (py/obj.h, non-debug) */
 #define MP_OBJ_NULL             ((mp_obj_t)(uintptr_t)0)
 #define MP_OBJ_SENTINEL         ((mp_obj_t)(uintptr_t)4)
+#define MP_OBJ_STOP_ITERATION   MP_OBJ_NULL
 
 /* Match real MicroPython constant objects (py/obj.h) */
 #define mp_const_none  MP_OBJ_NEW_IMMEDIATE_OBJ(0)   /* = 6  */
 #define mp_const_false MP_OBJ_NEW_IMMEDIATE_OBJ(1)    /* = 14 */
 #define mp_const_true  MP_OBJ_NEW_IMMEDIATE_OBJ(3)    /* = 30 */
+
+static inline bool mp_obj_is_true(mp_obj_t obj) {
+    if (obj == mp_const_true) return true;
+    if (obj == mp_const_false || obj == mp_const_none) return false;
+    if (MP_OBJ_IS_SMALL_INT(obj)) {
+        return MP_OBJ_SMALL_INT_VALUE(obj) != 0;
+    }
+    return obj != MP_OBJ_NULL;
+}
 
 #define MICROPY_FLOAT_IMPL_NONE (0)
 #define MICROPY_FLOAT_IMPL (MICROPY_FLOAT_IMPL_NONE)
@@ -54,6 +64,8 @@ typedef struct {
 #define MP_MOCK_TAG_FLOAT (0xF10A7)
 #define MP_MOCK_TAG_LIST (0x1157)
 #define MP_MOCK_TAG_STR (0x57A1)
+#define MP_MOCK_TAG_TUPLE (0x70B1E)
+#define MP_MOCK_TAG_SET (0x5E7)
 
 typedef struct {
     int tag;
@@ -72,6 +84,19 @@ typedef struct {
     size_t len;
     char *data;
 } mp_obj_str_struct;
+
+typedef struct {
+    int tag;
+    size_t len;
+    mp_obj_t *items;
+} mp_obj_tuple_struct;
+
+typedef struct {
+    int tag;
+    size_t alloc;
+    size_t len;
+    mp_obj_t *items;
+} mp_obj_set_struct;
 
 static void *mp_type_module = NULL;
 
@@ -234,6 +259,106 @@ static inline mp_obj_t mp_obj_new_list(size_t n, mp_obj_t *items) {
     return (mp_obj_t)list;
 }
 
+static inline mp_obj_t mp_obj_new_tuple(size_t n, mp_obj_t *items) {
+    mp_obj_tuple_struct *tuple = (mp_obj_tuple_struct *)malloc(sizeof(*tuple));
+    if (tuple == NULL) {
+        mp_mock_abort("out of memory while allocating tuple object");
+    }
+
+    if (n > 0) {
+        tuple->items = (mp_obj_t *)malloc(n * sizeof(*tuple->items));
+        if (tuple->items == NULL) {
+            free(tuple);
+            mp_mock_abort("out of memory while allocating tuple items");
+        }
+        if (items != NULL) {
+            memcpy(tuple->items, items, n * sizeof(*tuple->items));
+        }
+    } else {
+        tuple->items = NULL;
+    }
+
+    tuple->tag = MP_MOCK_TAG_TUPLE;
+    tuple->len = n;
+    return (mp_obj_t)tuple;
+}
+
+static inline bool mp_mock_is_tuple(mp_obj_t obj) {
+    if (MP_OBJ_IS_SMALL_INT(obj) || mp_mock_is_special_const(obj)) {
+        return false;
+    }
+    mp_obj_tuple_struct *as_tuple = (mp_obj_tuple_struct *)obj;
+    return as_tuple->tag == MP_MOCK_TAG_TUPLE;
+}
+
+static inline mp_obj_t mp_obj_new_set(size_t n, mp_obj_t *items) {
+    mp_obj_set_struct *set = (mp_obj_set_struct *)malloc(sizeof(*set));
+    if (set == NULL) {
+        mp_mock_abort("out of memory while allocating set object");
+    }
+
+    size_t alloc = n == 0 ? 4 : n;
+    set->items = (mp_obj_t *)malloc(alloc * sizeof(*set->items));
+    if (set->items == NULL) {
+        free(set);
+        mp_mock_abort("out of memory while allocating set items");
+    }
+
+    set->tag = MP_MOCK_TAG_SET;
+    set->len = 0;
+    set->alloc = alloc;
+
+    if (n > 0 && items != NULL) {
+        for (size_t i = 0; i < n; i++) {
+            bool found = false;
+            for (size_t j = 0; j < set->len; j++) {
+                if (mp_obj_get_int(set->items[j]) == mp_obj_get_int(items[i])) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                set->items[set->len++] = items[i];
+            }
+        }
+    }
+
+    return (mp_obj_t)set;
+}
+
+static inline bool mp_mock_is_set(mp_obj_t obj) {
+    if (MP_OBJ_IS_SMALL_INT(obj) || mp_mock_is_special_const(obj)) {
+        return false;
+    }
+    mp_obj_set_struct *as_set = (mp_obj_set_struct *)obj;
+    return as_set->tag == MP_MOCK_TAG_SET;
+}
+
+static inline void mp_obj_set_store(mp_obj_t set_obj, mp_obj_t item) {
+    if (!mp_mock_is_set(set_obj)) {
+        mp_mock_abort("expected set object");
+    }
+    mp_obj_set_struct *set = (mp_obj_set_struct *)set_obj;
+
+    for (size_t i = 0; i < set->len; i++) {
+        if (mp_obj_get_int(set->items[i]) == mp_obj_get_int(item)) {
+            return;
+        }
+    }
+
+    if (set->len >= set->alloc) {
+        size_t new_alloc = set->alloc == 0 ? 4 : set->alloc * 2;
+        mp_obj_t *new_items = (mp_obj_t *)realloc(set->items, new_alloc * sizeof(*new_items));
+        if (new_items == NULL) {
+            mp_mock_abort("out of memory while growing set");
+        }
+        set->items = new_items;
+        set->alloc = new_alloc;
+    }
+
+    set->items[set->len++] = item;
+}
+
 static inline mp_obj_t mp_obj_len(mp_obj_t obj) {
     if (MP_OBJ_IS_SMALL_INT(obj) || mp_mock_is_special_const(obj)) {
         mp_mock_abort("len() unsupported for this object");
@@ -249,19 +374,51 @@ static inline mp_obj_t mp_obj_len(mp_obj_t obj) {
         return mp_obj_new_int((mp_int_t)as_str->len);
     }
 
+    mp_obj_tuple_struct *as_tuple = (mp_obj_tuple_struct *)obj;
+    if (as_tuple->tag == MP_MOCK_TAG_TUPLE) {
+        return mp_obj_new_int((mp_int_t)as_tuple->len);
+    }
+
+    mp_obj_set_struct *as_set = (mp_obj_set_struct *)obj;
+    if (as_set->tag == MP_MOCK_TAG_SET) {
+        return mp_obj_new_int((mp_int_t)as_set->len);
+    }
+
     mp_mock_abort("len() unsupported for this object");
     return mp_const_none;
 }
 
 static inline mp_obj_t mp_obj_subscr(mp_obj_t obj, mp_obj_t idx, mp_obj_t val) {
-    mp_obj_list_struct *list = mp_mock_list_from_obj(obj);
-    size_t pos = mp_mock_normalize_index(mp_obj_get_int(idx), list->len);
-
-    if (val == MP_OBJ_SENTINEL) {
-        return list->items[pos];
+    if (MP_OBJ_IS_SMALL_INT(obj) || mp_mock_is_special_const(obj)) {
+        mp_mock_abort("subscript unsupported for this object");
     }
 
-    list->items[pos] = val;
+    mp_obj_list_struct *as_list = (mp_obj_list_struct *)obj;
+    if (as_list->tag == MP_MOCK_TAG_LIST) {
+        size_t pos = mp_mock_normalize_index(mp_obj_get_int(idx), as_list->len);
+        if (val == MP_OBJ_SENTINEL) {
+            return as_list->items[pos];
+        }
+        as_list->items[pos] = val;
+        return mp_const_none;
+    }
+
+    mp_obj_tuple_struct *as_tuple = (mp_obj_tuple_struct *)obj;
+    if (as_tuple->tag == MP_MOCK_TAG_TUPLE) {
+        mp_int_t i = mp_obj_get_int(idx);
+        if (i < 0) {
+            i += (mp_int_t)as_tuple->len;
+        }
+        if (i < 0 || (size_t)i >= as_tuple->len) {
+            mp_mock_abort("tuple index out of range");
+        }
+        if (val != MP_OBJ_SENTINEL) {
+            mp_mock_abort("tuples are immutable");
+        }
+        return as_tuple->items[i];
+    }
+
+    mp_mock_abort("subscript unsupported for this object");
     return mp_const_none;
 }
 
@@ -275,8 +432,188 @@ static inline mp_obj_t mp_obj_list_append(mp_obj_t list_obj, mp_obj_t item) {
 
 typedef uintptr_t qstr;
 
+typedef enum {
+    MP_BINARY_OP_ADD,
+    MP_BINARY_OP_SUBTRACT,
+    MP_BINARY_OP_MULTIPLY,
+    MP_BINARY_OP_IN,
+} mp_binary_op_t;
+
+static inline mp_obj_t mp_binary_op(mp_binary_op_t op, mp_obj_t lhs, mp_obj_t rhs) {
+    if (op == MP_BINARY_OP_IN) {
+        if (!MP_OBJ_IS_SMALL_INT(rhs) && !mp_mock_is_special_const(rhs)) {
+            mp_obj_tuple_struct *as_tuple = (mp_obj_tuple_struct *)rhs;
+            if (as_tuple->tag == MP_MOCK_TAG_TUPLE) {
+                mp_int_t needle = mp_obj_get_int(lhs);
+                for (size_t i = 0; i < as_tuple->len; i++) {
+                    if (mp_obj_get_int(as_tuple->items[i]) == needle) {
+                        return mp_const_true;
+                    }
+                }
+                return mp_const_false;
+            }
+
+            mp_obj_set_struct *as_set = (mp_obj_set_struct *)rhs;
+            if (as_set->tag == MP_MOCK_TAG_SET) {
+                mp_int_t needle = mp_obj_get_int(lhs);
+                for (size_t i = 0; i < as_set->len; i++) {
+                    if (mp_obj_get_int(as_set->items[i]) == needle) {
+                        return mp_const_true;
+                    }
+                }
+                return mp_const_false;
+            }
+
+            mp_obj_list_struct *as_list = (mp_obj_list_struct *)rhs;
+            if (as_list->tag == MP_MOCK_TAG_LIST) {
+                mp_int_t needle = mp_obj_get_int(lhs);
+                for (size_t i = 0; i < as_list->len; i++) {
+                    if (mp_obj_get_int(as_list->items[i]) == needle) {
+                        return mp_const_true;
+                    }
+                }
+                return mp_const_false;
+            }
+        }
+        mp_mock_abort("mp_binary_op: 'in' unsupported for this type");
+    }
+
+    if (op == MP_BINARY_OP_ADD) {
+        if (mp_mock_is_tuple(lhs) && mp_mock_is_tuple(rhs)) {
+            mp_obj_tuple_struct *t1 = (mp_obj_tuple_struct *)lhs;
+            mp_obj_tuple_struct *t2 = (mp_obj_tuple_struct *)rhs;
+            size_t new_len = t1->len + t2->len;
+            mp_obj_t *new_items = (mp_obj_t *)malloc(new_len * sizeof(*new_items));
+            if (new_items == NULL) {
+                mp_mock_abort("out of memory");
+            }
+            memcpy(new_items, t1->items, t1->len * sizeof(*new_items));
+            memcpy(new_items + t1->len, t2->items, t2->len * sizeof(*new_items));
+            mp_obj_t result = mp_obj_new_tuple(new_len, new_items);
+            free(new_items);
+            return result;
+        }
+        return mp_obj_new_int(mp_obj_get_int(lhs) + mp_obj_get_int(rhs));
+    }
+
+    if (op == MP_BINARY_OP_MULTIPLY) {
+        if (mp_mock_is_tuple(lhs) && MP_OBJ_IS_SMALL_INT(rhs)) {
+            mp_obj_tuple_struct *t = (mp_obj_tuple_struct *)lhs;
+            mp_int_t n = mp_obj_get_int(rhs);
+            if (n <= 0) {
+                return mp_obj_new_tuple(0, NULL);
+            }
+            size_t new_len = t->len * (size_t)n;
+            mp_obj_t *new_items = (mp_obj_t *)malloc(new_len * sizeof(*new_items));
+            if (new_items == NULL) {
+                mp_mock_abort("out of memory");
+            }
+            for (mp_int_t i = 0; i < n; i++) {
+                memcpy(new_items + (size_t)i * t->len, t->items, t->len * sizeof(*new_items));
+            }
+            mp_obj_t result = mp_obj_new_tuple(new_len, new_items);
+            free(new_items);
+            return result;
+        }
+        return mp_obj_new_int(mp_obj_get_int(lhs) * mp_obj_get_int(rhs));
+    }
+
+    mp_mock_abort("mp_binary_op: unsupported operation");
+    return mp_const_none;
+}
+
 #define MP_QSTR_pop   ((qstr)0x1001)
 #define MP_QSTR_append ((qstr)0x1002)
+
+#define MP_MOCK_TAG_ITER (0x173A)
+
+typedef struct {
+    int tag;
+    mp_obj_t container;
+    size_t idx;
+} mp_obj_iter_struct;
+
+typedef mp_obj_iter_struct mp_obj_iter_buf_t;
+
+static inline mp_obj_t mp_getiter(mp_obj_t obj, void *buf) {
+    (void)buf;
+    mp_obj_iter_struct *iter = (mp_obj_iter_struct *)malloc(sizeof(*iter));
+    if (iter == NULL) {
+        mp_mock_abort("out of memory while allocating iterator");
+    }
+    iter->tag = MP_MOCK_TAG_ITER;
+    iter->container = obj;
+    iter->idx = 0;
+    return (mp_obj_t)iter;
+}
+
+static inline mp_obj_t mp_iternext(mp_obj_t iter_obj) {
+    mp_obj_iter_struct *iter = (mp_obj_iter_struct *)iter_obj;
+    if (iter->tag != MP_MOCK_TAG_ITER) {
+        mp_mock_abort("expected iterator");
+    }
+
+    mp_obj_t container = iter->container;
+    if (MP_OBJ_IS_SMALL_INT(container) || mp_mock_is_special_const(container)) {
+        return MP_OBJ_NULL;
+    }
+
+    mp_obj_tuple_struct *as_tuple = (mp_obj_tuple_struct *)container;
+    if (as_tuple->tag == MP_MOCK_TAG_TUPLE) {
+        if (iter->idx >= as_tuple->len) {
+            return MP_OBJ_NULL;
+        }
+        return as_tuple->items[iter->idx++];
+    }
+
+    mp_obj_set_struct *as_set = (mp_obj_set_struct *)container;
+    if (as_set->tag == MP_MOCK_TAG_SET) {
+        if (iter->idx >= as_set->len) {
+            return MP_OBJ_NULL;
+        }
+        return as_set->items[iter->idx++];
+    }
+
+    mp_obj_list_struct *as_list = (mp_obj_list_struct *)container;
+    if (as_list->tag == MP_MOCK_TAG_LIST) {
+        if (iter->idx >= as_list->len) {
+            return MP_OBJ_NULL;
+        }
+        return as_list->items[iter->idx++];
+    }
+
+    return MP_OBJ_NULL;
+}
+
+static inline void mp_unpack_sequence(mp_obj_t seq, size_t num, mp_obj_t *dest) {
+    if (MP_OBJ_IS_SMALL_INT(seq) || mp_mock_is_special_const(seq)) {
+        mp_mock_abort("cannot unpack this object");
+    }
+
+    mp_obj_tuple_struct *as_tuple = (mp_obj_tuple_struct *)seq;
+    if (as_tuple->tag == MP_MOCK_TAG_TUPLE) {
+        if (as_tuple->len != num) {
+            mp_mock_abort("wrong number of values to unpack");
+        }
+        for (size_t i = 0; i < num; i++) {
+            dest[i] = as_tuple->items[i];
+        }
+        return;
+    }
+
+    mp_obj_list_struct *as_list = (mp_obj_list_struct *)seq;
+    if (as_list->tag == MP_MOCK_TAG_LIST) {
+        if (as_list->len != num) {
+            mp_mock_abort("wrong number of values to unpack");
+        }
+        for (size_t i = 0; i < num; i++) {
+            dest[i] = as_list->items[i];
+        }
+        return;
+    }
+
+    mp_mock_abort("cannot unpack this object");
+}
 
 static inline mp_obj_t mp_mock_list_pop_impl(size_t n_args, const mp_obj_t *args) {
     mp_obj_list_struct *list = mp_mock_list_from_obj(args[0]);

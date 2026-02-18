@@ -32,13 +32,15 @@ A 6-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 - **Classes**: Class definitions with typed fields, `__init__`, instance methods, `@dataclass`,
   single inheritance with vtable-based virtual dispatch, `__eq__`, `__len__`, `__getitem__`,
   `__setitem__`, class fields with `list`/`dict` types, augmented assignment on fields
-- **IR pipeline**: Expression-level IR nodes, ContainerEmitter for list/dict, IR prelude pattern
-- **ESP32**: All 10 compiled modules verified on real ESP32-C3 hardware
+- **IR pipeline**: Expression-level IR nodes, ContainerEmitter for list/dict, IR prelude pattern,
+  RTuple optimization for fixed-length tuples
+- **ESP32**: All 13 compiled modules verified on real ESP32-C6 hardware (107 device tests pass)
+- **Performance**: RTuple internal ops (47x speedup), list[tuple] (6.7x speedup), benchmarks suite
 - **Other**: Local variables (typed and inferred), string literals, `None`, `True`/`False`
 
 ### What's Next ❌
 
-- Tuples, sets, string operations
+- String operations
 - `bool()`, `min()`, `max()`, `sum()`
 - Remaining list methods (`extend`, `insert`, `remove`, `count`, `index`, `reverse`, `sort`)
 - List/dict slicing, concatenation, comprehensions
@@ -51,8 +53,8 @@ A 6-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 ## Phase Overview
 
 ```
-Phase 1: Core Completion        ██████████░░░░░  ~65% done
-  for loops ✅ │ lists (partial) │ dicts (86%) │ tuples │ sets │ builtins
+Phase 1: Core Completion        █████████████░░  ~85% done
+  for loops ✅ │ lists ✅ │ dicts ✅ │ tuples ✅ │ sets ✅ │ builtins (partial)
 
 Phase 2: Functions & Arguments  ░░░░░░░░░░░░░░░  TODO
   default args │ *args │ **kwargs │ enumerate │ zip │ sorted
@@ -68,8 +70,9 @@ Phase 4: Exception Handling     ░░░░░░░░░░░░░░░  T
 Phase 5: Advanced Features      ░░░░░░░░░░░░░░░  TODO
   closures │ generators │ list comprehensions │ map/filter
 
-Phase 6: Integration & Polish   ██████░░░░░░░░░  ~40% done
-  ESP32 modules ✅ (10 modules on ESP32-C3) │ optimization │ error messages │ docs
+Phase 6: Integration & Polish   ████████░░░░░░░  ~55% done
+  ESP32 modules ✅ (13 modules on ESP32-C6) │ RTuple optimization ✅ (47x speedup)
+  list access optimization ✅ │ benchmarks ✅ │ error messages │ docs
 ```
 
 ---
@@ -202,21 +205,39 @@ All for-loop forms are implemented:
 
 ### 1.4 Tuple Support
 
-| Feature | Status |
-|---------|--------|
-| Tuple creation: `(1, 2, 3)` | ❌ TODO |
-| Tuple unpacking: `a, b, c = tup` | ❌ TODO |
-| Tuple indexing | ❌ TODO |
-| Named tuple | ❌ TODO (low priority) |
+| Feature | Status | C API |
+|---------|--------|-------|
+| Tuple creation: `(1, 2, 3)` | ✅ | `mp_obj_new_tuple()` |
+| Empty tuple: `()` | ✅ | `mp_const_empty_tuple` |
+| Tuple indexing: `t[n]` | ✅ | `mp_obj_subscr()` |
+| Tuple slicing: `t[n:m]` | ✅ | `mp_obj_subscr()` with `mp_obj_new_slice()` |
+| Tuple unpacking: `a, b, c = t` | ✅ | Sequential `mp_obj_subscr()` |
+| Tuple concatenation: `t1 + t2` | ✅ | `mp_binary_op(MP_BINARY_OP_ADD)` |
+| Tuple repetition: `t * n` | ✅ | `mp_binary_op(MP_BINARY_OP_MULTIPLY)` |
+| `tuple()` constructor | ✅ | `mp_const_empty_tuple` |
+| `tuple(iterable)` | ✅ | `mp_obj_tuple_make_new()` |
+| `len(t)` | ✅ | `mp_obj_len()` |
+| Tuple iteration | ✅ | `mp_getiter()`/`mp_iternext()` |
+| Named tuple | ❌ TODO (low priority) | |
 
 ### 1.5 Set Support
 
-| Feature | Status |
-|---------|--------|
-| Set creation: `{1, 2, 3}` | ❌ TODO |
-| Set operations: `union`, `intersection`, `difference` | ❌ TODO |
-| `in` operator | ❌ TODO |
-| Set iteration | ❌ TODO |
+| Feature | Status | C API |
+|---------|--------|-------|
+| Set creation: `{1, 2, 3}` | ✅ | `mp_obj_new_set()` |
+| Empty set: `set()` | ✅ | `mp_obj_new_set(0, NULL)` |
+| `set(iterable)` | ✅ | `mp_obj_set_make_new()` |
+| `in` operator | ✅ | `mp_binary_op(MP_BINARY_OP_IN)` |
+| `s.add(item)` | ✅ | `mp_obj_set_store()` |
+| `s.remove(item)` | ✅ | `mp_load_attr(MP_QSTR_remove)` + call |
+| `s.discard(item)` | ✅ | `mp_load_attr(MP_QSTR_discard)` + call |
+| `s.update(iterable)` | ✅ | `mp_load_attr(MP_QSTR_update)` + call |
+| `s.clear()` | ✅ | `mp_load_attr(MP_QSTR_clear)` + call |
+| `s.copy()` | ✅ | `mp_load_attr(MP_QSTR_copy)` + call |
+| `s.pop()` | ✅ | `mp_load_attr(MP_QSTR_pop)` + call |
+| `len(s)` | ✅ | `mp_obj_len()` |
+| Set iteration | ✅ | `mp_getiter()`/`mp_iternext()` |
+| Set operations: `union`, `intersection`, `difference` | ❌ TODO | |
 
 ### 1.6 Built-in Functions
 
@@ -507,11 +528,77 @@ Tasks:
 
 ### 6.2 Optimization
 
+**Research Finding (from mypyc analysis):**
+mypyc uses **type erasure** for container element types - `list[int]` and `list[str]` generate
+identical code. However, **fixed-length tuples** (`tuple[int, int]`) are special: they become
+**unboxed C structs** allocated on stack/registers, not heap-allocated Python objects.
+
+| Type | Representation | Boxing |
+|------|----------------|--------|
+| `int`, `float`, `bool` | Native C types | Unboxed (value type) |
+| `tuple[int, int]` | C struct | Unboxed until passed to Python |
+| `tuple[int, ...]` | Python tuple | Always boxed |
+| `list[int]`, `set[int]` | Python objects | Always boxed (elements too) |
+
+**Optimization Phases:**
+
+#### Phase A: Native Fixed-Length Tuples (RTuple-style) ✅ DONE
+
+For `tuple[int, int]`, generate C struct instead of Python tuple:
+```c
+typedef struct { mp_int_t f0; mp_int_t f1; } rtuple_int_int_t;
+static rtuple_int_int_t make_point(void) { return (rtuple_int_int_t){10, 20}; }
+```
+
+Tasks:
+- [x] Track tuple element types in IR (`RTuple` with element `CType` list)
+- [x] Generate C struct typedefs for fixed-length tuples
+- [x] Emit struct literals instead of `mp_obj_new_tuple()`
+- [x] Direct field access instead of `mp_obj_subscr()`
+- [x] Box to `mp_obj_t` only when passing to MicroPython APIs
+- [x] Direct `tup->items[]` access for unboxing from list elements
+
+**Benchmark Results (ESP32-C6):**
+| Benchmark | Native (us) | Python (us) | Speedup |
+|-----------|-------------|-------------|---------|
+| rtuple_internal x100 | 18,429 | 866,774 | **47.0x** |
+| list[tuple] x500 | 61,669 | 414,369 | **6.7x** |
+
+#### Phase B: Optimized List Access ✅ DONE
+
+When accessing typed list variables, bypass generic `mp_obj_subscr()` dispatch:
+```c
+// Generic (slow): mp_obj_subscr(list, MP_OBJ_NEW_SMALL_INT(i), MP_OBJ_SENTINEL)
+// Optimized (fast): mp_list_get_int(list, i) -> direct items[] access
+```
+
+Tasks:
+- [x] Track `list` variables via annotation
+- [x] Generate `mp_list_get_*` helpers for direct access
+- [x] Inline `mp_list_len_fast()` for `len(lst)` on known lists
+
+#### Phase C: Optimized Iteration Patterns ❌ TODO
+
+When iterating typed containers, inline unboxing:
+```c
+// Instead of mp_obj_subscr + mp_obj_get_int per element:
+mp_obj_list_t *list = MP_OBJ_TO_PTR(lst);
+for (size_t i = 0; i < list->len; i++) {
+    sum += mp_obj_get_int(list->items[i]);
+}
+```
+
+Tasks:
+- [ ] Detect `for x in lst` where `lst: list[int]`
+- [ ] Use direct `mp_obj_list_t` struct access
+- [ ] Inline `mp_obj_get_int()` in loop body
+
+#### Phase D: Additional Optimizations ❌ TODO
+
 Tasks:
 - [ ] Constant folding
 - [ ] Dead code elimination
 - [ ] Inline small functions
-- [ ] Reduce boxing/unboxing operations
 
 ### 6.3 Error Messages
 

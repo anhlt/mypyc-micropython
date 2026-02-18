@@ -31,7 +31,10 @@ from .ir import (
     MethodIR,
     ModuleIR,
     NameIR,
+    RTuple,
+    SetNewIR,
     TempIR,
+    TupleNewIR,
     ValueIR,
 )
 
@@ -97,6 +100,15 @@ C_RESERVED_WORDS = {
     "_Bool",
     "_Complex",
     "_Imaginary",
+}
+
+VOID_RETURNING_METHODS = {
+    "add",
+    "append",
+    "clear",
+    "discard",
+    "remove",
+    "update",
 }
 
 
@@ -212,6 +224,13 @@ class TypedPythonTranslator:
         self._current_class: ClassIR | None = None
         self._known_classes: dict[str, ClassIR] = {}
         self._struct_code: list[str] = []
+
+        self._rtuple_types: dict[str, RTuple] = {}
+        self._used_rtuples: set[RTuple] = set()
+
+        self._list_vars: set[str] = set()
+        self._uses_list_opt = False
+        self._uses_tuple_opt = False
 
     def translate_source(self, source: str) -> str:
         tree = ast.parse(source)
@@ -945,6 +964,8 @@ class TypedPythonTranslator:
 
     def _translate_function(self, node: ast.FunctionDef) -> None:
         self._var_types = {}
+        self._list_vars = set()
+        self._rtuple_types = {}
 
         func_name = node.name
         c_func_name = f"{self.c_name}_{sanitize_name(func_name)}"
@@ -958,6 +979,8 @@ class TypedPythonTranslator:
             c_type = self._annotation_to_c_type(arg.annotation) if arg.annotation else "mp_obj_t"
             arg_types.append(c_type)
             self._var_types[arg.arg] = c_type
+            if arg.annotation and self._is_list_annotation(arg.annotation):
+                self._list_vars.add(arg.arg)
 
         return_type = self._annotation_to_c_type(node.returns) if node.returns else "mp_obj_t"
 
@@ -1045,14 +1068,25 @@ class TypedPythonTranslator:
                 "None": "void",
                 "list": "mp_obj_t",
                 "dict": "mp_obj_t",
+                "tuple": "mp_obj_t",
+                "set": "mp_obj_t",
             }
             return type_map.get(annotation.id, "mp_obj_t")
         elif isinstance(annotation, ast.Subscript):
-            # Handle generic types like list[int], dict[str, int], etc.
             if isinstance(annotation.value, ast.Name):
-                if annotation.value.id in ("list", "dict"):
-                    return "mp_obj_t"  # All lists/dicts are boxed as mp_obj_t
+                if annotation.value.id == "tuple":
+                    rtuple = RTuple.from_annotation(annotation)
+                    if rtuple is not None:
+                        self._used_rtuples.add(rtuple)
+                        return rtuple.get_c_struct_name()
+                if annotation.value.id in ("list", "dict", "tuple", "set"):
+                    return "mp_obj_t"
         return "mp_obj_t"
+
+    def _try_parse_rtuple(self, annotation) -> RTuple | None:
+        if isinstance(annotation, ast.Subscript):
+            return RTuple.from_annotation(annotation)
+        return None
 
     def _translate_statement(self, stmt, return_type: str, locals_: list[str]) -> list[str]:
         if isinstance(stmt, ast.Return):
@@ -1099,9 +1133,25 @@ class TypedPythonTranslator:
             return ["    return mp_const_none;"]
 
         lines = self._flush_ir_prelude()
+
+        if isinstance(stmt.value, ast.Name) and stmt.value.id in self._rtuple_types:
+            var_name = stmt.value.id
+            rtuple = self._rtuple_types[var_name]
+            c_var_name = sanitize_name(var_name)
+            box_expr = self._box_rtuple(c_var_name, rtuple)
+            lines.append(f"    return {box_expr};")
+            return lines
+
         expr, expr_type = self._translate_expr(stmt.value, locals_)
         more_lines = self._flush_ir_prelude()
         lines.extend(more_lines)
+
+        if self._is_rtuple_type(expr_type):
+            rtuple = self._get_rtuple_for_type(expr_type)
+            if rtuple:
+                box_expr = self._box_rtuple(expr, rtuple)
+                lines.append(f"    return {box_expr};")
+                return lines
 
         if expr_type == "mp_obj_t" or return_type == "mp_obj_t":
             lines.append(f"    return {expr};")
@@ -1114,6 +1164,31 @@ class TypedPythonTranslator:
         else:
             lines.append(f"    return {expr};")
         return lines
+
+    def _is_rtuple_type(self, type_str: str) -> bool:
+        return type_str.startswith("rtuple_") and type_str.endswith("_t")
+
+    def _get_rtuple_for_type(self, type_str: str) -> RTuple | None:
+        for rtuple in self._used_rtuples:
+            if rtuple.get_c_struct_name() == type_str:
+                return rtuple
+        return None
+
+    def _box_rtuple(self, var_name: str, rtuple: RTuple) -> str:
+        field_boxes: list[str] = []
+        for i, ct in enumerate(rtuple.element_types):
+            field_access = f"{var_name}.f{i}"
+            if ct == CType.MP_INT_T:
+                field_boxes.append(f"mp_obj_new_int({field_access})")
+            elif ct == CType.MP_FLOAT_T:
+                field_boxes.append(f"mp_obj_new_float({field_access})")
+            elif ct == CType.BOOL:
+                field_boxes.append(f"({field_access} ? mp_const_true : mp_const_false)")
+            else:
+                field_boxes.append(field_access)
+
+        items = ", ".join(field_boxes)
+        return f"mp_obj_new_tuple({rtuple.arity}, (mp_obj_t[]){{{items}}})"
 
     def _translate_if(self, stmt: ast.If, return_type: str, locals_: list[str]) -> list[str]:
         cond, _ = self._translate_expr(stmt.test, locals_)
@@ -1365,6 +1440,9 @@ class TypedPythonTranslator:
         if isinstance(target, ast.Subscript):
             return self._translate_subscript_assign(target, stmt.value, locals_)
 
+        if isinstance(target, ast.Tuple):
+            return self._translate_tuple_unpack(target, stmt.value, locals_)
+
         if not isinstance(target, ast.Name):
             return []
 
@@ -1380,6 +1458,37 @@ class TypedPythonTranslator:
             self._var_types[var_name] = expr_type
             return lines + [f"    {expr_type} {c_var_name} = {expr};"]
         return lines + [f"    {c_var_name} = {expr};"]
+
+    def _translate_tuple_unpack(self, target: ast.Tuple, value, locals_: list[str]) -> list[str]:
+        lines = self._flush_ir_prelude()
+        tuple_expr, _ = self._translate_expr(value, locals_)
+        lines.extend(self._flush_ir_prelude())
+
+        tuple_temp = self._fresh_temp()
+        lines.append(f"    mp_obj_t {tuple_temp} = {tuple_expr};")
+
+        for i, elt in enumerate(target.elts):
+            if isinstance(elt, ast.Name):
+                var_name = elt.id
+                c_var_name = sanitize_name(var_name)
+                item_expr = f"mp_obj_subscr({tuple_temp}, mp_obj_new_int({i}), MP_OBJ_SENTINEL)"
+
+                if var_name not in locals_:
+                    locals_.append(var_name)
+                    self._var_types[var_name] = "mp_obj_t"
+                    lines.append(f"    mp_obj_t {c_var_name} = {item_expr};")
+                else:
+                    var_type = self._var_types.get(var_name, "mp_obj_t")
+                    if var_type == "mp_int_t":
+                        lines.append(f"    {c_var_name} = mp_obj_get_int({item_expr});")
+                    elif var_type == "mp_float_t":
+                        lines.append(f"    {c_var_name} = mp_obj_float_get({item_expr});")
+                    elif var_type == "bool":
+                        lines.append(f"    {c_var_name} = mp_obj_is_true({item_expr});")
+                    else:
+                        lines.append(f"    {c_var_name} = {item_expr};")
+
+        return lines
 
     def _translate_subscript_assign(
         self, target: ast.Subscript, value, locals_: list[str]
@@ -1401,6 +1510,37 @@ class TypedPythonTranslator:
 
         var_name = stmt.target.id
         c_var_name = sanitize_name(var_name)
+
+        rtuple = self._try_parse_rtuple(stmt.annotation)
+        if rtuple is not None:
+            self._rtuple_types[var_name] = rtuple
+            self._used_rtuples.add(rtuple)
+            c_type = rtuple.get_c_struct_name()
+
+            if stmt.value is not None:
+                lines = self._flush_ir_prelude()
+                rtuple_init = self._translate_rtuple_init(stmt.value, rtuple, locals_)
+                if rtuple_init is not None:
+                    locals_.append(var_name)
+                    self._var_types[var_name] = c_type
+                    lines.append(f"    {c_type} {c_var_name} = {rtuple_init};")
+                    return lines
+
+                unbox_lines = self._translate_rtuple_unbox(
+                    stmt.value, rtuple, c_var_name, c_type, locals_
+                )
+                if unbox_lines:
+                    locals_.append(var_name)
+                    self._var_types[var_name] = c_type
+                    return lines + unbox_lines
+
+            locals_.append(var_name)
+            self._var_types[var_name] = c_type
+            return [f"    {c_type} {c_var_name};"]
+
+        if self._is_list_annotation(stmt.annotation):
+            self._list_vars.add(var_name)
+
         c_type = self._annotation_to_c_type(stmt.annotation) if stmt.annotation else "mp_int_t"
 
         if stmt.value is not None:
@@ -1417,6 +1557,84 @@ class TypedPythonTranslator:
             locals_.append(var_name)
             self._var_types[var_name] = c_type
             return [f"    {c_type} {c_var_name};"]
+
+    def _is_list_annotation(self, annotation) -> bool:
+        if isinstance(annotation, ast.Name) and annotation.id == "list":
+            return True
+        if isinstance(annotation, ast.Subscript):
+            if isinstance(annotation.value, ast.Name) and annotation.value.id == "list":
+                return True
+        return False
+
+    def _get_constant_index(self, node: ast.expr) -> int | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, int):
+            return node.value
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            if isinstance(node.operand, ast.Constant) and isinstance(node.operand.value, int):
+                return -node.operand.value
+        return None
+
+    def _translate_rtuple_init(
+        self, value: ast.expr, rtuple: RTuple, locals_: list[str]
+    ) -> str | None:
+        if not isinstance(value, ast.Tuple):
+            return None
+
+        if len(value.elts) != rtuple.arity:
+            return None
+
+        field_values: list[str] = []
+        for i, (elt, expected_type) in enumerate(zip(value.elts, rtuple.element_types)):
+            expr, expr_type = self._translate_expr(elt, locals_)
+
+            if expected_type == CType.MP_INT_T:
+                if expr_type == "mp_obj_t":
+                    expr = f"mp_obj_get_int({expr})"
+            elif expected_type == CType.MP_FLOAT_T:
+                if expr_type == "mp_obj_t":
+                    expr = f"mp_obj_get_float({expr})"
+                elif expr_type == "mp_int_t":
+                    expr = f"(mp_float_t){expr}"
+            elif expected_type == CType.BOOL:
+                if expr_type == "mp_obj_t":
+                    expr = f"mp_obj_is_true({expr})"
+
+            field_values.append(expr)
+
+        return "{" + ", ".join(field_values) + "}"
+
+    def _translate_rtuple_unbox(
+        self, value: ast.expr, rtuple: RTuple, c_var_name: str, c_type: str, locals_: list[str]
+    ) -> list[str]:
+        """Unbox mp_obj_t tuple into RTuple struct fields.
+
+        Uses direct tuple items[] access for efficiency instead of mp_obj_subscr().
+        This reduces function calls from 2N+1 to N+1 for N-element tuples.
+        """
+        lines: list[str] = []
+        expr, _ = self._translate_expr(value, locals_)
+        more_lines = self._flush_ir_prelude()
+        lines.extend(more_lines)
+
+        tmp = self._fresh_temp()
+        tup_ptr = self._fresh_temp()
+        lines.append(f"    mp_obj_t {tmp} = {expr};")
+        lines.append(f"    mp_obj_tuple_t *{tup_ptr} = (mp_obj_tuple_t *)MP_OBJ_TO_PTR({tmp});")
+        lines.append(f"    {c_type} {c_var_name};")
+
+        for i, expected_type in enumerate(rtuple.element_types):
+            item_expr = f"{tup_ptr}->items[{i}]"
+            if expected_type == CType.MP_INT_T:
+                unbox_expr = f"mp_obj_get_int({item_expr})"
+            elif expected_type == CType.MP_FLOAT_T:
+                unbox_expr = f"mp_obj_get_float({item_expr})"
+            elif expected_type == CType.BOOL:
+                unbox_expr = f"mp_obj_is_true({item_expr})"
+            else:
+                unbox_expr = item_expr
+            lines.append(f"    {c_var_name}.f{i} = {unbox_expr};")
+
+        return lines
 
     def _translate_aug_assign(self, stmt: ast.AugAssign, locals_: list[str]) -> list[str]:
         if not isinstance(stmt.target, ast.Name):
@@ -1466,6 +1684,10 @@ class TypedPythonTranslator:
             return f"(({test}) ? ({body}) : ({orelse}))", body_type
         elif isinstance(expr, ast.List):
             return self._translate_list(expr, locals_)
+        elif isinstance(expr, ast.Tuple):
+            return self._translate_tuple(expr, locals_)
+        elif isinstance(expr, ast.Set):
+            return self._translate_set(expr, locals_)
         elif isinstance(expr, ast.Dict):
             return self._translate_dict(expr, locals_)
         elif isinstance(expr, ast.Subscript):
@@ -1485,6 +1707,36 @@ class TypedPythonTranslator:
         temp_name = self._fresh_temp()
         result = TempIR(ir_type=IRType.OBJ, name=temp_name)
         self._pending_prelude.append(ListNewIR(result=result, items=items))
+        return temp_name, "mp_obj_t"
+
+    def _translate_tuple(self, expr: ast.Tuple, locals_: list[str]) -> tuple[str, str]:
+        if not expr.elts:
+            return "mp_const_empty_tuple", "mp_obj_t"
+
+        items: list[ValueIR] = []
+        for elt in expr.elts:
+            item_expr, item_type = self._translate_expr(elt, locals_)
+            ir_type = IRType.from_c_type_str(item_type)
+            items.append(NameIR(ir_type=ir_type, py_name="", c_name=item_expr))
+
+        temp_name = self._fresh_temp()
+        result = TempIR(ir_type=IRType.OBJ, name=temp_name)
+        self._pending_prelude.append(TupleNewIR(result=result, items=items))
+        return temp_name, "mp_obj_t"
+
+    def _translate_set(self, expr: ast.Set, locals_: list[str]) -> tuple[str, str]:
+        if not expr.elts:
+            return "mp_obj_new_set(0, NULL)", "mp_obj_t"
+
+        items: list[ValueIR] = []
+        for elt in expr.elts:
+            item_expr, item_type = self._translate_expr(elt, locals_)
+            ir_type = IRType.from_c_type_str(item_type)
+            items.append(NameIR(ir_type=ir_type, py_name="", c_name=item_expr))
+
+        temp_name = self._fresh_temp()
+        result = TempIR(ir_type=IRType.OBJ, name=temp_name)
+        self._pending_prelude.append(SetNewIR(result=result, items=items))
         return temp_name, "mp_obj_t"
 
     def _translate_dict(self, expr: ast.Dict, locals_: list[str]) -> tuple[str, str]:
@@ -1521,10 +1773,62 @@ class TypedPythonTranslator:
         return expr
 
     def _translate_subscript(self, expr: ast.Subscript, locals_: list[str]) -> tuple[str, str]:
+        if isinstance(expr.value, ast.Name):
+            var_name = expr.value.id
+            if var_name in self._rtuple_types:
+                rtuple = self._rtuple_types[var_name]
+                if isinstance(expr.slice, ast.Constant) and isinstance(expr.slice.value, int):
+                    idx = expr.slice.value
+                    if 0 <= idx < rtuple.arity:
+                        c_var_name = sanitize_name(var_name)
+                        element_type = rtuple.element_types[idx]
+                        return f"{c_var_name}.f{idx}", element_type.to_c_type_str()
+
+            if var_name in self._list_vars and not isinstance(expr.slice, ast.Slice):
+                c_var_name = sanitize_name(var_name)
+                self._uses_list_opt = True
+
+                const_idx = self._get_constant_index(expr.slice)
+                if const_idx is not None:
+                    if const_idx >= 0:
+                        return f"mp_list_get_fast({c_var_name}, {const_idx})", "mp_obj_t"
+                    else:
+                        return f"mp_list_get_neg({c_var_name}, {const_idx})", "mp_obj_t"
+
+                slice_expr, slice_type = self._translate_expr(expr.slice, locals_)
+                if slice_type == "mp_int_t":
+                    return f"mp_list_get_int({c_var_name}, {slice_expr})", "mp_obj_t"
+
         value_expr, value_type = self._translate_expr(expr.value, locals_)
+
+        if isinstance(expr.slice, ast.Slice):
+            slice_c = self._translate_slice(expr.slice, locals_)
+            return f"mp_obj_subscr({value_expr}, {slice_c}, MP_OBJ_SENTINEL)", "mp_obj_t"
+
         slice_expr, slice_type = self._translate_expr(expr.slice, locals_)
         boxed_key = self._box_value(slice_expr, slice_type)
         return f"mp_obj_subscr({value_expr}, {boxed_key}, MP_OBJ_SENTINEL)", "mp_obj_t"
+
+    def _translate_slice(self, slice_node: ast.Slice, locals_: list[str]) -> str:
+        if slice_node.lower is not None:
+            lower_expr, lower_type = self._translate_expr(slice_node.lower, locals_)
+            lower = self._box_value(lower_expr, lower_type)
+        else:
+            lower = "mp_const_none"
+
+        if slice_node.upper is not None:
+            upper_expr, upper_type = self._translate_expr(slice_node.upper, locals_)
+            upper = self._box_value(upper_expr, upper_type)
+        else:
+            upper = "mp_const_none"
+
+        if slice_node.step is not None:
+            step_expr, step_type = self._translate_expr(slice_node.step, locals_)
+            step = self._box_value(step_expr, step_type)
+        else:
+            step = "mp_const_none"
+
+        return f"mp_obj_new_slice({lower}, {upper}, {step})"
 
     def _translate_constant(self, expr: ast.Constant) -> tuple[str, str]:
         val = expr.value
@@ -1557,6 +1861,32 @@ class TypedPythonTranslator:
         left, left_type = self._translate_expr(expr.left, locals_)
         right, right_type = self._translate_expr(expr.right, locals_)
 
+        is_left_container = isinstance(expr.left, (ast.List, ast.Tuple, ast.Set))
+        is_right_container = isinstance(expr.right, (ast.List, ast.Tuple, ast.Set))
+        is_left_container_name = (
+            isinstance(expr.left, ast.Name)
+            and self._var_types.get(expr.left.id) == "mp_obj_t"
+            and expr.left.id in self._var_types
+        )
+
+        mp_binary_op_map = {
+            ast.Add: "MP_BINARY_OP_ADD",
+            ast.Sub: "MP_BINARY_OP_SUBTRACT",
+            ast.Mult: "MP_BINARY_OP_MULTIPLY",
+        }
+
+        if (is_left_container or is_left_container_name) and isinstance(
+            expr.op, (ast.Add, ast.Mult)
+        ):
+            mp_op = mp_binary_op_map[type(expr.op)]
+            boxed_right = self._box_value(right, right_type)
+            return f"mp_binary_op({mp_op}, {left}, {boxed_right})", "mp_obj_t"
+
+        if is_right_container and isinstance(expr.op, ast.Mult):
+            mp_op = mp_binary_op_map[type(expr.op)]
+            boxed_left = self._box_value(left, left_type)
+            return f"mp_binary_op({mp_op}, {boxed_left}, {right})", "mp_obj_t"
+
         op_map = {
             ast.Add: "+",
             ast.Sub: "-",
@@ -1573,7 +1903,6 @@ class TypedPythonTranslator:
 
         c_op = op_map.get(type(expr.op), "+")
 
-        # Unbox mp_obj_t operands for native C arithmetic
         if left_type == "mp_obj_t" or right_type == "mp_obj_t":
             target = (
                 right_type
@@ -1667,7 +1996,9 @@ class TypedPythonTranslator:
         if func_name in self._known_classes:
             return self._translate_class_instantiation(expr, func_name, locals_)
 
-        args = [self._translate_expr(arg, locals_)[0] for arg in expr.args]
+        args_with_types = [self._translate_expr(arg, locals_) for arg in expr.args]
+        args = [a[0] for a in args_with_types]
+        arg_types = [a[1] for a in args_with_types]
 
         builtin_map = {
             "abs": lambda a: (f"(({a[0]}) < 0 ? -({a[0]}) : ({a[0]}))", "mp_int_t"),
@@ -1678,14 +2009,54 @@ class TypedPythonTranslator:
         if func_name in builtin_map and args:
             return builtin_map[func_name](args)
 
-        if func_name == "len" and len(args) == 1:
+        if func_name == "len" and len(args) == 1 and len(expr.args) == 1:
+            arg_node = expr.args[0]
+            if isinstance(arg_node, ast.Name) and arg_node.id in self._list_vars:
+                c_var_name = sanitize_name(arg_node.id)
+                self._uses_list_opt = True
+                return f"(mp_int_t)mp_list_len_fast({c_var_name})", "mp_int_t"
             return f"mp_obj_get_int(mp_obj_len({args[0]}))", "mp_int_t"
 
         if func_name == "range":
-            return "/* range() should be used in for loop */", "mp_obj_t"
+            boxed_args = [self._box_value(a, t) for a, t in zip(args, arg_types)]
+            if len(boxed_args) == 1:
+                return (
+                    f"mp_call_function_1(MP_OBJ_FROM_PTR(&mp_type_range), {boxed_args[0]})",
+                    "mp_obj_t",
+                )
+            elif len(boxed_args) == 2:
+                return (
+                    f"mp_call_function_2(MP_OBJ_FROM_PTR(&mp_type_range), {boxed_args[0]}, {boxed_args[1]})",
+                    "mp_obj_t",
+                )
+            elif len(boxed_args) == 3:
+                return (
+                    f"mp_call_function_n_kw(MP_OBJ_FROM_PTR(&mp_type_range), 3, 0, "
+                    f"(const mp_obj_t[]){{{boxed_args[0]}, {boxed_args[1]}, {boxed_args[2]}}})",
+                    "mp_obj_t",
+                )
+            return "/* unsupported range() call */", "mp_obj_t"
 
         if func_name == "list" and len(args) == 0:
             return "mp_obj_new_list(0, NULL)", "mp_obj_t"
+
+        if func_name == "tuple" and len(args) == 0:
+            return "mp_const_empty_tuple", "mp_obj_t"
+
+        if func_name == "tuple" and len(args) == 1:
+            return (
+                f"mp_call_function_1(MP_OBJ_FROM_PTR(&mp_type_tuple), {args[0]})",
+                "mp_obj_t",
+            )
+
+        if func_name == "set" and len(args) == 0:
+            return "mp_obj_new_set(0, NULL)", "mp_obj_t"
+
+        if func_name == "set" and len(args) == 1:
+            return (
+                f"mp_call_function_1(MP_OBJ_FROM_PTR(&mp_type_set), {args[0]})",
+                "mp_obj_t",
+            )
 
         if func_name == "dict" and len(args) == 0:
             return "mp_obj_new_dict(0)", "mp_obj_t"
@@ -1730,14 +2101,19 @@ class TypedPythonTranslator:
         method_name = expr.func.attr
         args = [self._translate_expr(arg, locals_) for arg in expr.args]
 
-        # Build IR args: pre-box each argument and wrap as OBJ-typed NameIR
-        # so ContainerEmitter passes them through without double-boxing.
         ir_args: list[ValueIR] = []
         for arg_expr, arg_type in args:
             boxed = self._box_value(arg_expr, arg_type)
             ir_args.append(NameIR(ir_type=IRType.OBJ, py_name="", c_name=boxed))
 
         receiver = NameIR(ir_type=IRType.OBJ, py_name="", c_name=obj_expr)
+
+        if method_name in VOID_RETURNING_METHODS:
+            self._pending_prelude.append(
+                MethodCallIR(result=None, receiver=receiver, method=method_name, args=ir_args)
+            )
+            return "mp_const_none", "mp_obj_t"
+
         temp_name = self._fresh_temp()
         result = TempIR(ir_type=IRType.OBJ, name=temp_name)
 
@@ -1763,6 +2139,11 @@ class TypedPythonTranslator:
             lines.extend(self._forward_decls)
             lines.append("")
 
+        if self._used_rtuples:
+            for rtuple in sorted(self._used_rtuples, key=lambda r: r.get_c_struct_name()):
+                lines.append(rtuple.get_c_struct_typedef())
+            lines.append("")
+
         lines.extend(
             [
                 "#if MICROPY_FLOAT_IMPL != MICROPY_FLOAT_IMPL_NONE",
@@ -1776,6 +2157,10 @@ class TypedPythonTranslator:
                 "",
             ]
         )
+
+        if self._uses_list_opt:
+            lines.extend(self._generate_list_helpers())
+            lines.append("")
 
         if self._struct_code:
             lines.extend(self._struct_code)
@@ -1820,6 +2205,33 @@ class TypedPythonTranslator:
         )
 
         return "\n".join(lines)
+
+    def _generate_list_helpers(self) -> list[str]:
+        return [
+            '#include "py/objlist.h"',
+            "",
+            "static inline mp_obj_t mp_list_get_fast(mp_obj_t list, size_t index) {",
+            "    mp_obj_list_t *self = MP_OBJ_TO_PTR(list);",
+            "    return self->items[index];",
+            "}",
+            "",
+            "static inline mp_obj_t mp_list_get_neg(mp_obj_t list, mp_int_t index) {",
+            "    mp_obj_list_t *self = MP_OBJ_TO_PTR(list);",
+            "    return self->items[self->len + index];",
+            "}",
+            "",
+            "static inline mp_obj_t mp_list_get_int(mp_obj_t list, mp_int_t index) {",
+            "    mp_obj_list_t *self = MP_OBJ_TO_PTR(list);",
+            "    if (index < 0) {",
+            "        index += self->len;",
+            "    }",
+            "    return self->items[index];",
+            "}",
+            "",
+            "static inline size_t mp_list_len_fast(mp_obj_t list) {",
+            "    return ((mp_obj_list_t *)MP_OBJ_TO_PTR(list))->len;",
+            "}",
+        ]
 
 
 def compile_source(source: str, module_name: str = "mymodule") -> str:
