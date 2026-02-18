@@ -24,18 +24,24 @@ A 6-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 - **Operators**: Arithmetic, comparison, bitwise, logical, augmented assignment, ternary
 - **Control flow**: `if`/`elif`/`else`, `while` loops, `for` loops (range, list, dict, generic
   iterable), `break`, `continue`
-- **Lists**: Literals, indexing, assignment, `append()`, `pop()`, `len()`, iteration
+- **Lists**: Literals, indexing, assignment, `append()`, `pop()`, `len()`, iteration, slicing,
+  concatenation, repetition
 - **Dicts**: Literals, indexing, assignment, `get()`, `keys()`, `values()`, `items()`, `copy()`,
   `clear()`, `setdefault()`, `pop()`, `popitem()`, `update()`, `in`/`not in`, `dict(d)` copy
+- **Tuples**: Literals, indexing, slicing, unpacking, concatenation, repetition, `tuple()`,
+  `tuple(iterable)`, iteration
+- **Sets**: Literals, `set()`, `set(iterable)`, `add()`, `remove()`, `discard()`, `update()`,
+  `clear()`, `copy()`, `pop()`, `in` operator, iteration
 - **Built-ins**: `abs()`, `int()`, `float()`, `len()`, `range()` (1/2/3 args), `list()`, `dict()`,
   `print()`
 - **Classes**: Class definitions with typed fields, `__init__`, instance methods, `@dataclass`,
   single inheritance with vtable-based virtual dispatch, `__eq__`, `__len__`, `__getitem__`,
   `__setitem__`, class fields with `list`/`dict` types, augmented assignment on fields
-- **IR pipeline**: Expression-level IR nodes, ContainerEmitter for list/dict, IR prelude pattern,
-  RTuple optimization for fixed-length tuples
+- **IR pipeline**: Full two-phase architecture (IRBuilder → Emitters), StmtIR/ExprIR/ValueIR
+  hierarchies, prelude pattern for side effects, BinOp type inference, RTuple optimization
 - **ESP32**: All 13 compiled modules verified on real ESP32-C6 hardware (107 device tests pass)
 - **Performance**: RTuple internal ops (47x speedup), list[tuple] (6.7x speedup), benchmarks suite
+- **Testing**: 331 tests (278 compiler + 53 IR builder), 37 C runtime tests
 - **Other**: Local variables (typed and inferred), string literals, `None`, `True`/`False`
 
 ### What's Next ❌
@@ -70,9 +76,10 @@ Phase 4: Exception Handling     ░░░░░░░░░░░░░░░  T
 Phase 5: Advanced Features      ░░░░░░░░░░░░░░░  TODO
   closures │ generators │ list comprehensions │ map/filter
 
-Phase 6: Integration & Polish   ████████░░░░░░░  ~55% done
+Phase 6: Integration & Polish   ███████████░░░░  ~70% done
   ESP32 modules ✅ (13 modules on ESP32-C6) │ RTuple optimization ✅ (47x speedup)
-  list access optimization ✅ │ benchmarks ✅ │ error messages │ docs
+  list access optimization ✅ │ benchmarks ✅ │ Full IR pipeline ✅
+  331 tests ✅ (278 compiler + 53 IR builder) │ error messages │ docs
 ```
 
 ---
