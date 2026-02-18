@@ -1,68 +1,83 @@
 # IR Design — mypyc-micropython
 
-This document describes the Intermediate Representation (IR) system used in the mypyc-micropython compiler. The IR provides a structured, object-oriented model of Python constructs that simplifies the generation of complex MicroPython C extension modules, particularly for classes and inheritance.
+This document describes the Intermediate Representation (IR) system used in the mypyc-micropython compiler. The IR provides a structured, typed model of Python constructs that enables optimized generation of MicroPython C extension modules.
 
 ## Overview
 
-The mypyc-micropython compiler employs a dual-track compilation strategy. While simple functions and primitive operations are translated directly from the Python Abstract Syntax Tree (AST) to C strings, more complex constructs like classes require a dedicated Intermediate Representation.
+The mypyc-micropython compiler uses a **full IR pipeline** for all compilation. Every Python construct — functions, classes, statements, and expressions — is first translated to IR, then emitted as C code. This two-phase approach cleanly separates semantic analysis from code generation.
 
-The IR layer serves as a semantic bridge, decoupling the structural analysis of Python code (parsing types, resolving inheritance, computing vtables) from the syntactical generation of MicroPython C code. This design is heavily inspired by **mypyc**, the compiler used by mypy to compile Python to CPython C extensions, but simplified to target MicroPython's leaner runtime.
+The IR layer serves as a semantic bridge, decoupling the structural analysis of Python code (parsing types, resolving inheritance, computing vtables, tracking variable types) from the syntactical generation of MicroPython C code. This design is heavily inspired by **mypyc**, the compiler used by mypy to compile Python to CPython C extensions, but simplified to target MicroPython's leaner runtime.
 
-## Compilation Pipelines
+## Compilation Pipeline
 
-### High-Level Pipeline
-The following diagram shows where the IR sits within the overall compilation flow:
+### Full IR Pipeline
+All Python code flows through the IR layer:
 
 ```mermaid
 graph LR
     A[Python Source] --> B[ast.parse]
     B --> C[AST]
-    C --> D[TypedPythonTranslator]
+    C --> D[IRBuilder]
     subgraph "IR Layer"
-    D --> E[IR Nodes]
-    E --> F[ClassIR / FieldIR / MethodIR]
+    D --> E[ModuleIR]
+    E --> F[FuncIR / ClassIR]
+    F --> G[StmtIR / ExprIR]
     end
-    F --> G[ClassEmitter]
-    G --> H[C Code]
+    G --> H[Emitters]
+    H --> I[C Code]
 ```
 
-### Dual Compilation Approach
-We use different approaches based on the complexity of the Python construct:
+### Key Components
+
+| Component | File | Responsibility |
+|-----------|------|----------------|
+| **IRBuilder** | `ir_builder.py` | AST → IR translation |
+| **FunctionEmitter** | `function_emitter.py` | FuncIR/MethodIR → C functions |
+| **ClassEmitter** | `class_emitter.py` | ClassIR → C structs, vtables |
+| **ModuleEmitter** | `module_emitter.py` | ModuleIR → complete C file |
+| **ContainerEmitter** | `container_emitter.py` | Container operations → C |
+
+### Module Compilation Flow
 
 ```mermaid
-graph TD
-    subgraph "Direct AST-to-C (Lists, Dicts, Functions)"
-    AST1[AST Node] --> Walk[AST Walker]
-    Walk --> Emit[Direct String Emission]
-    Emit --> C1[C Code]
-    end
+sequenceDiagram
+    participant AST as AST Module
+    participant B as IRBuilder
+    participant M as ModuleIR
+    participant ME as ModuleEmitter
+    participant FE as FunctionEmitter
+    participant CE as ClassEmitter
+    participant C as C Code
 
-    subgraph "IR-Based (Classes)"
-    AST2[AST ClassDef] --> Parse[IR Parser]
-    Parse --> IR[ClassIR / MethodIR]
-    IR --> Layout[Layout Computation]
-    Layout --> CEmitter[ClassEmitter]
-    CEmitter --> C2[C Code]
-    end
+    AST->>B: build(tree)
+    B->>M: Create ModuleIR
+    B->>M: Add FuncIR for each function
+    B->>M: Add ClassIR for each class
+    M->>ME: emit()
+    ME->>FE: emit() for each FuncIR
+    ME->>CE: emit() for each ClassIR
+    FE->>C: Function C code
+    CE->>C: Class C code
+    ME->>C: Module registration
 ```
 
 ### Class Compilation Detail
-The transformation of a Python class into MicroPython C code involves several distinct stages within the IR layer:
+The transformation of a Python class into MicroPython C code involves several distinct stages:
 
 ```mermaid
 sequenceDiagram
     participant AST as AST ClassDef
-    participant T as TypedPythonTranslator
+    participant B as IRBuilder
     participant IR as ClassIR / MethodIR
     participant E as ClassEmitter
     participant C as C Sections
 
-    AST->>T: _translate_class()
-    T->>T: _parse_class_body()
-    T->>T: _parse_method()
-    T->>IR: Populate ClassIR
+    AST->>B: _build_class()
+    B->>B: _build_class_body()
+    B->>B: _build_method()
+    B->>IR: Populate ClassIR
     IR->>IR: compute_layout()
-    T->>E: _emit_class_code()
+    B->>E: ClassEmitter(class_ir)
     E->>C: emit_forward_declarations()
     E->>C: emit_struct()
     E->>C: emit_field_descriptors()
@@ -75,6 +90,8 @@ sequenceDiagram
 ## IR Hierarchy
 
 The IR is implemented as a set of Python dataclasses located in `src/mypyc_micropython/ir.py`.
+
+### Module and Definition IR
 
 ```mermaid
 classDiagram
@@ -115,7 +132,9 @@ classDiagram
         +str name
         +list params
         +CType return_type
-        +dict locals_
+        +dict var_types
+        +dict rtuple_types
+        +list body
     }
     class CType {
         <<enumeration>>
@@ -133,6 +152,191 @@ classDiagram
     FieldIR ..> CType
     MethodIR ..> CType
     FuncIR ..> CType
+```
+
+### Statement IR
+
+Statement IR nodes represent control flow and assignments:
+
+```mermaid
+classDiagram
+    class StmtIR {
+        <<abstract>>
+    }
+    class ReturnIR {
+        +ValueIR value
+        +list prelude
+    }
+    class IfIR {
+        +ValueIR test
+        +list~StmtIR~ body
+        +list~StmtIR~ orelse
+        +list test_prelude
+    }
+    class WhileIR {
+        +ValueIR test
+        +list~StmtIR~ body
+        +list test_prelude
+    }
+    class ForRangeIR {
+        +str loop_var
+        +ValueIR start
+        +ValueIR end
+        +ValueIR step
+        +list~StmtIR~ body
+    }
+    class ForIterIR {
+        +str loop_var
+        +ValueIR iterable
+        +list~StmtIR~ body
+    }
+    class AssignIR {
+        +str target
+        +ValueIR value
+        +list prelude
+    }
+    class AnnAssignIR {
+        +str target
+        +str c_type
+        +ValueIR value
+        +list prelude
+        +bool is_new_var
+    }
+    class AugAssignIR {
+        +str target
+        +str op
+        +ValueIR value
+        +list prelude
+    }
+
+    StmtIR <|-- ReturnIR
+    StmtIR <|-- IfIR
+    StmtIR <|-- WhileIR
+    StmtIR <|-- ForRangeIR
+    StmtIR <|-- ForIterIR
+    StmtIR <|-- AssignIR
+    StmtIR <|-- AnnAssignIR
+    StmtIR <|-- AugAssignIR
+```
+
+### Expression/Value IR
+
+Value IR nodes represent expression results with type information:
+
+```mermaid
+classDiagram
+    class ValueIR {
+        +IRType ir_type
+    }
+    class ConstIR {
+        +int|float|str|bool|None value
+    }
+    class NameIR {
+        +str py_name
+        +str c_name
+    }
+    class TempIR {
+        +str name
+    }
+    class BinOpIR {
+        +ValueIR left
+        +str op
+        +ValueIR right
+        +list left_prelude
+        +list right_prelude
+    }
+    class UnaryOpIR {
+        +str op
+        +ValueIR operand
+        +list prelude
+    }
+    class CompareIR {
+        +ValueIR left
+        +list ops
+        +list comparators
+    }
+    class CallIR {
+        +str func_name
+        +list args
+        +bool is_builtin
+    }
+    class SubscriptIR {
+        +ValueIR value
+        +ValueIR index
+        +bool is_rtuple
+        +int rtuple_index
+    }
+
+    ValueIR <|-- ConstIR
+    ValueIR <|-- NameIR
+    ValueIR <|-- TempIR
+    ValueIR <|-- BinOpIR
+    ValueIR <|-- UnaryOpIR
+    ValueIR <|-- CompareIR
+    ValueIR <|-- CallIR
+    ValueIR <|-- SubscriptIR
+```
+
+### IRType Enum
+
+The `IRType` enum tracks the semantic type of expression results:
+
+```python
+class IRType(Enum):
+    OBJ = "obj"      # mp_obj_t - boxed MicroPython object
+    INT = "int"      # mp_int_t - unboxed integer
+    FLOAT = "float"  # mp_float_t - unboxed float
+    BOOL = "bool"    # bool - C boolean
+```
+
+This is distinct from `CType` (which describes storage types). `IRType` guides the emitter in deciding whether to box/unbox values.
+
+## The Prelude Pattern
+
+A key design pattern in the IR is separating **what value an expression produces** from **what must happen first**. Every expression-building method in `IRBuilder` returns:
+
+```python
+tuple[ValueIR, list[InstrIR]]
+```
+
+The `ValueIR` is the result, and the `list[InstrIR]` is the "prelude" — instructions that must execute before the value is valid.
+
+### Example: Method Call
+
+For `result.append(i * i)`:
+
+```python
+# Returns:
+# - ValueIR: TempIR("_tmp1")  
+# - Prelude: [MethodCallIR(result="_tmp1", receiver=result, method="append", args=[BinOpIR(...)])]
+```
+
+The prelude pattern is essential for:
+1. **Temp variable management** — Complex expressions need intermediate storage
+2. **Side effect ordering** — Method calls must execute in order
+3. **Code generation** — Emitter emits prelude first, then uses the value
+
+### Instruction IR (InstrIR)
+
+Instructions are side-effecting operations in preludes:
+
+```python
+@dataclass
+class TupleNewIR(InstrIR):
+    result: TempIR
+    items: list[ValueIR]
+
+@dataclass
+class MethodCallIR(InstrIR):
+    result: TempIR | None
+    receiver: ValueIR
+    method: str
+    args: list[ValueIR]
+
+@dataclass
+class ListAppendIR(InstrIR):
+    list_var: ValueIR
+    item: ValueIR
 ```
 
 ## Data Structures
@@ -291,21 +495,70 @@ Virtual tables enable polymorphism. The IR constructs these tables using a "top-
 4. If a new virtual method is found, it is *appended* to the end of the list.
 5. This ensures that the vtable layout is compatible across the inheritance hierarchy; a child class always has the same methods at the same indices as its parent.
 
+### BinOp Type Inference
+
+The IR builder infers result types for binary operations to enable optimizations:
+
+```python
+def _build_binop(self, expr: ast.BinOp, locals_: list[str]) -> tuple[BinOpIR, list]:
+    left, left_prelude = self._build_expr(expr.left, locals_)
+    right, right_prelude = self._build_expr(expr.right, locals_)
+    
+    # Type inference logic:
+    if left_type == IRType.OBJ or right_type == IRType.OBJ:
+        # Key insight: subscript on list/dict returns mp_obj_t but contains int/float
+        if isinstance(left, SubscriptIR) or isinstance(right, SubscriptIR):
+            result_type = IRType.INT  # Subscript result is typically int
+        else:
+            result_type = IRType.OBJ  # Container operations (lst * n)
+    elif left_type == IRType.FLOAT or right_type == IRType.FLOAT:
+        result_type = IRType.FLOAT
+    else:
+        result_type = IRType.INT
+```
+
+This allows `lst[i] + 1` to generate native C addition instead of `mp_binary_op`.
+
+### RTuple Optimization
+
+RTuples (`tuple[int, int]`) use C structs instead of MicroPython tuples:
+
+```c
+// Generated struct
+typedef struct {
+    mp_int_t f0;
+    mp_int_t f1;
+} rtuple_int_int_t;
+
+// Direct initialization
+rtuple_int_int_t point = {10, 20};
+
+// Field access instead of mp_obj_subscr
+point.f0 + point.f1
+```
+
+When unboxing an RTuple from `mp_obj_t` (e.g., function return):
+
+```c
+mp_obj_tuple_t *tup = MP_OBJ_TO_PTR(_tmp1);
+rtuple_int_int_t point = {mp_obj_get_int(tup->items[0]), mp_obj_get_int(tup->items[1])};
+```
+
 ## Summary of IR Responsibilities
 
 | Responsibility | IR Node | Description |
 |----------------|---------|-------------|
-| **Semantic Parsing** | `TypedPythonTranslator` | Converting AST nodes into IR nodes and resolving types. |
+| **AST to IR** | `IRBuilder` | Converting AST nodes into IR nodes and resolving types. |
+| **Expression Building** | `ValueIR` / `ExprIR` | Typed expression results with preludes. |
+| **Statement Building** | `StmtIR` | Control flow and assignments. |
+| **Function Emission** | `FunctionEmitter` | FuncIR/MethodIR to C functions. |
 | **Inheritance Mapping** | `ModuleIR` | Linking classes together and determining definition order. |
 | **Layout Design** | `ClassIR` | Deciding where each field lives in the C struct. |
 | **VTable Management** | `ClassIR` / `MethodIR` | Assigning stable indices to virtual methods. |
 | **Dataclass Synthesis** | `DataclassInfo` | Defining the logic for auto-generated methods. |
-| **Code Generation** | `ClassEmitter` | Translating the high-level IR nodes into specific C strings. |
+| **Class Generation** | `ClassEmitter` | Translating ClassIR into C structs and methods. |
 
 ## Future Work
-
-- **ListIR and DictIR Extensions:**
-  We plan to extend the IR to cover container operations. Currently, `list[int]` is just `MP_OBJ_T`. With `ListIR`, we could track the element type and specialize operations. For example, `my_list[0]` could be translated to a direct array access if the compiler can prove the object is a specific compiled list type, potentially bypassing the `mp_obj_subscr` lookup.
 
 - **Transformation Passes:**
   The current IR is primarily a container for metadata. Future versions will include transformation passes that operate on the IR before code generation:
@@ -321,6 +574,4 @@ Virtual tables enable polymorphism. The IR constructs these tables using a "top-
 
 ## Conclusion
 
-The Intermediate Representation is a cornerstone of the mypyc-micropython project. It transforms the highly dynamic and flexible nature of Python classes into a rigid, predictable, and performant C structure. By following the "compile-time analysis for runtime speed" philosophy, the IR allows us to bring the power of typed Python to the most resource-constrained environments while maintaining the developer experience that Python is known for.
-
-
+The Intermediate Representation is a cornerstone of the mypyc-micropython project. It transforms the highly dynamic and flexible nature of Python into a rigid, predictable, and performant C structure. By following the "compile-time analysis for runtime speed" philosophy, the IR allows us to bring the power of typed Python to the most resource-constrained environments while maintaining the developer experience that Python is known for.

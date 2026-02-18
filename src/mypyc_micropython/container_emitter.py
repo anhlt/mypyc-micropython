@@ -13,7 +13,9 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from .ir import (
+    BinOpIR,
     BoxIR,
+    CompareIR,
     ConstIR,
     DictNewIR,
     GetItemIR,
@@ -22,10 +24,12 @@ from .ir import (
     ListNewIR,
     MethodCallIR,
     NameIR,
+    SelfAttrIR,
     SetItemIR,
     SetNewIR,
     TempIR,
     TupleNewIR,
+    UnaryOpIR,
     UnboxIR,
     ValueIR,
 )
@@ -254,6 +258,11 @@ class ContainerEmitter:
 
     def _emit_set_add(self, instr: MethodCallIR, receiver: str) -> list[str]:
         arg = self._box_value_ir(instr.args[0]) if instr.args else "mp_const_none"
+        if instr.result:
+            return [
+                f"    mp_obj_set_store({receiver}, {arg});",
+                f"    mp_obj_t {instr.result.name} = mp_const_none;",
+            ]
         return [f"    mp_obj_set_store({receiver}, {arg});"]
 
     def _emit_one_arg_method(self, instr: MethodCallIR, receiver: str) -> list[str]:
@@ -295,6 +304,23 @@ class ContainerEmitter:
             return value.c_name
         elif isinstance(value, ConstIR):
             return self._const_to_c(value)
+        elif isinstance(value, BinOpIR):
+            left = self._value_to_c(value.left)
+            right = self._value_to_c(value.right)
+            return f"({left} {value.op} {right})"
+        elif isinstance(value, UnaryOpIR):
+            operand = self._value_to_c(value.operand)
+            return f"({value.op}{operand})"
+        elif isinstance(value, CompareIR):
+            left = self._value_to_c(value.left)
+            parts = [f"({left}"]
+            for op, comp in zip(value.ops, value.comparators):
+                comp_c = self._value_to_c(comp)
+                parts.append(f" {op} {comp_c}")
+            parts.append(")")
+            return "".join(parts)
+        elif isinstance(value, SelfAttrIR):
+            return f"self->{value.attr_path}"
         return "/* unknown value */"
 
     def _const_to_c(self, const: ConstIR) -> str:

@@ -149,16 +149,19 @@ ruff check src/
 
 ## Architecture
 
-The compiler works by:
+The compiler uses a two-phase IR pipeline:
 
-1. Parsing Python source with `ast.parse()`
-2. Walking the AST to extract typed function definitions
-3. Translating each function to MicroPython C API calls
-4. Generating module registration boilerplate
+1. **Parsing**: Python source with `ast.parse()`
+2. **IR Building**: AST to typed IR (FuncIR, ClassIR, StmtIR, ExprIR)
+3. **Code Emission**: IR to MicroPython C API calls
+4. **Module Assembly**: Generate module registration boilerplate
 
-Key classes:
-- `TypedPythonTranslator` - AST-to-C translator
-- `CompilationResult` - Result container with generated code
+Key modules:
+- `ir.py` - IR type definitions
+- `ir_builder.py` - AST to IR translation
+- `function_emitter.py` - FuncIR to C code
+- `module_emitter.py` - Complete module assembly
+- `class_emitter.py` - ClassIR to C structs and vtables
 
 ## License
 

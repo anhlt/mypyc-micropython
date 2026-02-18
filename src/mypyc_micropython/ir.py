@@ -367,13 +367,20 @@ class FuncIR:
 
     name: str
     c_name: str
-    params: list[tuple[str, CType]]  # (name, type) pairs
+    params: list[tuple[str, CType]]
     return_type: CType
-    body_ast: ast.FunctionDef  # Original AST for body translation
+    body_ast: ast.FunctionDef | None = None
+    body: list[StmtIR] = field(default_factory=list)
     is_method: bool = False
-    class_ir: ClassIR | None = None  # Owning class (if method)
+    class_ir: ClassIR | None = None
     locals_: dict[str, CType] = field(default_factory=dict)
     docstring: str | None = None
+    arg_types: list[str] = field(default_factory=list)
+    uses_print: bool = False
+    uses_list_opt: bool = False
+    used_rtuples: set[RTuple] = field(default_factory=set)
+    rtuple_types: dict[str, RTuple] = field(default_factory=dict)
+    list_vars: set[str] = field(default_factory=set)
 
 
 class IRType(Enum):
@@ -540,6 +547,339 @@ class LoweredExpr:
     statement that uses ``value``.
     """
 
+    value: ValueIR
+    prelude: list[InstrIR] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Statement IR - Full statement-level intermediate representation
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class StmtIR:
+    """Base class for statement IR nodes."""
+
+    pass
+
+
+@dataclass
+class ReturnIR(StmtIR):
+    """Return statement: return [value]."""
+
+    value: ValueIR | None = None
+    # Prelude instructions that must execute before the return
+    prelude: list[InstrIR] = field(default_factory=list)
+
+
+@dataclass
+class IfIR(StmtIR):
+    """If statement: if test: body else: orelse."""
+
+    test: ValueIR
+    body: list[StmtIR]
+    orelse: list[StmtIR] = field(default_factory=list)
+    # Prelude for test expression
+    test_prelude: list[InstrIR] = field(default_factory=list)
+
+
+@dataclass
+class WhileIR(StmtIR):
+    """While statement: while test: body."""
+
+    test: ValueIR
+    body: list[StmtIR]
+    # Prelude for test expression (evaluated each iteration)
+    test_prelude: list[InstrIR] = field(default_factory=list)
+
+
+@dataclass
+class ForRangeIR(StmtIR):
+    """Optimized for loop over range(): for var in range(start, end, step)."""
+
+    loop_var: str
+    c_loop_var: str
+    start: ValueIR
+    end: ValueIR
+    step: ValueIR | None  # None means step=1
+    step_is_constant: bool
+    step_value: int | None  # If step is constant, its value
+    body: list[StmtIR]
+    # Whether loop_var is newly declared
+    is_new_var: bool = True
+
+
+@dataclass
+class ForIterIR(StmtIR):
+    """Generic for loop over iterable: for var in iterable."""
+
+    loop_var: str
+    c_loop_var: str
+    iterable: ValueIR
+    body: list[StmtIR]
+    # Prelude for iterable expression
+    iter_prelude: list[InstrIR] = field(default_factory=list)
+    # Whether loop_var is newly declared
+    is_new_var: bool = True
+
+
+@dataclass
+class AssignIR(StmtIR):
+    """Assignment statement: target = value."""
+
+    target: str  # Variable name
+    c_target: str  # C variable name
+    value: ValueIR
+    value_type: IRType
+    # Prelude instructions
+    prelude: list[InstrIR] = field(default_factory=list)
+    # Whether this is a new variable declaration
+    is_new_var: bool = False
+    # Declared C type (for new vars)
+    c_type: str = "mp_obj_t"
+
+
+@dataclass
+class AnnAssignIR(StmtIR):
+    """Annotated assignment: target: annotation = value."""
+
+    target: str
+    c_target: str
+    c_type: str
+    value: ValueIR | None
+    # Prelude instructions
+    prelude: list[InstrIR] = field(default_factory=list)
+    # Whether this is a new variable declaration
+    is_new_var: bool = True
+
+
+@dataclass
+class AugAssignIR(StmtIR):
+    """Augmented assignment: target op= value."""
+
+    target: str
+    c_target: str
+    op: str  # C operator: +=, -=, *=, etc.
+    value: ValueIR
+    # Prelude instructions
+    prelude: list[InstrIR] = field(default_factory=list)
+
+
+@dataclass
+class SubscriptAssignIR(StmtIR):
+    """Subscript assignment: container[key] = value."""
+
+    container: ValueIR
+    key: ValueIR
+    value: ValueIR
+    # Prelude instructions
+    prelude: list[InstrIR] = field(default_factory=list)
+
+
+@dataclass
+class AttrAssignIR(StmtIR):
+    """Attribute assignment: self.attr = value (for methods)."""
+
+    attr_name: str
+    attr_path: str  # C path like "super.x" or "x"
+    value: ValueIR
+    # Prelude instructions
+    prelude: list[InstrIR] = field(default_factory=list)
+
+
+@dataclass
+class TupleUnpackIR(StmtIR):
+    """Tuple unpacking: x, y = tuple_value."""
+
+    targets: list[tuple[str, str, bool, str]]  # (py_name, c_name, is_new, c_type)
+    value: ValueIR
+    # Prelude instructions
+    prelude: list[InstrIR] = field(default_factory=list)
+
+
+@dataclass
+class ExprStmtIR(StmtIR):
+    """Expression statement: expr (for side effects)."""
+
+    expr: ValueIR
+    # Prelude instructions
+    prelude: list[InstrIR] = field(default_factory=list)
+
+
+@dataclass
+class PrintIR(StmtIR):
+    """Print statement: print(args...)."""
+
+    args: list[ValueIR]
+    # Prelude instructions for each arg
+    preludes: list[list[InstrIR]] = field(default_factory=list)
+
+
+@dataclass
+class BreakIR(StmtIR):
+    """Break statement."""
+
+    pass
+
+
+@dataclass
+class ContinueIR(StmtIR):
+    """Continue statement."""
+
+    pass
+
+
+@dataclass
+class PassIR(StmtIR):
+    """Pass statement (no-op)."""
+
+    pass
+
+
+# ---------------------------------------------------------------------------
+# Expression IR - Full expression-level intermediate representation
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ExprIR(ValueIR):
+    """Base class for complex expression IR nodes.
+
+    Simple values (TempIR, ConstIR, NameIR) are also ValueIR but not ExprIR.
+    ExprIR represents compound expressions that need evaluation.
+    """
+
+    pass
+
+
+@dataclass
+class BinOpIR(ExprIR):
+    """Binary operation: left op right."""
+
+    left: ValueIR
+    op: str  # C operator: +, -, *, /, %, &, |, ^, <<, >>
+    right: ValueIR
+    # Prelude for left and right operands
+    left_prelude: list[InstrIR] = field(default_factory=list)
+    right_prelude: list[InstrIR] = field(default_factory=list)
+
+
+@dataclass
+class UnaryOpIR(ExprIR):
+    """Unary operation: op operand."""
+
+    op: str  # C operator: -, !, +, ~
+    operand: ValueIR
+    # Prelude for operand
+    prelude: list[InstrIR] = field(default_factory=list)
+
+
+@dataclass
+class CompareIR(ExprIR):
+    """Comparison: left op1 comp1 op2 comp2 ..."""
+
+    left: ValueIR
+    ops: list[str]  # C operators: ==, !=, <, <=, >, >=
+    comparators: list[ValueIR]
+    # Contains 'in' or 'not in' operations
+    has_contains: bool = False
+    # Preludes for left and each comparator
+    left_prelude: list[InstrIR] = field(default_factory=list)
+    comparator_preludes: list[list[InstrIR]] = field(default_factory=list)
+
+
+@dataclass
+class CallIR(ExprIR):
+    """Function/method call: func(args)."""
+
+    func_name: str
+    c_func_name: str
+    args: list[ValueIR]
+    # Preludes for each arg
+    arg_preludes: list[list[InstrIR]] = field(default_factory=list)
+    # For builtin calls, the specific handling
+    is_builtin: bool = False
+    builtin_kind: str | None = None  # "len", "abs", "int", "float", "range", etc.
+    is_list_len_opt: bool = False  # len() on typed list
+
+
+@dataclass
+class SubscriptIR(ExprIR):
+    """Subscript access: value[slice]."""
+
+    value: ValueIR
+    slice_: ValueIR
+    # For RTuple optimization
+    is_rtuple: bool = False
+    rtuple_index: int | None = None
+    # For list optimization
+    is_list_opt: bool = False
+    # Preludes
+    value_prelude: list[InstrIR] = field(default_factory=list)
+    slice_prelude: list[InstrIR] = field(default_factory=list)
+
+
+@dataclass
+class SliceIR(ExprIR):
+    """Slice object: [lower:upper:step]."""
+
+    lower: ValueIR | None
+    upper: ValueIR | None
+    step: ValueIR | None
+
+
+@dataclass
+class IfExprIR(ExprIR):
+    """Conditional expression: body if test else orelse."""
+
+    test: ValueIR
+    body: ValueIR
+    orelse: ValueIR
+    # Preludes
+    test_prelude: list[InstrIR] = field(default_factory=list)
+    body_prelude: list[InstrIR] = field(default_factory=list)
+    orelse_prelude: list[InstrIR] = field(default_factory=list)
+
+
+@dataclass
+class ClassInstantiationIR(ExprIR):
+    """Class instantiation: ClassName(args)."""
+
+    class_name: str
+    c_class_name: str
+    args: list[ValueIR]
+    # Preludes for args
+    arg_preludes: list[list[InstrIR]] = field(default_factory=list)
+
+
+@dataclass
+class SelfAttrIR(ExprIR):
+    """Attribute access on self: self.attr (for methods)."""
+
+    attr_name: str
+    attr_path: str  # C path like "super.x" or "x"
+    result_type: IRType
+
+
+@dataclass
+class SelfMethodCallIR(ExprIR):
+    """Method call on self: self.method(args) (for methods)."""
+
+    method_name: str
+    c_method_name: str
+    args: list[ValueIR]
+    return_type: IRType
+    # Preludes for args
+    arg_preludes: list[list[InstrIR]] = field(default_factory=list)
+
+
+@dataclass
+class SelfAugAssignIR(StmtIR):
+    """Augmented assignment on self attribute: self.attr op= value."""
+
+    attr_name: str
+    attr_path: str
+    op: str
     value: ValueIR
     prelude: list[InstrIR] = field(default_factory=list)
 

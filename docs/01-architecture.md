@@ -24,10 +24,18 @@ mypyc-micropython is a compiler that transforms typed Python code into MicroPyth
 │         │                                                               │
 │         ▼                                                               │
 │  ┌─────────────────────┐                                                │
-│  │ TypedPythonTransla- │  Core translator class                         │
-│  │ tor                 │  - Extracts type annotations                   │
-│  │                     │  - Translates statements to C                  │
-│  │                     │  - Generates MicroPython API calls             │
+│  │    IR Builder       │  AST to IR translation (ir_builder.py)         │
+│  │                     │  - Extracts type annotations                   │
+│  │                     │  - Builds FuncIR, ClassIR, StmtIR, ExprIR      │
+│  │                     │  - Tracks variable types and RTuple structs    │
+│  └──────┬──────────────┘                                                │
+│         │                                                               │
+│         ▼                                                               │
+│  ┌─────────────────────┐                                                │
+│  │    Emitters         │  IR to C code generation                       │
+│  │                     │  - FunctionEmitter (function_emitter.py)       │
+│  │                     │  - ClassEmitter (class_emitter.py)             │
+│  │                     │  - ModuleEmitter (module_emitter.py)           │
 │  └──────┬──────────────┘                                                │
 │         │                                                               │
 │         ▼                                                               │
@@ -46,25 +54,80 @@ mypyc-micropython is a compiler that transforms typed Python code into MicroPyth
 
 ## Key Components
 
-### 1. Compiler (`src/mypyc_micropython/compiler.py`)
+### 1. Entry Point (`src/mypyc_micropython/compiler.py`)
 
-The main compilation logic:
+The main `compile_source` function orchestrates the pipeline:
 
 ```python
-class TypedPythonTranslator:
-    """Translates typed Python AST to MicroPython C code."""
-    
-    def translate_source(self, source: str) -> str:
-        """Main entry point - parse and translate Python source."""
-        
-    def _translate_function(self, node: ast.FunctionDef) -> None:
-        """Translate a single function definition."""
-        
-    def _translate_expr(self, expr, locals_: list[str]) -> tuple[str, str]:
-        """Translate an expression, returning (C code, C type)."""
+def compile_source(source: str, module_name: str) -> str:
+    """Compile typed Python source to MicroPython C code."""
+    tree = ast.parse(source)
+    ir_builder = IRBuilder(module_name)
+    module_ir = ir_builder.build(tree)
+    emitter = ModuleEmitter(module_ir)
+    return emitter.emit()
 ```
 
-### 2. CLI (`src/mypyc_micropython/cli.py`)
+### 2. IR Definitions (`src/mypyc_micropython/ir.py`)
+
+The intermediate representation layer:
+
+```python
+# Value IR - expression results
+@dataclass
+class ValueIR:
+    ir_type: IRType  # OBJ, INT, FLOAT, BOOL
+
+@dataclass
+class BinOpIR(ValueIR):
+    left: ValueIR
+    op: str
+    right: ValueIR
+
+# Statement IR - control flow
+@dataclass
+class IfIR(StmtIR):
+    test: ValueIR
+    body: list[StmtIR]
+    orelse: list[StmtIR]
+
+# Function/Class IR
+@dataclass
+class FuncIR:
+    name: str
+    params: list[tuple[str, CType]]
+    return_type: CType
+    body: list[StmtIR]
+```
+
+### 3. IR Builder (`src/mypyc_micropython/ir_builder.py`)
+
+Transforms AST to IR:
+
+```python
+class IRBuilder:
+    def build(self, tree: ast.Module) -> ModuleIR:
+        """Build IR from AST module."""
+        
+    def _build_func(self, node: ast.FunctionDef) -> FuncIR:
+        """Build function IR from AST function definition."""
+        
+    def _build_expr(self, expr: ast.expr) -> tuple[ValueIR, list[InstrIR]]:
+        """Build expression IR, returning value and prelude instructions."""
+```
+
+### 4. Emitters (`src/mypyc_micropython/`)
+
+Generate C code from IR:
+
+| File | Responsibility |
+|------|----------------|
+| `function_emitter.py` | FuncIR/MethodIR to C function code |
+| `class_emitter.py` | ClassIR to C structs and vtables |
+| `module_emitter.py` | ModuleIR to complete C module file |
+| `container_emitter.py` | Container operation IR to C code |
+
+### 5. CLI (`src/mypyc_micropython/cli.py`)
 
 Command-line interface:
 
@@ -74,7 +137,7 @@ mpy-compile source.py -o outdir/   # Custom output directory
 mpy-compile source.py -v           # Verbose output
 ```
 
-### 3. Generated Output Structure
+### 6. Generated Output Structure
 
 ```
 usermod_<module>/
@@ -85,33 +148,42 @@ usermod_<module>/
 
 ## Design Decisions
 
-### Current Approach: Direct AST-to-C Translation
+### Two-Phase IR Architecture
 
-The current implementation directly translates Python AST to C code without an intermediate representation (IR).
+The compiler uses a clean two-phase pipeline:
+
+```
+Python AST  -->  IR Builder  -->  IR  -->  Emitters  -->  C Code
+```
+
+**Phase 1: AST to IR (ir_builder.py)**
+- Extracts type annotations
+- Builds typed IR nodes
+- Tracks variable types and RTuple optimizations
+- Separates "what value" from "what must happen first" (prelude pattern)
+
+**Phase 2: IR to C (emitters)**
+- Generates optimized C code from IR
+- Handles boxing/unboxing based on IR types
+- Emits MicroPython API calls
 
 **Advantages:**
-- Simple to understand and implement
-- Fast compilation
-- No external dependencies at compile time
-- Direct mapping from Python constructs to C
+- Clean separation of concerns
+- Type information flows through IR
+- Enables optimizations (RTuple structs, native int operations)
+- Easier to test and maintain
 
-**Limitations:**
-- Limited optimization opportunities
-- Type inference relies solely on annotations
-- Harder to implement advanced features (closures, generators)
+### The Prelude Pattern
 
-### Future Direction: mypyc IR Integration
+Expressions return `tuple[ValueIR, list[InstrIR]]` - the value and any instructions that must execute first:
 
-For advanced features, we plan to integrate with mypyc's IR:
-
-```
-Python Source → [mypy type check] → [mypyc IR] → [MP Code Generator] → C
+```python
+# result.append(i * i) produces:
+# - ValueIR: TempIR("_tmp1")
+# - Prelude: [MethodCallIR(result="_tmp1", receiver=result, method="append", args=[BinOpIR(...)])]
 ```
 
-This would provide:
-- Sophisticated type inference from mypy
-- IR-level optimizations
-- Proven transforms for complex features
+This cleanly separates side effects from values.
 
 ## Type Mapping
 
@@ -165,7 +237,7 @@ MP_REGISTER_MODULE(MP_QSTR_module_name, module_user_cmodule);
 |--------|-------|-------------------|
 | **Target** | CPython C extensions | MicroPython user modules |
 | **Runtime** | CPython + mypyc runtime | MicroPython only |
-| **IR** | Full IR with transforms | Direct AST translation |
+| **IR** | Full IR with transforms | Custom IR (FuncIR, StmtIR, ExprIR) |
 | **Type System** | Full mypy integration | Annotation-based |
 | **Memory** | Reference counting | MicroPython GC |
 | **Object Model** | PyObject* | mp_obj_t |
@@ -175,3 +247,5 @@ MP_REGISTER_MODULE(MP_QSTR_module_name, module_user_cmodule);
 - [02-mypyc-reference.md](02-mypyc-reference.md) - How mypyc works
 - [03-micropython-c-api.md](03-micropython-c-api.md) - MicroPython C API reference
 - [04-feature-scope.md](04-feature-scope.md) - Supported features
+- [08-ir-design.md](08-ir-design.md) - Detailed IR design documentation
+- [Blog: IR Pipeline Refactoring](/blogs/06-ir-pipeline-refactoring.md) - Technical deep-dive into the IR architecture
