@@ -8,72 +8,257 @@ When you compile `result.append(i * i)` from Python to C, where does the multipl
 
 This post explores the **prelude pattern** — a design that cleanly separates "what value does this expression produce" from "what must happen first to compute it." It's the key insight that made our IR-based compiler work.
 
-## The Problem: Expressions with Side Effects
+## Table of Contents
 
-Consider this innocent Python code:
+1. [Compiler Theory](#part-1-compiler-theory) — Why expression evaluation order matters in compilation
+2. [C Background](#part-2-c-background-for-python-developers) — Statements vs expressions, temporary variables, and evaluation order
+3. [Implementation](#part-3-implementation) — How we built the prelude pattern
 
-```python
-def build_squares(n: int) -> list:
-    result: list = []
-    for i in range(n):
-        result.append(i * i)
-    return result
-```
+---
 
-The expression `result.append(i * i)` looks atomic in Python, but to generate C, we need to:
+# Part 1: Compiler Theory
 
-1. Evaluate `i * i` (pure computation)
-2. Box the result as a MicroPython object
-3. Call `mp_obj_list_append()` (side effect)
-4. Handle the return value (None for append)
+## The Expression Evaluation Problem
 
-Now consider something more complex:
+Compilers must decide **when** and **where** each computation happens. In Python, expressions can have side effects:
 
 ```python
-def nested_example(lst: list) -> int:
-    return lst[get_index()] + compute_value()
+def example():
+    return get_a() + get_b()  # Which function runs first?
 ```
 
-Here we have:
-- A function call `get_index()` that must execute first
-- A subscript operation using that result
-- Another function call `compute_value()`
-- A binary operation combining both
+Python guarantees left-to-right evaluation. Our generated C must preserve this order.
 
-The order matters. If `get_index()` modifies global state that `compute_value()` reads, swapping them would be a bug.
+## Pure vs Impure Expressions
 
-## The Naive Approach: String Concatenation Hell
+Compiler theory distinguishes:
 
-Our first compiler tried to handle this by returning C code strings directly:
+| Type | Description | Example |
+|------|-------------|---------|
+| **Pure** | No side effects, same inputs = same outputs | `a + b`, `x * 2` |
+| **Impure** | Has side effects or depends on external state | `list.pop()`, `get_input()` |
+
+Pure expressions can be reordered freely. Impure expressions cannot.
 
 ```python
-def _translate_expr(self, expr) -> str:
-    if isinstance(expr, ast.BinOp):
-        left = self._translate_expr(expr.left)
-        right = self._translate_expr(expr.right)
-        return f"({left} + {right})"
-    elif isinstance(expr, ast.Call):
-        # Uh oh... this might need temp variables
-        # And those need to be declared somewhere...
-        pass
+# These are NOT equivalent if get_a() modifies state that get_b() reads
+return get_a() + get_b()  # Must call get_a() first
+return get_b() + get_a()  # Would call get_b() first - different behavior!
 ```
 
-This breaks down immediately for method calls. We can't just inline `lst.append(x)` into a larger expression because:
+## The Compilation Pipeline and Side Effects
 
-1. `mp_obj_list_append()` returns `mp_obj_t` (None), not the list
-2. We might need temp variables for intermediate results
-3. C requires variables to be declared at specific scopes
+Our pipeline must track side effects through each phase:
 
-We ended up with a "pending temps" queue, flushing accumulated setup code at statement boundaries. It was fragile, hard to debug, and broke in subtle ways with nested expressions.
+```
++------------------+    +------------------+    +------------------+
+|  Python Source   | -> |       IR         | -> |     C Code       |
+|                  |    |                  |    |                  |
+| lst.append(x*2)  |    | Value + Prelude  |    | Sequential stmts |
++------------------+    +------------------+    +------------------+
+```
 
-## The Solution: Value + Prelude
+The challenge: Python allows impure expressions anywhere. C separates statements (side effects) from expressions (values).
 
-The breakthrough was realizing that every expression produces two things:
+## Why Naive Translation Fails
+
+Consider translating `result.append(i * i)`:
+
+```python
+# Python: One expression with embedded side effect
+result.append(i * i)
+```
+
+A naive approach generates C expressions inline:
+
+```c
+// Attempt 1: Inline everything
+mp_obj_list_append(result, mp_obj_new_int(i * i));  // Works!
+```
+
+This works for simple cases. But what about:
+
+```python
+# Python: Multiple side effects in one expression
+return items[get_index()] + compute_value()
+```
+
+```c
+// Attempt 2: Inline fails
+return mp_obj_subscr(items, get_index(), ...) + compute_value();  // Wrong!
+// Problem: get_index() and compute_value() might be called in wrong order
+// C doesn't guarantee left-to-right evaluation of function arguments!
+```
+
+## The Key Insight: Separate Value from Setup
+
+Every expression produces two things:
 
 1. **A value** — what the expression evaluates to
 2. **A prelude** — instructions that must execute before the value is valid
 
-We encode this as a simple return type:
+```
+Expression: items[get_index()] + compute_value()
+
+Value: (_tmp1 + _tmp2)
+
+Prelude: [
+    _tmp1 = mp_obj_subscr(items, get_index(), ...),
+    _tmp2 = compute_value()
+]
+```
+
+The prelude captures side effects. The value is now pure — just variable references.
+
+## Prelude Accumulation
+
+Preludes compose naturally. For nested expressions, we accumulate preludes:
+
+```
+Expression: outer(inner())
+
+Building inner():
+  Value: _tmp1
+  Prelude: [_tmp1 = inner()]
+
+Building outer(inner()):
+  Value: _tmp2
+  Prelude: [_tmp1 = inner(), _tmp2 = outer(_tmp1)]
+         = inner_prelude + [outer_call]
+```
+
+This recursive structure handles arbitrary nesting.
+
+---
+
+# Part 2: C Background for Python Developers
+
+## Statements vs Expressions
+
+C strictly separates **statements** (do something) from **expressions** (compute a value):
+
+```c
+// Statement: Does something, no value
+printf("Hello");
+
+// Expression: Computes a value
+3 + 4
+
+// Assignment is a statement that uses an expression
+int x = 3 + 4;  // Statement containing expression
+```
+
+Python blurs this distinction. `list.append(x)` is an expression (returns None) that has a side effect. In C, we must be explicit.
+
+## Temporary Variables
+
+Temporary variables store intermediate results:
+
+```c
+// Without temps: Arguments evaluated in unspecified order
+return func_a() + func_b();  // C doesn't guarantee order!
+
+// With temps: Explicit order
+int _tmp1 = func_a();  // First
+int _tmp2 = func_b();  // Second
+return _tmp1 + _tmp2;  // Now order is guaranteed
+```
+
+**Visual: Temp variable flow**
+
+```
+Python: get_a() + get_b()
+
+C with temps:
+  +-------+     +-------+
+  | tmp1  | <-- | get_a |  Step 1: Call get_a, store result
+  +-------+     +-------+
+  
+  +-------+     +-------+
+  | tmp2  | <-- | get_b |  Step 2: Call get_b, store result
+  +-------+     +-------+
+  
+  +-------+     +-------+     +-------+
+  | result| <-- | tmp1  | + | tmp2  |  Step 3: Add stored results
+  +-------+     +-------+     +-------+
+```
+
+## C Evaluation Order Pitfalls
+
+C has **undefined** argument evaluation order:
+
+```c
+// DANGEROUS: Order of f() and g() is undefined!
+int result = combine(f(), g());
+
+// f() might run first, or g() might run first
+// Different compilers, different results
+```
+
+Python guarantees left-to-right. To preserve Python semantics in C:
+
+```c
+// SAFE: Explicit ordering with temps
+int _tmp1 = f();  // Guaranteed first
+int _tmp2 = g();  // Guaranteed second
+int result = combine(_tmp1, _tmp2);
+```
+
+## MicroPython Object Model
+
+In MicroPython, everything is an `mp_obj_t`:
+
+```c
+// mp_obj_t is a pointer-sized value that represents any Python object
+typedef void *mp_obj_t;
+
+// Method calls return mp_obj_t
+mp_obj_t result = mp_obj_list_pop(list);
+
+// Even "void" operations return mp_const_none
+mp_obj_list_append(list, item);  // Returns mp_const_none
+```
+
+This means every Python expression has a C value, even if we ignore it.
+
+## Scope and Declaration
+
+C requires variable declaration before use:
+
+```c
+// C89: Declarations at block start
+{
+    int a;
+    int b;
+    // ... code ...
+    a = compute();  // OK
+}
+
+// C99+: Declarations anywhere
+{
+    // ... code ...
+    int a = compute();  // OK
+}
+```
+
+Our generated code uses C99-style declarations, placing temps where needed:
+
+```c
+static mp_obj_t func(...) {
+    // Temps declared inline as needed
+    mp_obj_t _tmp1 = get_index();
+    mp_obj_t _tmp2 = items[_tmp1];
+    // ...
+}
+```
+
+---
+
+# Part 3: Implementation
+
+## The Core Data Structure
+
+We encode the prelude pattern as a return type:
 
 ```python
 def _build_expr(self, expr: ast.expr, locals_: list[str]) -> tuple[ValueIR, list[InstrIR]]:
@@ -84,23 +269,23 @@ def _build_expr(self, expr: ast.expr, locals_: list[str]) -> tuple[ValueIR, list
     """
 ```
 
-The `ValueIR` represents the result — it might be a constant, a variable reference, a temp variable, or a complex expression. The `list[InstrIR]` contains any instructions that must execute first.
+- `ValueIR`: The result value (constant, variable, temp, or compound expression)
+- `list[InstrIR]`: Instructions that must execute first
 
-## How It Works: Building Expressions
+## Simple Cases: No Prelude
 
-### Simple Cases: No Prelude
-
-Constants and variable references have no prelude — they're immediately available:
+Constants and variable references are pure — no prelude needed:
 
 ```python
-def _build_constant(self, expr: ast.Constant) -> ConstIR:
+def _build_constant(self, expr: ast.Constant) -> tuple[ConstIR, list]:
     return ConstIR(ir_type=IRType.INT, value=42), []
+    #                                              ^^ Empty prelude
 
-def _build_name(self, expr: ast.Name, locals_: list[str]) -> NameIR:
+def _build_name(self, expr: ast.Name, locals_: list[str]) -> tuple[NameIR, list]:
     return NameIR(ir_type=IRType.INT, py_name="x", c_name="x"), []
 ```
 
-### Binary Operations: Combining Preludes
+## Binary Operations: Combining Preludes
 
 For `a + b`, we build both operands and combine their preludes:
 
@@ -116,14 +301,30 @@ def _build_binop(self, expr: ast.BinOp, locals_: list[str]) -> tuple[BinOpIR, li
         right=right,
         left_prelude=left_prelude,
         right_prelude=right_prelude,
-    ), left_prelude + right_prelude
+    ), left_prelude + right_prelude  # Combine preludes in order
 ```
 
-The BinOpIR stores both the operands AND their preludes. This is crucial for correct emission order.
+**Visual: Prelude combination**
 
-### Method Calls: Creating Preludes
+```
+Expression: get_a() + get_b()
 
-Here's where it gets interesting. A method call like `lst.append(x)`:
+Build get_a():
+  Value: _tmp1
+  Prelude: [call_a]
+
+Build get_b():
+  Value: _tmp2
+  Prelude: [call_b]
+
+Build get_a() + get_b():
+  Value: BinOpIR(_tmp1, +, _tmp2)
+  Prelude: [call_a, call_b]  # Left prelude, then right prelude
+```
+
+## Method Calls: Creating Preludes
+
+Method calls have side effects and create preludes:
 
 ```python
 def _build_method_call(self, expr: ast.Call, locals_: list[str]) -> tuple[ValueIR, list]:
@@ -148,33 +349,13 @@ def _build_method_call(self, expr: ast.Call, locals_: list[str]) -> tuple[ValueI
     )
     
     return result, all_preludes + [method_call]
+    #      ^^^^^   ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    #      Value   Prelude (includes the call!)
 ```
 
-The method call instruction goes into the prelude, and we return a `TempIR` pointing to where the result will be stored.
+## Instruction IR Types
 
-### Container Literals: Multi-Step Construction
-
-List literals like `[1, 2, 3]` require multiple C statements:
-
-```python
-def _build_list(self, expr: ast.List, locals_: list[str]) -> tuple[ValueIR, list]:
-    items: list[ValueIR] = []
-    all_preludes: list = []
-    
-    for elt in expr.elts:
-        val, prelude = self._build_expr(elt, locals_)
-        all_preludes.extend(prelude)
-        items.append(val)
-    
-    result = TempIR(ir_type=IRType.OBJ, name=self._fresh_temp())
-    list_new = ListNewIR(result=result, items=items)
-    
-    return result, all_preludes + [list_new]
-```
-
-## Instruction IR: The Prelude Contents
-
-Preludes contain `InstrIR` nodes — side-effecting operations that produce values:
+Preludes contain `InstrIR` nodes — side-effecting operations:
 
 ```python
 @dataclass
@@ -190,22 +371,17 @@ class MethodCallIR(InstrIR):
     args: list[ValueIR]
 
 @dataclass
-class TupleNewIR(InstrIR):
-    result: TempIR
-    items: list[ValueIR]
-
-@dataclass
 class DictNewIR(InstrIR):
     result: TempIR
     keys: list[ValueIR]
     values: list[ValueIR]
 ```
 
-Each instruction knows its result temp variable and its inputs. The emitter can then generate proper C code in the right order.
+Each instruction knows its result temp and inputs.
 
-## Emitting Preludes: Order Matters
+## Emitting Preludes
 
-The emitter processes preludes before using their values:
+The emitter processes preludes before using values:
 
 ```python
 def _emit_return(self, stmt: ReturnIR) -> list[str]:
@@ -233,9 +409,9 @@ def _emit_prelude(self, prelude: list[InstrIR]) -> list[str]:
     return lines
 ```
 
-## Real Example: `result.append(i * i)`
+## Complete Example: `result.append(i * i)`
 
-Let's trace through `result.append(i * i)`:
+Let's trace through the full compilation:
 
 ### Step 1: Build the Expression
 
@@ -244,7 +420,8 @@ Let's trace through `result.append(i * i)`:
 i_left = NameIR(py_name="i", c_name="i")
 i_right = NameIR(py_name="i", c_name="i")
 multiply = BinOpIR(left=i_left, op="*", right=i_right)
-# Prelude: [] (no side effects)
+# Value: BinOpIR
+# Prelude: [] (pure expression)
 
 # Building result.append(i * i)
 receiver = NameIR(py_name="result", c_name="result")
@@ -255,7 +432,7 @@ method_call = MethodCallIR(
     method="append",
     args=[multiply]
 )
-# Value: result_temp
+# Value: result_temp (points to call result)
 # Prelude: [method_call]
 ```
 
@@ -263,7 +440,7 @@ method_call = MethodCallIR(
 
 ```python
 ExprStmtIR(
-    expr=result_temp,  # The value (unused for append)
+    expr=result_temp,      # The value (unused for append)
     prelude=[method_call]  # The actual work
 )
 ```
@@ -273,68 +450,44 @@ ExprStmtIR(
 ```python
 def _emit_expr_stmt(self, stmt: ExprStmtIR) -> list[str]:
     lines = self._emit_prelude(stmt.prelude)
-    # For ExprStmt, we just emit the prelude; the value is discarded
+    # For ExprStmt, we emit prelude; value is discarded
     return lines
 ```
 
-Generated C:
+**Generated C:**
 
 ```c
 mp_obj_list_append(result, mp_obj_new_int((i * i)));
 ```
 
-## Nested Example: Complex Expressions
+## Complex Example: Nested Calls
 
-Consider `return items[get_idx()].value + compute()`:
+For `return items[get_idx()].value + compute()`:
 
 ### IR Structure
 
 ```
 ReturnIR:
-  value: BinOpIR(+)
-    left: AttributeIR(.value)
-      value: SubscriptIR
-        value: NameIR("items")
-        slice: CallIR("get_idx")
-          prelude: [call_instr_1]  # _tmp1 = get_idx()
-    right: CallIR("compute")
-      prelude: [call_instr_2]  # _tmp2 = compute()
-  prelude: [call_instr_1, call_instr_2]
+  prelude: [
+    CallIR(result=_tmp1, func="get_idx"),
+    SubscriptIR(result=_tmp2, obj=items, index=_tmp1),
+    AttrIR(result=_tmp3, obj=_tmp2, attr="value"),
+    CallIR(result=_tmp4, func="compute"),
+  ]
+  value: BinOpIR(left=_tmp3, op="+", right=_tmp4)
 ```
 
 ### Generated C
 
 ```c
-mp_obj_t _tmp1 = module_get_idx();
-mp_obj_t _tmp2 = module_compute();
-mp_obj_t _subscript = mp_obj_subscr(items, _tmp1, MP_OBJ_SENTINEL);
-mp_obj_t _attr = mp_load_attr(_subscript, MP_QSTR_value);
-return mp_binary_op(MP_BINARY_OP_ADD, _attr, _tmp2);
+mp_obj_t _tmp1 = module_get_idx();                              // 1. Call get_idx
+mp_obj_t _tmp2 = mp_obj_subscr(items, _tmp1, MP_OBJ_SENTINEL);  // 2. Subscript
+mp_obj_t _tmp3 = mp_load_attr(_tmp2, MP_QSTR_value);            // 3. Get attribute
+mp_obj_t _tmp4 = module_compute();                              // 4. Call compute
+return mp_binary_op(MP_BINARY_OP_ADD, _tmp3, _tmp4);            // 5. Add and return
 ```
 
-The prelude ensures `get_idx()` and `compute()` are called in the right order, their results are stored, and then used in the final expression.
-
-## Benefits of the Prelude Pattern
-
-### 1. Correct Evaluation Order
-
-Side effects happen in the order Python specifies. No accidental reordering.
-
-### 2. Clean Temp Variable Management
-
-Temps are created at IR build time, not scattered through string manipulation.
-
-### 3. Composability
-
-Complex expressions compose naturally — each sub-expression's prelude is accumulated.
-
-### 4. Separation of Concerns
-
-The IR builder focuses on structure; the emitter focuses on C syntax.
-
-### 5. Debuggability
-
-You can inspect the IR and see exactly what instructions will execute and in what order.
+The prelude guarantees correct evaluation order.
 
 ## Statements Get Preludes Too
 
@@ -349,18 +502,18 @@ class IfIR(StmtIR):
     test_prelude: list[InstrIR]  # Setup for the test expression
 ```
 
-For `if items.pop() > 0:`, the prelude contains the `pop()` call, and the test uses the temp result:
+For `if items.pop() > 0:`:
 
 ```c
-mp_obj_t _tmp1 = mp_call_method_1(...);  // Prelude
-if (mp_obj_get_int(_tmp1) > 0) {         // Test uses _tmp1
+mp_obj_t _tmp1 = mp_obj_list_pop(items);  // Prelude: execute pop()
+if (mp_obj_get_int(_tmp1) > 0) {          // Test uses _tmp1
     ...
 }
 ```
 
 ## RTuple Optimization: Prelude Detection
 
-The prelude pattern enabled our RTuple optimization. When we see:
+The prelude pattern enables optimizations. When we see:
 
 ```python
 point: tuple[int, int] = (10, 20)
@@ -377,41 +530,57 @@ AnnAssignIR(
 )
 ```
 
-The emitter can detect the `TupleNewIR` in the prelude and emit optimized struct initialization:
+The emitter detects `TupleNewIR` in the prelude and emits optimized code:
 
 ```c
-// Instead of: mp_obj_t _tmp1 = mp_obj_new_tuple(2, items); ...
-rtuple_int_int_t point = {10, 20};  // Direct struct init!
+// Instead of:
+mp_obj_t _tmp1 = mp_obj_new_tuple(2, items);
+rtuple_int_int_t point = unpack(_tmp1);
+
+// Optimized:
+rtuple_int_int_t point = {10, 20};  // Direct struct initialization!
 ```
 
-Without the prelude pattern, this optimization would require complex pattern matching on string output.
+## Benefits of the Prelude Pattern
 
-## Lessons Learned
+| Benefit | Description |
+|---------|-------------|
+| **Correct Order** | Side effects happen in Python-specified order |
+| **Clean Temps** | Temp variables created at IR build time |
+| **Composability** | Sub-expression preludes accumulate naturally |
+| **Separation** | IR builder handles structure; emitter handles syntax |
+| **Debuggability** | IR shows exactly what executes and when |
+| **Optimization** | Can inspect/transform before emission |
 
-### 1. Make Side Effects Explicit
+## Testing
 
-The prelude pattern forces you to think about what's pure and what has effects. This clarity propagates through the entire compiler.
+Unit tests verify prelude handling:
 
-### 2. Tuples Are Your Friend
+```python
+def test_method_call_in_expression(self):
+    source = '''
+def test() -> int:
+    items: list = [1, 2, 3]
+    return items.pop() + 10
+'''
+    result = compile_source(source, "test")
+    # Verify temp variable is created
+    assert "_tmp" in result
+    # Verify pop happens before addition
+    assert result.index("mp_obj_list_pop") < result.index("mp_binary_op")
+```
 
-The `tuple[ValueIR, list[InstrIR]]` return type is simple but powerful. Every expression builder follows the same contract.
+---
 
-### 3. Accumulation > Generation
+## Conclusion
 
-Building up preludes and emitting them later is more robust than generating code inline. You have full information when you finally emit.
+The prelude pattern solves expression evaluation order by:
 
-### 4. IR Enables Optimization
+1. **Separating concerns**: Value (what) vs prelude (how/when)
+2. **Accumulating side effects**: Preludes compose recursively
+3. **Explicit ordering**: Emitted C preserves Python semantics
 
-With structured preludes, we can inspect, reorder (when safe), and optimize before emission. String concatenation doesn't allow this.
-
-## Future Directions
-
-The prelude pattern opens doors for:
-
-1. **Dead Code Elimination**: If a prelude's result is never used, skip emitting it
-2. **Common Subexpression Elimination**: Detect duplicate preludes and reuse temps
-3. **Instruction Scheduling**: Reorder independent preludes for better cache behavior
-4. **Exception Handling**: Preludes provide natural points for try/catch boundaries
+The `tuple[ValueIR, list[InstrIR]]` return type is simple but powerful. Every expression builder follows the same contract, making the compiler predictable and extensible.
 
 ---
 
