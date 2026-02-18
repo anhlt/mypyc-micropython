@@ -6,7 +6,7 @@ Typed Python → MicroPython C module compiler.
 
 ```bash
 pip install -e ".[dev]"                          # Install deps (one-time)
-pytest                                           # All tests (195 tests, <1s)
+pytest                                           # All tests (357 tests, <20s)
 pytest -xvs -k "test_simple_function"            # Single test by name
 pytest -xvs tests/test_compiler.py::TestDictOperations  # Single test class
 pytest -xvs tests/test_compiler.py               # Single test file
@@ -30,16 +30,22 @@ make benchmark PORT=/dev/cu.usbmodem2101         # Benchmark native vs vanilla M
 ```
 src/mypyc_micropython/
 ├── __init__.py          # Public API: compile_source, compile_to_micropython
-├── cli.py               # CLI entry point (mpy-compile command)
-├── compiler.py          # AST translator and code generation (~1200 LOC)
-├── ir.py                # IR definitions: ClassIR, MethodIR, FuncIR, etc.
-├── class_emitter.py     # C code generation for classes (structs, vtables, methods)
-└── container_emitter.py # IR emission for list/dict operations
+├── cli.py               # CLI entry point (mpy-compile command, --dump-ir)
+├── compiler.py          # Top-level compilation orchestration
+├── ir.py                # IR definitions: FuncIR, ClassIR, StmtIR, ValueIR, etc.
+├── ir_builder.py        # AST → IR translation (builds FuncIR, ClassIR from AST)
+├── ir_visualizer.py     # IR debugging: dump IR as text/tree/JSON
+├── function_emitter.py  # FuncIR → C code emission
+├── module_emitter.py    # ModuleIR → complete C module assembly
+├── class_emitter.py     # ClassIR → C structs, vtables, methods
+└── container_emitter.py # IR emission helpers for list/dict operations
 
 tests/
 ├── conftest.py          # compile_and_run fixture (gcc compile + execute)
-├── test_compiler.py     # Unit tests — AST→C translation (180 tests)
-├── test_c_runtime.py    # Integration — compile generated C & run binary (15 tests, marker: c_runtime)
+├── test_compiler.py     # Unit tests — full compilation (347 tests)
+├── test_ir_builder.py   # Unit tests — IR building (53 tests)
+├── test_ir_visualizer.py # Unit tests — IR visualization (18 tests)
+├── test_c_runtime.py    # Integration — compile generated C & run binary (37 tests)
 └── mock_mp/             # Minimal C stubs for MicroPython API
 
 examples/                # Sample Python input files
@@ -51,26 +57,140 @@ Makefile                 # Build commands for firmware compilation and flashing
 
 ## Architecture
 
-Pipeline: `Python source → ast.parse() → TypedPythonTranslator → C code string`
+Pipeline: `Python source → ast.parse() → IRBuilder → FuncIR/ClassIR → Emitters → C code`
 
-Key types in `compiler.py`:
-- **`TypedPythonTranslator`** — AST walker. `translate_source()` → `_translate_function()` → `_translate_statement()` → `_translate_expr()`
-- **`CompilationResult`** — Dataclass: `c_code`, `mk_code`, `cmake_code`, `success`, `errors`
+### Two-Phase IR Pipeline
 
-Key types in `ir.py`:
-- **`ClassIR`** — Class intermediate representation (fields, methods, inheritance)
-- **`MethodIR`** — Method IR with vtable support
-- **`FuncIR`** — Function IR for module-level functions
-- **`CType`** — Enum for C type mapping (MP_OBJ_T, MP_INT_T, MP_FLOAT_T, BOOL)
+**Phase 1: IR Building** (`ir_builder.py`)
+- Parses Python AST into typed IR structures
+- Handles prelude pattern: expressions return `(ValueIR, list[InstrIR])`
+- Tracks temp variables, RTuple optimizations, type information
 
-Key modules:
-- **`class_emitter.py`** — `ClassEmitter`: generates C structs, vtables, constructors for classes
-- **`container_emitter.py`** — `ContainerEmitter`: generates IR for list/dict operations
+**Phase 2: Code Emission** (`function_emitter.py`, `class_emitter.py`, `module_emitter.py`)
+- Converts IR to MicroPython C API calls
+- Handles boxing/unboxing, type conversions
+- Generates module registration boilerplate
 
-Key functions:
+### Key IR Types (`ir.py`)
+
+| Category | Types | Purpose |
+|----------|-------|---------|
+| **Function-level** | `FuncIR`, `MethodIR` | Function/method signatures, bodies |
+| **Class-level** | `ClassIR`, `FieldIR` | Class structure, fields, inheritance |
+| **Statement** | `ReturnIR`, `IfIR`, `WhileIR`, `ForRangeIR`, `ForIterIR`, `AssignIR`, ... | Control flow, assignments |
+| **Expression** | `BinOpIR`, `CallIR`, `SubscriptIR`, `CompareIR`, ... | Computations |
+| **Value** | `ConstIR`, `NameIR`, `TempIR` | Leaf values |
+| **Instruction** | `ListNewIR`, `DictNewIR`, `MethodCallIR`, ... | Prelude instructions (side effects) |
+
+### The Prelude Pattern
+
+Every expression returns `tuple[ValueIR, list[InstrIR]]`:
+- **ValueIR**: The result value (const, name, temp, or compound expression)
+- **list[InstrIR]**: Instructions that must execute BEFORE the value is valid
+
+This separates "what value" from "what side effects" — critical for correct C code generation.
+
+### Key Functions
+
 - **`compile_source(source: str, module_name: str) -> str`** — Core: source → C string
 - **`compile_to_micropython(path, output_dir) -> CompilationResult`** — File-level wrapper
-- **`sanitize_name(name: str) -> str`** — Python name → valid C identifier
+- **`IRBuilder.build_function(node) -> FuncIR`** — AST function → IR
+- **`FunctionEmitter(func_ir).emit() -> str`** — IR → C code
+
+## IR Debugging
+
+When debugging compilation issues, use the `--dump-ir` flag to inspect intermediate representation:
+
+```bash
+# Dump full module IR as human-readable text
+mpy-compile examples/factorial.py --dump-ir text
+
+# Dump as ASCII tree (shows full IR structure)
+mpy-compile examples/factorial.py --dump-ir tree
+
+# Dump as JSON (for external tools)
+mpy-compile examples/factorial.py --dump-ir json
+
+# Dump specific function only
+mpy-compile examples/factorial.py --dump-ir text --ir-function factorial
+mpy-compile examples/dict_operations.py --dump-ir tree --ir-function merge_dicts
+```
+
+### Output Formats
+
+**text** — Python-like readable format:
+```
+def merge_dicts(d1: MP_OBJ_T, d2: MP_OBJ_T) -> MP_OBJ_T:
+  c_name: dict_operations_merge_dicts
+  max_temp: 2
+  locals: {d1: MP_OBJ_T, d2: MP_OBJ_T, result: MP_OBJ_T, key: MP_OBJ_T}
+  body:
+    result: mp_obj_t = {}
+    # iter prelude:
+      _tmp1 = d1.keys()
+    for key in _tmp1:
+      result[key] = d1[key]
+    ...
+```
+
+**tree** — ASCII tree showing IR node hierarchy:
+```
+`-- root: FuncIR
+    |-- name: "factorial"
+    |-- c_name: "factorial_factorial"
+    |-- params: list[1]
+    |-- body: list[2]
+    |   |-- [0]: IfIR
+    |   |   |-- test: CompareIR
+    |   |   |   |-- left: NameIR
+    |   |   |   |-- ops: list[1]
+    ...
+```
+
+**json** — Machine-readable for external tools:
+```json
+{
+  "_type": "FuncIR",
+  "name": "add",
+  "c_name": "factorial_add",
+  "params": [["a", "CType.MP_INT_T"], ["b", "CType.MP_INT_T"]],
+  "body": [{"_type": "ReturnIR", "value": {"_type": "BinOpIR", ...}}]
+}
+```
+
+### Debugging Workflow
+
+1. **Compilation fails or wrong output?** Dump IR to see what was built:
+   ```bash
+   mpy-compile myfile.py --dump-ir text --ir-function problematic_func
+   ```
+
+2. **Check prelude instructions** — Look for `# prelude:` or `# iter prelude:` in text output
+
+3. **Verify temp variable allocation** — Check `max_temp` field matches usage
+
+4. **Compare with expected** — Use tree format to see exact IR structure
+
+### Programmatic IR Inspection
+
+```python
+import ast
+from mypyc_micropython.ir_builder import IRBuilder
+from mypyc_micropython.ir_visualizer import dump_ir
+
+source = '''
+def add(a: int, b: int) -> int:
+    return a + b
+'''
+
+tree = ast.parse(source)
+builder = IRBuilder("test")
+
+for node in ast.iter_child_nodes(tree):
+    if isinstance(node, ast.FunctionDef):
+        func_ir = builder.build_function(node)
+        print(dump_ir(func_ir, "text"))   # or "tree" or "json"
+```
 
 ## Code Style
 
@@ -138,14 +258,12 @@ def make_dict() -> dict:
     d: dict = {"key": 1}
     return d
 '''
-        translator = TypedPythonTranslator("test")
-        result = translator.translate_source(source)
+        result = compile_source(source, "test")
         assert "mp_obj_new_dict" in result
 ```
 1. Define Python source as triple-quoted string
-2. Create `TypedPythonTranslator("test")`
-3. Call `translator.translate_source(source)`
-4. Assert on substrings in generated C
+2. Call `compile_source(source, "test")`
+3. Assert on substrings in generated C
 
 ### C runtime tests (test_c_runtime.py)
 Marked `@pytest.mark.c_runtime`. Requires gcc. Uses `compile_and_run` fixture:

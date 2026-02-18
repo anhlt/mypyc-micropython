@@ -451,7 +451,7 @@ if (n := len(data)) > 10:
 | **3 (Classes)** | Basic classes ✅, methods ✅, @dataclass ✅, single inheritance ✅, properties, @staticmethod |
 | **4 (Exceptions)** | `try`/`except`/`finally`, `raise`, custom exceptions |
 | **5 (Advanced)** | Simple closures, simple generators, `map()`/`filter()` |
-| **6 (Polish)** | RTuple optimization ✅ (47x speedup), list access optimization ✅, error messages, docs |
+| **6 (Polish)** | Full IR pipeline ✅, RTuple optimization ✅ (47x speedup), list access optimization ✅, 331 tests ✅ |
 
 ## See Also
 

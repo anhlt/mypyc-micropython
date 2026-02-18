@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 from mypyc_micropython.compiler import (
-    TypedPythonTranslator,
     compile_source,
     compile_to_micropython,
     sanitize_name,
@@ -34,16 +33,15 @@ class TestSanitizeName:
         assert sanitize_name("") == ""
 
 
-class TestTypedPythonTranslator:
-    """Tests for the TypedPythonTranslator class."""
+class TestCompileSource:
+    """Tests for the compile_source function."""
 
     def test_simple_function(self):
         source = """
 def add(a: int, b: int) -> int:
     return a + b
 """
-        translator = TypedPythonTranslator("test")
-        result = translator.translate_source(source)
+        result = compile_source(source, "test")
 
         assert "static mp_obj_t test_add" in result
         assert "mp_obj_get_int" in result
@@ -55,8 +53,7 @@ def add(a: int, b: int) -> int:
 def get_answer() -> int:
     return 42
 """
-        translator = TypedPythonTranslator("test")
-        result = translator.translate_source(source)
+        result = compile_source(source, "test")
 
         assert "static mp_obj_t test_get_answer(void)" in result
         assert "MP_DEFINE_CONST_FUN_OBJ_0" in result
@@ -67,8 +64,7 @@ def get_answer() -> int:
 def square(x: int) -> int:
     return x * 2
 """
-        translator = TypedPythonTranslator("test")
-        result = translator.translate_source(source)
+        result = compile_source(source, "test")
 
         assert "static mp_obj_t test_square(mp_obj_t x_obj)" in result
         assert "MP_DEFINE_CONST_FUN_OBJ_1" in result
@@ -78,8 +74,7 @@ def square(x: int) -> int:
 def add3(a: int, b: int, c: int) -> int:
     return a + b + c
 """
-        translator = TypedPythonTranslator("test")
-        result = translator.translate_source(source)
+        result = compile_source(source, "test")
 
         assert "MP_DEFINE_CONST_FUN_OBJ_3" in result
 
@@ -88,8 +83,7 @@ def add3(a: int, b: int, c: int) -> int:
 def add4(a: int, b: int, c: int, d: int) -> int:
     return a + b + c + d
 """
-        translator = TypedPythonTranslator("test")
-        result = translator.translate_source(source)
+        result = compile_source(source, "test")
 
         assert "MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN" in result
         assert "size_t n_args" in result
@@ -99,8 +93,7 @@ def add4(a: int, b: int, c: int, d: int) -> int:
 def multiply(a: float, b: float) -> float:
     return a * b
 """
-        translator = TypedPythonTranslator("test")
-        result = translator.translate_source(source)
+        result = compile_source(source, "test")
 
         assert "mp_float_t" in result
         assert "mp_get_float_checked" in result
@@ -111,8 +104,7 @@ def multiply(a: float, b: float) -> float:
 def is_positive(n: int) -> bool:
     return n > 0
 """
-        translator = TypedPythonTranslator("test")
-        result = translator.translate_source(source)
+        result = compile_source(source, "test")
         assert "mp_const_true" in result or "mp_const_false" in result
 
 
@@ -296,8 +288,7 @@ def abs_val(n: int) -> int:
     else:
         return n
 """
-        translator = TypedPythonTranslator("test")
-        result = translator.translate_source(source)
+        result = compile_source(source, "test")
 
         assert "if (" in result
         assert "} else {" in result
@@ -309,8 +300,7 @@ def factorial(n: int) -> int:
         return 1
     return n * factorial(n - 1)
 """
-        translator = TypedPythonTranslator("test")
-        result = translator.translate_source(source)
+        result = compile_source(source, "test")
 
         assert "test_factorial(" in result
         assert result.count("test_factorial") >= 2
@@ -321,8 +311,7 @@ def compute(x: int) -> int:
     result = x * 2
     return result
 """
-        translator = TypedPythonTranslator("test")
-        result = translator.translate_source(source)
+        result = compile_source(source, "test")
 
         assert "result =" in result
 
@@ -334,8 +323,7 @@ def func1() -> int:
 def func2() -> int:
     return 2
 """
-        translator = TypedPythonTranslator("test")
-        result = translator.translate_source(source)
+        result = compile_source(source, "test")
 
         assert "test_func1" in result
         assert "test_func2" in result
@@ -347,8 +335,7 @@ def func2() -> int:
 def hello() -> int:
     return 42
 """
-        translator = TypedPythonTranslator("mymod")
-        result = translator.translate_source(source)
+        result = compile_source(source, "mymod")
 
         assert "MP_REGISTER_MODULE(MP_QSTR_mymod" in result
         assert "mymod_module_globals" in result
@@ -363,8 +350,7 @@ def count_down(n: int) -> int:
         n = n - 1
     return total
 """
-        translator = TypedPythonTranslator("test")
-        result = translator.translate_source(source)
+        result = compile_source(source, "test")
 
         assert "while (" in result
         assert "n > 0" in result
@@ -375,8 +361,7 @@ def test() -> int:
     x: int = 10
     return x
 """
-        translator = TypedPythonTranslator("test")
-        result = translator.translate_source(source)
+        result = compile_source(source, "test")
 
         assert "mp_int_t x = 10" in result
 
@@ -386,14 +371,13 @@ def test(n: int) -> int:
     n += 5
     return n
 """
-        translator = TypedPythonTranslator("test")
-        result = translator.translate_source(source)
+        result = compile_source(source, "test")
 
         assert "n += 5" in result
 
 
-class TestCompileSource:
-    """Tests for the compile_source function."""
+class TestCompileSourceBasic:
+    """Tests for basic compile_source function usage."""
 
     def test_basic_compilation(self):
         source = "def add(a: int, b: int) -> int:\n    return a + b\n"
@@ -1282,8 +1266,7 @@ def create() -> dict:
 def lookup(d: dict, k: str):
     return d[k]
 """
-        translator = TypedPythonTranslator("dictmod")
-        result = translator.translate_source(source)
+        result = compile_source(source, "dictmod")
         assert "MP_REGISTER_MODULE(MP_QSTR_dictmod" in result
         assert "dictmod_create" in result
         assert "dictmod_lookup" in result
@@ -2524,3 +2507,150 @@ def get_first(item: object) -> int:
         assert "->items[1]" in result
         assert "mp_obj_get_int" in result
         assert "p.f0" in result
+
+
+class TestTempVariableCollision:
+    """Tests to prevent temp variable name collisions between IR builder and emitter."""
+
+    def test_multiple_for_iter_loops_no_collision(self):
+        """Multiple for-iter loops should use unique temp variable names."""
+        source = """
+def merge_dicts(d1: dict, d2: dict) -> dict:
+    result: dict = {}
+    key: object
+    for key in d1.keys():
+        result[key] = d1[key]
+    for key in d2.keys():
+        result[key] = d2[key]
+    return result
+"""
+        result = compile_source(source, "test")
+        import re
+
+        temp_decls = re.findall(r"(mp_obj_t|mp_obj_iter_buf_t)\s+(_tmp\d+)", result)
+        temp_names = [name for _, name in temp_decls]
+        assert len(temp_names) == len(set(temp_names)), (
+            f"Duplicate temp variable declarations found: {temp_names}"
+        )
+
+    def test_for_iter_after_prelude_instructions(self):
+        """For-iter temps should not collide with prelude instruction temps."""
+        source = """
+def process_items(items: list) -> int:
+    total: int = 0
+    item: object
+    for item in items:
+        total = total + len(item)
+    return total
+"""
+        result = compile_source(source, "test")
+        import re
+
+        temp_decls = re.findall(r"(mp_obj_t|mp_obj_iter_buf_t)\s+(_tmp\d+)", result)
+        temp_names = [name for _, name in temp_decls]
+        assert len(temp_names) == len(set(temp_names)), (
+            f"Duplicate temp variable declarations found: {temp_names}"
+        )
+
+    def test_nested_calls_with_for_iter(self):
+        """Complex expressions with for-iter should have unique temps."""
+        source = """
+def sum_values(d: dict) -> int:
+    total: int = 0
+    k: object
+    for k in d.keys():
+        v: int = d.get(k, 0)
+        total = total + v
+    return total
+"""
+        result = compile_source(source, "test")
+        import re
+
+        temp_decls = re.findall(r"(mp_obj_t|mp_obj_iter_buf_t)\s+(_tmp\d+)", result)
+        temp_names = [name for _, name in temp_decls]
+        assert len(temp_names) == len(set(temp_names)), (
+            f"Duplicate temp variable declarations found: {temp_names}"
+        )
+
+
+class TestEmptyContainerEmission:
+    """Tests for proper emission of empty containers in various contexts."""
+
+    def test_empty_list_in_class_init(self):
+        """Empty list assignment in __init__ should emit mp_obj_new_list(0, NULL)."""
+        source = """
+class Container:
+    items: list
+
+    def __init__(self) -> None:
+        self.items = []
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_list(0, NULL)" in result
+        assert "/* unknown constant */" not in result
+
+    def test_empty_dict_in_class_init(self):
+        """Empty dict assignment in __init__ should emit mp_obj_new_dict(0)."""
+        source = """
+class Cache:
+    data: dict
+
+    def __init__(self) -> None:
+        self.data = {}
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_dict(0)" in result
+        assert "/* unknown constant */" not in result
+
+    def test_empty_list_and_dict_in_same_init(self):
+        """Multiple empty containers in same __init__ should all emit properly."""
+        source = """
+class Inventory:
+    items: list
+    counts: dict
+
+    def __init__(self) -> None:
+        self.items = []
+        self.counts = {}
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_new_list(0, NULL)" in result
+        assert "mp_obj_new_dict(0)" in result
+        assert "/* unknown constant */" not in result
+
+    def test_empty_containers_in_regular_method(self):
+        """Empty containers in non-init methods should also emit properly."""
+        source = """
+class Resettable:
+    items: list
+
+    def __init__(self) -> None:
+        self.items = []
+
+    def reset(self) -> None:
+        self.items = []
+"""
+        result = compile_source(source, "test")
+        assert result.count("mp_obj_new_list(0, NULL)") == 2
+        assert "/* unknown constant */" not in result
+
+    def test_no_unknown_constant_comments(self):
+        """Compiled code should never contain unknown constant placeholders."""
+        source = """
+class DataStore:
+    items: list
+    cache: dict
+    total: int
+
+    def __init__(self) -> None:
+        self.items = []
+        self.cache = {}
+        self.total = 0
+
+    def clear(self) -> None:
+        self.items = []
+        self.cache = {}
+        self.total = 0
+"""
+        result = compile_source(source, "test")
+        assert "/* unknown constant */" not in result
