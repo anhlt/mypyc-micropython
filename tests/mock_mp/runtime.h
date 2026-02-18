@@ -670,6 +670,102 @@ static inline mp_obj_t mp_call_method_n_kw(size_t n_args, size_t n_kw, const mp_
     return method(total, call_args);
 }
 
+#define MP_OBJ_FROM_PTR(p) ((mp_obj_t)(p))
+
+#define MP_MOCK_BUILTIN_TAG_MIN 1001
+#define MP_MOCK_BUILTIN_TAG_MAX 1002
+#define MP_MOCK_BUILTIN_TAG_SUM 1003
+
+typedef struct {
+    int tag;
+} mp_builtin_obj_t;
+
+static mp_builtin_obj_t mp_builtin_min_obj = { MP_MOCK_BUILTIN_TAG_MIN };
+static mp_builtin_obj_t mp_builtin_max_obj = { MP_MOCK_BUILTIN_TAG_MAX };
+static mp_builtin_obj_t mp_builtin_sum_obj = { MP_MOCK_BUILTIN_TAG_SUM };
+
+static mp_obj_t mp_mock_builtin_min(size_t n_args, const mp_obj_t *args) {
+    if (n_args < 2) {
+        mp_mock_abort("min() requires at least 2 arguments");
+    }
+    mp_int_t result = mp_obj_get_int(args[0]);
+    for (size_t i = 1; i < n_args; i++) {
+        mp_int_t val = mp_obj_get_int(args[i]);
+        if (val < result) {
+            result = val;
+        }
+    }
+    return mp_obj_new_int(result);
+}
+
+static mp_obj_t mp_mock_builtin_max(size_t n_args, const mp_obj_t *args) {
+    if (n_args < 2) {
+        mp_mock_abort("max() requires at least 2 arguments");
+    }
+    mp_int_t result = mp_obj_get_int(args[0]);
+    for (size_t i = 1; i < n_args; i++) {
+        mp_int_t val = mp_obj_get_int(args[i]);
+        if (val > result) {
+            result = val;
+        }
+    }
+    return mp_obj_new_int(result);
+}
+
+static mp_obj_t mp_mock_builtin_sum(size_t n_args, const mp_obj_t *args) {
+    mp_int_t total = 0;
+    if (n_args >= 2) {
+        total = mp_obj_get_int(args[1]);
+    }
+    mp_obj_list_struct *list = mp_mock_list_from_obj(args[0]);
+    for (size_t i = 0; i < list->len; i++) {
+        total += mp_obj_get_int(list->items[i]);
+    }
+    return mp_obj_new_int(total);
+}
+
+static inline mp_obj_t mp_call_function_1(mp_obj_t fun, mp_obj_t arg) {
+    mp_builtin_obj_t *builtin = (mp_builtin_obj_t *)fun;
+    if (builtin->tag == MP_MOCK_BUILTIN_TAG_MIN) {
+        mp_mock_abort("min() requires at least 2 arguments");
+    }
+    if (builtin->tag == MP_MOCK_BUILTIN_TAG_MAX) {
+        mp_mock_abort("max() requires at least 2 arguments");
+    }
+    if (builtin->tag == MP_MOCK_BUILTIN_TAG_SUM) {
+        mp_obj_t args[1] = { arg };
+        return mp_mock_builtin_sum(1, args);
+    }
+    mp_mock_abort("mp_call_function_1: unknown builtin");
+    return mp_const_none;
+}
+
+static inline mp_obj_t mp_call_function_2(mp_obj_t fun, mp_obj_t arg1, mp_obj_t arg2) {
+    mp_builtin_obj_t *builtin = (mp_builtin_obj_t *)fun;
+    if (builtin->tag == MP_MOCK_BUILTIN_TAG_SUM) {
+        mp_obj_t args[2] = { arg1, arg2 };
+        return mp_mock_builtin_sum(2, args);
+    }
+    mp_mock_abort("mp_call_function_2: not implemented in mock");
+    return mp_const_none;
+}
+
+static inline mp_obj_t mp_call_function_n_kw(mp_obj_t fun, size_t n_args, size_t n_kw, const mp_obj_t *args) {
+    (void)n_kw;
+    mp_builtin_obj_t *builtin = (mp_builtin_obj_t *)fun;
+    if (builtin->tag == MP_MOCK_BUILTIN_TAG_MIN) {
+        return mp_mock_builtin_min(n_args, args);
+    }
+    if (builtin->tag == MP_MOCK_BUILTIN_TAG_MAX) {
+        return mp_mock_builtin_max(n_args, args);
+    }
+    if (builtin->tag == MP_MOCK_BUILTIN_TAG_SUM) {
+        return mp_mock_builtin_sum(n_args, args);
+    }
+    mp_mock_abort("mp_call_function_n_kw: unknown builtin");
+    return mp_const_none;
+}
+
 #define MP_ROM_QSTR(x) ((mp_obj_t)(uintptr_t)0)
 #define MP_ROM_PTR(x) ((mp_obj_t)(x))
 

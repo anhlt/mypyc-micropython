@@ -595,6 +595,120 @@ def print_expr(a: int, b: int) -> None:
         assert "mp_obj_print_helper(&mp_plat_print" in result
         assert "a + b" in result or "(a + b)" in result
 
+    def test_bool_builtin(self):
+        source = """
+def to_bool(x: int) -> bool:
+    return bool(x)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_is_true" in result
+
+    def test_bool_builtin_on_object(self):
+        source = """
+def is_truthy(lst: list) -> bool:
+    return bool(lst)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_is_true" in result
+
+    def test_min_two_args(self):
+        source = """
+def get_min(a: int, b: int) -> int:
+    return min(a, b)
+"""
+        result = compile_source(source, "test")
+        assert "((a) < (b) ? (a) : (b))" in result
+
+    def test_min_three_args(self):
+        source = """
+def get_min3(a: int, b: int, c: int) -> int:
+    return min(a, b, c)
+"""
+        result = compile_source(source, "test")
+        assert "((a) < (b)" in result
+        assert "((a) < (c)" in result
+        assert "((b) < (c)" in result
+
+    def test_min_iterable(self):
+        source = """
+def min_of_list(lst: list) -> int:
+    return min(lst)
+"""
+        result = compile_source(source, "test")
+        assert "mp_builtin_min_obj" in result
+        assert "mp_call_function_1" in result
+
+    def test_max_two_args(self):
+        source = """
+def get_max(a: int, b: int) -> int:
+    return max(a, b)
+"""
+        result = compile_source(source, "test")
+        assert "((a) > (b) ? (a) : (b))" in result
+
+    def test_max_three_args(self):
+        source = """
+def get_max3(a: int, b: int, c: int) -> int:
+    return max(a, b, c)
+"""
+        result = compile_source(source, "test")
+        assert "((a) > (b)" in result
+        assert "((a) > (c)" in result
+        assert "((b) > (c)" in result
+
+    def test_max_iterable(self):
+        source = """
+def max_of_list(lst: list) -> int:
+    return max(lst)
+"""
+        result = compile_source(source, "test")
+        assert "mp_builtin_max_obj" in result
+        assert "mp_call_function_1" in result
+
+    def test_sum_iterable(self):
+        source = """
+def sum_list(lst: list) -> int:
+    return sum(lst)
+"""
+        result = compile_source(source, "test")
+        assert "mp_builtin_sum_obj" in result
+
+    def test_sum_with_start(self):
+        source = """
+def sum_with_start(lst: list, start: int) -> int:
+    return sum(lst, start)
+"""
+        result = compile_source(source, "test")
+        assert "mp_builtin_sum_obj" in result
+        assert "mp_call_function_2" in result
+
+    def test_sum_typed_list_int_optimized(self):
+        source = """
+def sum_int_list(nums: list[int]) -> int:
+    return sum(nums)
+"""
+        result = compile_source(source, "test")
+        assert "mp_list_sum_int(nums)" in result
+        assert "mp_builtin_sum_obj" not in result
+
+    def test_sum_typed_list_float_optimized(self):
+        source = """
+def sum_float_list(nums: list[float]) -> float:
+    return sum(nums)
+"""
+        result = compile_source(source, "test")
+        assert "mp_list_sum_float(nums)" in result
+        assert "mp_builtin_sum_obj" not in result
+
+    def test_sum_untyped_list_not_optimized(self):
+        source = """
+def sum_any_list(lst: list) -> int:
+    return sum(lst)
+"""
+        result = compile_source(source, "test")
+        assert "mp_builtin_sum_obj" in result
+        assert "mp_list_sum_int" not in result
+
 
 class TestTernaryExpression:
     """Tests for ternary expression translation."""

@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `bool()` builtin function for truthiness checks via `mp_obj_is_true()`
+- `min()` builtin function with 2+ arguments (e.g., `min(a, b)`, `min(a, b, c)`)
+- `max()` builtin function with 2+ arguments (e.g., `max(a, b)`, `max(a, b, c)`)
+- `sum()` builtin function for iterables with optional start value (e.g., `sum(lst)`, `sum(lst, 10)`)
+- **Optimized `sum()` for typed lists**: `sum(lst)` where `lst: list[int]` or `lst: list[float]` generates inline C loop instead of runtime call
+- List element type tracking in IR builder for optimization decisions
+- `mp_list_sum_int()` and `mp_list_sum_float()` inline helper functions
+- `examples/builtins_demo.py` - demonstrating bool, min, max, sum builtins
+- C runtime tests for new builtins (11 tests including typed list sum)
 - `print()` builtin function support with space separator and trailing newline
 - `print_test.py` example demonstrating print functionality
 - Fallthrough `return mp_const_none;` for void functions without explicit return

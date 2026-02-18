@@ -674,6 +674,136 @@ def test_set_operations():
     )
 
 
+def test_builtins_demo():
+    """Test builtins_demo module (bool, min, max, sum)."""
+    print("\n[TEST] Testing builtins_demo module...")
+
+    # bool() builtin
+    test(
+        "is_truthy(1)",
+        "import builtins_demo as b; print(b.is_truthy(1))",
+        "True",
+    )
+
+    test(
+        "is_truthy(0)",
+        "import builtins_demo as b; print(b.is_truthy(0))",
+        "False",
+    )
+
+    test(
+        "is_list_empty([])",
+        "import builtins_demo as b; print(b.is_list_empty([]))",
+        "True",
+    )
+
+    test(
+        "is_list_empty([1])",
+        "import builtins_demo as b; print(b.is_list_empty([1]))",
+        "False",
+    )
+
+    # min() builtin
+    test(
+        "find_min_two(5, 3)",
+        "import builtins_demo as b; print(b.find_min_two(5, 3))",
+        "3",
+    )
+
+    test(
+        "find_min_three(7, 2, 9)",
+        "import builtins_demo as b; print(b.find_min_three(7, 2, 9))",
+        "2",
+    )
+
+    # max() builtin
+    test(
+        "find_max_two(5, 3)",
+        "import builtins_demo as b; print(b.find_max_two(5, 3))",
+        "5",
+    )
+
+    test(
+        "find_max_three(7, 2, 9)",
+        "import builtins_demo as b; print(b.find_max_three(7, 2, 9))",
+        "9",
+    )
+
+    # sum() builtin
+    test(
+        "sum_list([1, 2, 3, 4, 5])",
+        "import builtins_demo as b; print(b.sum_list([1, 2, 3, 4, 5]))",
+        "15",
+    )
+
+    test(
+        "sum_list_with_start([1, 2, 3], 10)",
+        "import builtins_demo as b; print(b.sum_list_with_start([1, 2, 3], 10))",
+        "16",
+    )
+
+    # Combination functions
+    test(
+        "clamp(5, 0, 10)",
+        "import builtins_demo as b; print(b.clamp(5, 0, 10))",
+        "5",
+    )
+
+    test(
+        "clamp(-5, 0, 10)",
+        "import builtins_demo as b; print(b.clamp(-5, 0, 10))",
+        "0",
+    )
+
+    test(
+        "clamp(15, 0, 10)",
+        "import builtins_demo as b; print(b.clamp(15, 0, 10))",
+        "10",
+    )
+
+    test(
+        "abs_diff(10, 3)",
+        "import builtins_demo as b; print(b.abs_diff(10, 3))",
+        "7",
+    )
+
+    test(
+        "abs_diff(3, 10)",
+        "import builtins_demo as b; print(b.abs_diff(3, 10))",
+        "7",
+    )
+
+    test(
+        "clamp_list([1, 5, 10, 15], 3, 12)",
+        "import builtins_demo as b; print(b.clamp_list([1, 5, 10, 15], 3, 12))",
+        "[3, 5, 10, 12]",
+    )
+
+    test(
+        "find_extremes_sum([1, 5, 3, 9, 2])",
+        "import builtins_demo as b; print(b.find_extremes_sum([1, 5, 3, 9, 2]))",
+        "10",
+    )
+
+    test(
+        "sum_int_list([1, 2, 3, 4, 5])",
+        "import builtins_demo as b; print(b.sum_int_list([1, 2, 3, 4, 5]))",
+        "15",
+    )
+
+    test(
+        "sum_int_list(range(101))",
+        "import builtins_demo as b; print(b.sum_int_list(list(range(101))))",
+        "5050",
+    )
+
+    test(
+        "sum_int_list([])",
+        "import builtins_demo as b; print(b.sum_int_list([]))",
+        "0",
+    )
+
+
 def run_all_tests():
     """Run all test suites."""
     global total_tests, passed_tests, failed_tests
@@ -700,6 +830,7 @@ def run_all_tests():
     test_inventory()
     test_tuple_operations()
     test_set_operations()
+    test_builtins_demo()
 
     # Print summary
     print("\n" + "=" * 70)

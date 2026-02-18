@@ -186,6 +186,7 @@ def compile_source(source: str, module_name: str = "mymodule") -> str:
 
     uses_print = False
     uses_list_opt = False
+    uses_builtins = False
     used_rtuples: set[RTuple] = set()
 
     for node in ast.iter_child_nodes(tree):
@@ -206,6 +207,8 @@ def compile_source(source: str, module_name: str = "mymodule") -> str:
                 uses_print = True
             if func_ir.uses_list_opt:
                 uses_list_opt = True
+            if func_ir.uses_builtins:
+                uses_builtins = True
             used_rtuples.update(func_ir.used_rtuples)
 
     module_ir.resolve_base_classes()
@@ -240,6 +243,7 @@ def compile_source(source: str, module_name: str = "mymodule") -> str:
         module_ir,
         uses_print=uses_print,
         uses_list_opt=uses_list_opt,
+        uses_builtins=uses_builtins,
         used_rtuples=used_rtuples,
     )
 

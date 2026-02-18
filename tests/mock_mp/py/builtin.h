@@ -1,0 +1,4 @@
+#ifndef MYPYC_MOCK_BUILTIN_H
+#define MYPYC_MOCK_BUILTIN_H
+
+#endif

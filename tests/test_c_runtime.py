@@ -922,3 +922,240 @@ int main(void) {
 """
     stdout = compile_and_run(source, "test", test_main_c)
     assert stdout.strip() == "15"
+
+
+def test_c_bool_builtin_truthy(compile_and_run):
+    source = """
+def check_truthy(x: int) -> bool:
+    return bool(x)
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result1 = test_check_truthy(mp_obj_new_int(42));
+    mp_obj_t result2 = test_check_truthy(mp_obj_new_int(0));
+    mp_obj_t result3 = test_check_truthy(mp_obj_new_int(-1));
+    printf("%d\\n", result1 == mp_const_true ? 1 : 0);
+    printf("%d\\n", result2 == mp_const_false ? 1 : 0);
+    printf("%d\\n", result3 == mp_const_true ? 1 : 0);
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["1", "1", "1"]
+
+
+def test_c_bool_builtin_list(compile_and_run):
+    source = """
+def check_bool_int(x: int) -> bool:
+    return bool(x)
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t zero = test_check_bool_int(mp_obj_new_int(0));
+    mp_obj_t nonzero = test_check_bool_int(mp_obj_new_int(5));
+    mp_obj_t negative = test_check_bool_int(mp_obj_new_int(-3));
+    printf("%d\\n", mp_obj_is_true(zero) ? 1 : 0);
+    printf("%d\\n", mp_obj_is_true(nonzero) ? 1 : 0);
+    printf("%d\\n", mp_obj_is_true(negative) ? 1 : 0);
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["0", "1", "1"]
+
+
+def test_c_min_two_args(compile_and_run):
+    source = """
+def get_smaller(a: int, b: int) -> int:
+    return min(a, b)
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t r1 = test_get_smaller(mp_obj_new_int(10), mp_obj_new_int(20));
+    mp_obj_t r2 = test_get_smaller(mp_obj_new_int(30), mp_obj_new_int(5));
+    printf("%ld\\n", (long)mp_obj_get_int(r1));
+    printf("%ld\\n", (long)mp_obj_get_int(r2));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["10", "5"]
+
+
+def test_c_max_two_args(compile_and_run):
+    source = """
+def get_larger(a: int, b: int) -> int:
+    return max(a, b)
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t r1 = test_get_larger(mp_obj_new_int(10), mp_obj_new_int(20));
+    mp_obj_t r2 = test_get_larger(mp_obj_new_int(30), mp_obj_new_int(5));
+    printf("%ld\\n", (long)mp_obj_get_int(r1));
+    printf("%ld\\n", (long)mp_obj_get_int(r2));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["20", "30"]
+
+
+def test_c_min_three_args(compile_and_run):
+    source = """
+def get_smallest(a: int, b: int, c: int) -> int:
+    return min(a, b, c)
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result = test_get_smallest(mp_obj_new_int(15), mp_obj_new_int(8), mp_obj_new_int(12));
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "8"
+
+
+def test_c_max_three_args(compile_and_run):
+    source = """
+def get_largest(a: int, b: int, c: int) -> int:
+    return max(a, b, c)
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result = test_get_largest(mp_obj_new_int(15), mp_obj_new_int(8), mp_obj_new_int(12));
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "15"
+
+
+def test_c_sum_builtin(compile_and_run):
+    source = """
+def sum_all(lst: list) -> int:
+    return sum(lst)
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t items[] = {
+        mp_obj_new_int(1),
+        mp_obj_new_int(2),
+        mp_obj_new_int(3),
+        mp_obj_new_int(4),
+    };
+    mp_obj_t list = mp_obj_new_list(4, items);
+    mp_obj_t result = test_sum_all(list);
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "10"
+
+
+def test_c_sum_with_start(compile_and_run):
+    source = """
+def sum_with_offset(lst: list, start: int) -> int:
+    return sum(lst, start)
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t items[] = {
+        mp_obj_new_int(1),
+        mp_obj_new_int(2),
+        mp_obj_new_int(3),
+    };
+    mp_obj_t list = mp_obj_new_list(3, items);
+    mp_obj_t result = test_sum_with_offset(list, mp_obj_new_int(100));
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "106"
+
+
+def test_c_sum_typed_list_int_optimized(compile_and_run):
+    source = """
+def sum_ints(nums: list[int]) -> int:
+    return sum(nums)
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t items[] = {
+        mp_obj_new_int(10),
+        mp_obj_new_int(20),
+        mp_obj_new_int(30),
+        mp_obj_new_int(40),
+    };
+    mp_obj_t list = mp_obj_new_list(4, items);
+    mp_obj_t result = test_sum_ints(list);
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "100"
+
+
+def test_c_sum_typed_list_float_optimized(compile_and_run):
+    source = """
+def sum_floats(nums: list[float]) -> float:
+    return sum(nums)
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t items[] = {
+        mp_obj_new_float(1.5),
+        mp_obj_new_float(2.5),
+        mp_obj_new_float(3.0),
+    };
+    mp_obj_t list = mp_obj_new_list(3, items);
+    mp_obj_t result = test_sum_floats(list);
+    printf("%.1f\\n", mp_obj_float_get(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "7.0"
+
+
+def test_c_sum_typed_list_empty(compile_and_run):
+    source = """
+def sum_empty(nums: list[int]) -> int:
+    return sum(nums)
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t list = mp_obj_new_list(0, NULL);
+    mp_obj_t result = test_sum_empty(list);
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "0"

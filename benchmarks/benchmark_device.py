@@ -77,6 +77,29 @@ def py_rtuple_benchmark(n: int) -> int:
     return total
 
 
+def py_sum_builtin(lst: list) -> int:
+    """Sum list using builtin sum()"""
+    return sum(lst)
+
+
+def py_sum_typed_list(lst: list) -> int:
+    return sum(lst)
+
+
+def py_min_max_clamp(values: list, low: int, high: int) -> list:
+    """Clamp each value to [low, high] using min/max"""
+    result: list = []
+    for v in values:
+        clamped = max(low, min(v, high))
+        result.append(clamped)
+    return result
+
+
+def py_find_extremes(lst: list) -> int:
+    """Find min and max of list, return their sum"""
+    return min(lst) + max(lst)
+
+
 # ============================================================
 # BENCHMARK RUNNER
 # ============================================================
@@ -133,6 +156,15 @@ def run_benchmarks():
     except ImportError:
         has_tuple_ops = False
         print("[SKIP] tuple_operations not available")
+
+    try:
+        import builtins_demo as native_builtins
+
+        has_builtins = True
+        print("[OK] builtins_demo (native C module) loaded")
+    except ImportError:
+        has_builtins = False
+        print("[SKIP] builtins_demo not available")
 
     print()
     print("-" * 60)
@@ -217,6 +249,42 @@ def run_benchmarks():
         speedup = python_us / native_us if native_us > 0 else 0
         print(f"{'list_of_tuples(500)':<25} {native_us:<12} {python_us:<12} {speedup:.1f}x")
         results.append(("list_of_tuples(500)", native_us, python_us, speedup))
+
+    if has_builtins:
+        lst = list(range(1000))
+        native_us, native_res = benchmark("sum_builtin", native_builtins.sum_list, (lst,))
+        python_us, python_res = benchmark("sum_builtin", py_sum_builtin, (lst,))
+        speedup = python_us / native_us if native_us > 0 else 0
+        print(f"{'sum_builtin(1000)':<25} {native_us:<12} {python_us:<12} {speedup:.1f}x")
+        results.append(("sum_builtin(1000)", native_us, python_us, speedup))
+
+    if has_builtins:
+        lst = list(range(1000))
+        native_us, native_res = benchmark("sum_typed_list", native_builtins.sum_int_list, (lst,))
+        python_us, python_res = benchmark("sum_typed_list", py_sum_typed_list, (lst,))
+        speedup = python_us / native_us if native_us > 0 else 0
+        print(f"{'sum_typed_list(1000)':<25} {native_us:<12} {python_us:<12} {speedup:.1f}x")
+        results.append(("sum_typed_list(1000)", native_us, python_us, speedup))
+
+    if has_builtins:
+        values = list(range(-100, 100))
+        native_us, native_res = benchmark(
+            "min_max_clamp", native_builtins.clamp_list, (values, 0, 50)
+        )
+        python_us, python_res = benchmark("min_max_clamp", py_min_max_clamp, (values, 0, 50))
+        speedup = python_us / native_us if native_us > 0 else 0
+        print(f"{'min_max_clamp(200)':<25} {native_us:<12} {python_us:<12} {speedup:.1f}x")
+        results.append(("min_max_clamp(200)", native_us, python_us, speedup))
+
+    if has_builtins:
+        lst = list(range(1, 1001))
+        native_us, native_res = benchmark(
+            "find_extremes", native_builtins.find_extremes_sum, (lst,)
+        )
+        python_us, python_res = benchmark("find_extremes", py_find_extremes, (lst,))
+        speedup = python_us / native_us if native_us > 0 else 0
+        print(f"{'find_extremes(1000)':<25} {native_us:<12} {python_us:<12} {speedup:.1f}x")
+        results.append(("find_extremes(1000)", native_us, python_us, speedup))
 
     print("-" * 60)
 

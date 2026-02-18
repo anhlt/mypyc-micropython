@@ -669,6 +669,99 @@ class FunctionEmitter:
             return "mp_obj_new_dict(0)", "mp_obj_t"
         elif func == "dict" and args:
             return f"mp_obj_dict_copy({args[0][0]})", "mp_obj_t"
+        elif func == "bool" and args:
+            arg_expr, arg_type = args[0]
+            if arg_type == "bool":
+                return arg_expr, "bool"
+            boxed = self._box_value(arg_expr, arg_type)
+            return f"mp_obj_is_true({boxed})", "bool"
+        elif func == "min":
+            if len(args) == 2:
+                a_expr, a_type = args[0]
+                b_expr, b_type = args[1]
+                if a_type == "mp_int_t" and b_type == "mp_int_t":
+                    return f"(({a_expr}) < ({b_expr}) ? ({a_expr}) : ({b_expr}))", "mp_int_t"
+                elif a_type == "mp_float_t" and b_type == "mp_float_t":
+                    return f"(({a_expr}) < ({b_expr}) ? ({a_expr}) : ({b_expr}))", "mp_float_t"
+            elif len(args) == 3:
+                a_expr, a_type = args[0]
+                b_expr, b_type = args[1]
+                c_expr, c_type = args[2]
+                if a_type == "mp_int_t" and b_type == "mp_int_t" and c_type == "mp_int_t":
+                    return (
+                        f"(({a_expr}) < ({b_expr}) ? "
+                        f"(({a_expr}) < ({c_expr}) ? ({a_expr}) : ({c_expr})) : "
+                        f"(({b_expr}) < ({c_expr}) ? ({b_expr}) : ({c_expr})))",
+                        "mp_int_t",
+                    )
+            self.func_ir.uses_builtins = True
+            if len(args) == 1:
+                boxed = self._box_value(args[0][0], args[0][1])
+                return (
+                    f"mp_obj_get_int(mp_call_function_1(MP_OBJ_FROM_PTR(&mp_builtin_min_obj), {boxed}))",
+                    "mp_int_t",
+                )
+            elif len(args) >= 2:
+                boxed_args = [self._box_value(a[0], a[1]) for a in args]
+                args_str = ", ".join(boxed_args)
+                return (
+                    f"mp_obj_get_int(mp_call_function_n_kw(MP_OBJ_FROM_PTR(&mp_builtin_min_obj), {len(args)}, 0, (const mp_obj_t[]){{{args_str}}}))",
+                    "mp_int_t",
+                )
+        elif func == "max":
+            if len(args) == 2:
+                a_expr, a_type = args[0]
+                b_expr, b_type = args[1]
+                if a_type == "mp_int_t" and b_type == "mp_int_t":
+                    return f"(({a_expr}) > ({b_expr}) ? ({a_expr}) : ({b_expr}))", "mp_int_t"
+                elif a_type == "mp_float_t" and b_type == "mp_float_t":
+                    return f"(({a_expr}) > ({b_expr}) ? ({a_expr}) : ({b_expr}))", "mp_float_t"
+            elif len(args) == 3:
+                a_expr, a_type = args[0]
+                b_expr, b_type = args[1]
+                c_expr, c_type = args[2]
+                if a_type == "mp_int_t" and b_type == "mp_int_t" and c_type == "mp_int_t":
+                    return (
+                        f"(({a_expr}) > ({b_expr}) ? "
+                        f"(({a_expr}) > ({c_expr}) ? ({a_expr}) : ({c_expr})) : "
+                        f"(({b_expr}) > ({c_expr}) ? ({b_expr}) : ({c_expr})))",
+                        "mp_int_t",
+                    )
+            self.func_ir.uses_builtins = True
+            if len(args) == 1:
+                boxed = self._box_value(args[0][0], args[0][1])
+                return (
+                    f"mp_obj_get_int(mp_call_function_1(MP_OBJ_FROM_PTR(&mp_builtin_max_obj), {boxed}))",
+                    "mp_int_t",
+                )
+            elif len(args) >= 2:
+                boxed_args = [self._box_value(a[0], a[1]) for a in args]
+                args_str = ", ".join(boxed_args)
+                return (
+                    f"mp_obj_get_int(mp_call_function_n_kw(MP_OBJ_FROM_PTR(&mp_builtin_max_obj), {len(args)}, 0, (const mp_obj_t[]){{{args_str}}}))",
+                    "mp_int_t",
+                )
+        elif func == "sum":
+            if call.is_typed_list_sum and call.sum_list_var and len(args) == 1:
+                list_var = sanitize_name(call.sum_list_var)
+                if call.sum_element_type == "float":
+                    return f"mp_list_sum_float({list_var})", "mp_float_t"
+                else:
+                    return f"mp_list_sum_int({list_var})", "mp_int_t"
+            self.func_ir.uses_builtins = True
+            if len(args) == 1:
+                boxed = self._box_value(args[0][0], args[0][1])
+                return (
+                    f"mp_obj_get_int(mp_call_function_1(MP_OBJ_FROM_PTR(&mp_builtin_sum_obj), {boxed}))",
+                    "mp_int_t",
+                )
+            elif len(args) == 2:
+                boxed_iter = self._box_value(args[0][0], args[0][1])
+                boxed_start = self._box_value(args[1][0], args[1][1])
+                return (
+                    f"mp_obj_get_int(mp_call_function_2(MP_OBJ_FROM_PTR(&mp_builtin_sum_obj), {boxed_iter}, {boxed_start}))",
+                    "mp_int_t",
+                )
 
         return "/* unsupported builtin */", "mp_obj_t"
 
@@ -1310,6 +1403,104 @@ class MethodEmitter:
                 return (
                     f"mp_call_function_n_kw(MP_OBJ_FROM_PTR(&mp_type_range), 3, 0, (const mp_obj_t[]){{{boxed_args[0]}, {boxed_args[1]}, {boxed_args[2]}}})",
                     "mp_obj_t",
+                )
+        elif func == "list" and not args:
+            return "mp_obj_new_list(0, NULL)", "mp_obj_t"
+        elif func == "tuple" and not args:
+            return "mp_const_empty_tuple", "mp_obj_t"
+        elif func == "tuple" and args:
+            return f"mp_call_function_1(MP_OBJ_FROM_PTR(&mp_type_tuple), {args[0][0]})", "mp_obj_t"
+        elif func == "set" and not args:
+            return "mp_obj_new_set(0, NULL)", "mp_obj_t"
+        elif func == "set" and args:
+            return f"mp_call_function_1(MP_OBJ_FROM_PTR(&mp_type_set), {args[0][0]})", "mp_obj_t"
+        elif func == "dict" and not args:
+            return "mp_obj_new_dict(0)", "mp_obj_t"
+        elif func == "dict" and args:
+            return f"mp_obj_dict_copy({args[0][0]})", "mp_obj_t"
+        elif func == "bool" and args:
+            arg_expr, arg_type = args[0]
+            if arg_type == "bool":
+                return arg_expr, "bool"
+            boxed = self._box_value(arg_expr, arg_type)
+            return f"mp_obj_is_true({boxed})", "bool"
+        elif func == "min":
+            if len(args) == 2:
+                a_expr, a_type = args[0]
+                b_expr, b_type = args[1]
+                if a_type == "mp_int_t" and b_type == "mp_int_t":
+                    return f"(({a_expr}) < ({b_expr}) ? ({a_expr}) : ({b_expr}))", "mp_int_t"
+                elif a_type == "mp_float_t" and b_type == "mp_float_t":
+                    return f"(({a_expr}) < ({b_expr}) ? ({a_expr}) : ({b_expr}))", "mp_float_t"
+            elif len(args) == 3:
+                a_expr, a_type = args[0]
+                b_expr, b_type = args[1]
+                c_expr, c_type = args[2]
+                if a_type == "mp_int_t" and b_type == "mp_int_t" and c_type == "mp_int_t":
+                    return (
+                        f"(({a_expr}) < ({b_expr}) ? "
+                        f"(({a_expr}) < ({c_expr}) ? ({a_expr}) : ({c_expr})) : "
+                        f"(({b_expr}) < ({c_expr}) ? ({b_expr}) : ({c_expr})))",
+                        "mp_int_t",
+                    )
+            if len(args) == 1:
+                boxed = self._box_value(args[0][0], args[0][1])
+                return (
+                    f"mp_obj_get_int(mp_call_function_1(MP_OBJ_FROM_PTR(&mp_builtin_min_obj), {boxed}))",
+                    "mp_int_t",
+                )
+            elif len(args) >= 2:
+                boxed_args = [self._box_value(a[0], a[1]) for a in args]
+                args_str = ", ".join(boxed_args)
+                return (
+                    f"mp_obj_get_int(mp_call_function_n_kw(MP_OBJ_FROM_PTR(&mp_builtin_min_obj), {len(args)}, 0, (const mp_obj_t[]){{{args_str}}}))",
+                    "mp_int_t",
+                )
+        elif func == "max":
+            if len(args) == 2:
+                a_expr, a_type = args[0]
+                b_expr, b_type = args[1]
+                if a_type == "mp_int_t" and b_type == "mp_int_t":
+                    return f"(({a_expr}) > ({b_expr}) ? ({a_expr}) : ({b_expr}))", "mp_int_t"
+                elif a_type == "mp_float_t" and b_type == "mp_float_t":
+                    return f"(({a_expr}) > ({b_expr}) ? ({a_expr}) : ({b_expr}))", "mp_float_t"
+            elif len(args) == 3:
+                a_expr, a_type = args[0]
+                b_expr, b_type = args[1]
+                c_expr, c_type = args[2]
+                if a_type == "mp_int_t" and b_type == "mp_int_t" and c_type == "mp_int_t":
+                    return (
+                        f"(({a_expr}) > ({b_expr}) ? "
+                        f"(({a_expr}) > ({c_expr}) ? ({a_expr}) : ({c_expr})) : "
+                        f"(({b_expr}) > ({c_expr}) ? ({b_expr}) : ({c_expr})))",
+                        "mp_int_t",
+                    )
+            if len(args) == 1:
+                boxed = self._box_value(args[0][0], args[0][1])
+                return (
+                    f"mp_obj_get_int(mp_call_function_1(MP_OBJ_FROM_PTR(&mp_builtin_max_obj), {boxed}))",
+                    "mp_int_t",
+                )
+            elif len(args) >= 2:
+                boxed_args = [self._box_value(a[0], a[1]) for a in args]
+                args_str = ", ".join(boxed_args)
+                return (
+                    f"mp_obj_get_int(mp_call_function_n_kw(MP_OBJ_FROM_PTR(&mp_builtin_max_obj), {len(args)}, 0, (const mp_obj_t[]){{{args_str}}}))",
+                    "mp_int_t",
+                )
+        elif func == "sum":
+            if len(args) == 1:
+                boxed = self._box_value(args[0][0], args[0][1])
+                return (
+                    f"mp_obj_get_int(mp_call_function_1(MP_OBJ_FROM_PTR(&mp_builtin_sum_obj), {boxed}))",
+                    "mp_int_t",
+                )
+            elif len(args) == 2:
+                boxed_iter = self._box_value(args[0][0], args[0][1])
+                boxed_start = self._box_value(args[1][0], args[1][1])
+                return (
+                    f"mp_obj_get_int(mp_call_function_2(MP_OBJ_FROM_PTR(&mp_builtin_sum_obj), {boxed_iter}, {boxed_start}))",
+                    "mp_int_t",
                 )
 
         return "/* unsupported builtin */", "mp_obj_t"
