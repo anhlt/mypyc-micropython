@@ -121,13 +121,55 @@ For `p1.x` where `p1: Point`, this generates:
 ((module_Point_obj_t *)MP_OBJ_TO_PTR(p1))->x
 ```
 
-Breaking this down:
-1. `p1` is an `mp_obj_t` (boxed pointer)
-2. `MP_OBJ_TO_PTR(p1)` extracts the raw pointer
-3. Cast to `module_Point_obj_t *` — our generated struct type
-4. `->x` accesses the field directly
+### Understanding `MP_OBJ_TO_PTR`
 
-No hash lookups. No descriptor protocol. Just a pointer dereference.
+`MP_OBJ_TO_PTR` is a MicroPython macro defined in `py/obj.h`:
+
+```c
+#define MP_OBJ_TO_PTR(o) ((void *)(o))
+// or for 64-bit NaN boxing representation:
+#define MP_OBJ_TO_PTR(o) ((void *)(uintptr_t)(o))
+```
+
+In MicroPython, `mp_obj_t` is the universal object handle type. It can represent:
+- **Small integers**: Encoded directly in the pointer (tagged)
+- **QStrings**: Interned strings encoded in the pointer
+- **Full objects**: Actual pointers to heap-allocated structs
+
+For "full" objects like our class instances, `mp_obj_t` is essentially a pointer to the object's memory. `MP_OBJ_TO_PTR` extracts this raw pointer so we can cast it to our specific struct type.
+
+The inverse macro `MP_OBJ_FROM_PTR(p)` converts a struct pointer back to `mp_obj_t`:
+
+```c
+#define MP_OBJ_FROM_PTR(p) ((mp_obj_t)(p))
+```
+
+### Our Class Struct Layout
+
+When we define a class like `Point`, we generate this C struct:
+
+```c
+struct _class_param_Point_obj_t {
+    mp_obj_base_t base;  // Required MicroPython header (contains type pointer)
+    mp_int_t x;          // Our field - stored inline
+    mp_int_t y;          // Our field - stored inline
+};
+```
+
+The `mp_obj_base_t base` field is required by MicroPython's object system. It contains a pointer to the type object, enabling runtime type checks and method dispatch.
+
+Our fields (`x`, `y`) are stored **inline** in the struct, not in a separate `data` wrapper. This means direct field access is just a fixed-offset pointer dereference.
+
+### The Complete Access Pattern
+
+Breaking down `((class_param_Point_obj_t *)MP_OBJ_TO_PTR(p1))->x`:
+
+1. **`p1`** — An `mp_obj_t` (the boxed MicroPython object handle)
+2. **`MP_OBJ_TO_PTR(p1)`** — Extract raw `void*` pointer to the object
+3. **`(class_param_Point_obj_t *)`** — Cast to our specific struct type
+4. **`->x`** — Access the field at its fixed offset
+
+No hash lookups. No descriptor protocol. Just a single pointer dereference with a compile-time-known offset.
 
 ## The Generated Code
 
