@@ -680,9 +680,9 @@ typedef struct {
     int tag;
 } mp_builtin_obj_t;
 
-static mp_builtin_obj_t mp_builtin_min_obj = { MP_MOCK_BUILTIN_TAG_MIN };
-static mp_builtin_obj_t mp_builtin_max_obj = { MP_MOCK_BUILTIN_TAG_MAX };
-static mp_builtin_obj_t mp_builtin_sum_obj = { MP_MOCK_BUILTIN_TAG_SUM };
+static mp_builtin_obj_t mp_builtin_min_obj __attribute__((unused)) = { MP_MOCK_BUILTIN_TAG_MIN };
+static mp_builtin_obj_t mp_builtin_max_obj __attribute__((unused)) = { MP_MOCK_BUILTIN_TAG_MAX };
+static mp_builtin_obj_t mp_builtin_sum_obj __attribute__((unused)) = { MP_MOCK_BUILTIN_TAG_SUM };
 
 static mp_obj_t mp_mock_builtin_min(size_t n_args, const mp_obj_t *args) {
     if (n_args < 2) {
