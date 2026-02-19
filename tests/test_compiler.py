@@ -2985,3 +2985,76 @@ def count_kwargs(**kw) -> int:
 """
         result = compile_source(source, "test")
         assert "mp_getiter(_star_kw" in result
+
+
+class TestClassParameterAttrAccess:
+    """Tests for accessing attributes on typed class parameters."""
+
+    def test_function_with_class_param_attr_access(self):
+        source = """
+class Point:
+    x: int
+    y: int
+
+def get_x(p: Point) -> int:
+    return p.x
+"""
+        result = compile_source(source, "test")
+        assert "test_Point_obj_t" in result
+        assert "MP_OBJ_TO_PTR" in result
+        assert "->x" in result
+
+    def test_function_with_two_class_params(self):
+        source = """
+class Point:
+    x: int
+    y: int
+
+def distance_squared(p1: Point, p2: Point) -> int:
+    dx = p2.x - p1.x
+    dy = p2.y - p1.y
+    return dx * dx + dy * dy
+"""
+        result = compile_source(source, "test")
+        assert "test_Point_obj_t" in result
+        assert "MP_OBJ_TO_PTR(p1)" in result
+        assert "MP_OBJ_TO_PTR(p2)" in result
+        assert "->x" in result
+        assert "->y" in result
+
+    def test_class_param_float_attr(self):
+        source = """
+class Vector:
+    x: float
+    y: float
+
+def length_squared(v: Vector) -> float:
+    return v.x * v.x + v.y * v.y
+"""
+        result = compile_source(source, "test")
+        assert "test_Vector_obj_t" in result
+        assert "->x" in result
+        assert "->y" in result
+
+    def test_class_param_in_expression(self):
+        source = """
+class Counter:
+    value: int
+
+def add_values(c1: Counter, c2: Counter) -> int:
+    return c1.value + c2.value
+"""
+        result = compile_source(source, "test")
+        assert "->value" in result
+
+    def test_class_param_attr_no_unknown_constant(self):
+        source = """
+class Data:
+    value: int
+
+def process(d: Data) -> int:
+    return d.value * 2
+"""
+        result = compile_source(source, "test")
+        assert "/* unknown constant */" not in result
+        assert "mp_const_none" not in result or "return mp_const_none" in result

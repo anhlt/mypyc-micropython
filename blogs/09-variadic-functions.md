@@ -4,11 +4,296 @@
 
 ---
 
-Python's `*args` and `**kwargs` are powerful: functions can accept unlimited positional or keyword arguments. But C functions have fixed signatures. How do we bridge that gap?
+Python's `*args` and `**kwargs` let functions accept unlimited arguments. But C functions have fixed signatures determined at compile time. This post explores how we bridged that gap, implementing variadic function support using MicroPython's VAR and KW macros.
 
-This post explores how we implemented variadic function support, using MicroPython's VAR and KW macros to handle Python's most flexible calling patterns.
+## Table of Contents
 
-## The Python Patterns
+1. [Compiler Theory](#part-1-compiler-theory) — How variadic signatures flow through the compilation pipeline
+2. [C Background](#part-2-c-background-for-python-developers) — Pointer arithmetic, hash tables, and MicroPython's variadic macros
+3. [Implementation](#part-3-implementation) — How we built *args and **kwargs support
+
+---
+
+# Part 1: Compiler Theory
+
+## Variadic Functions in the Compilation Pipeline
+
+Variadic functions require special handling at every compilation stage:
+
+```
++------------------+    +------------------+    +------------------+    +------------------+
+|  Python Source   | -> |       AST        | -> |       IR         | -> |     C Code       |
+|                  |    |                  |    |                  |    |                  |
+| def f(*args)     |    | FunctionDef      |    | FuncIR with      |    | VAR/KW macro     |
+| def g(**kwargs)  |    | vararg, kwarg    |    | star_args field  |    | + tuple/dict     |
++------------------+    +------------------+    +------------------+    +------------------+
+```
+
+### Phase 1: AST Extraction
+
+Python's `ast` module stores variadic parameters separately from regular parameters:
+
+```python
+# Python source
+def log(level: str, *messages, **options):
+    pass
+```
+
+```python
+# AST representation (simplified)
+FunctionDef(
+    name='log',
+    args=arguments(
+        args=[arg(arg='level', annotation=Name(id='str'))],
+        vararg=arg(arg='messages'),  # *args
+        kwarg=arg(arg='options'),    # **kwargs
+    )
+)
+```
+
+Key insight: `vararg` and `kwarg` are separate fields, not part of the `args` list.
+
+### Phase 2: IR Building
+
+We capture variadic information in the IR:
+
+```python
+class ArgKind(Enum):
+    ARG_POS = 0      # Required positional: def f(a)
+    ARG_OPT = 1      # Optional positional: def f(a=1)
+    ARG_STAR = 2     # Star args: def f(*args)
+    ARG_STAR2 = 3    # Star kwargs: def f(**kwargs)
+
+@dataclass
+class FuncIR:
+    name: str
+    c_name: str
+    params: list[ParamIR]
+    star_args: ParamIR | None    # *args
+    star_kwargs: ParamIR | None  # **kwargs
+    min_args: int                # Required positional count
+```
+
+### Phase 3: Code Emission
+
+The emitter generates:
+1. The appropriate macro (VAR or KW)
+2. Container construction for star parameters
+3. Correct parameter name mapping
+
+## Why Variadic Functions Are Different
+
+Regular parameters have a 1:1 mapping: Python parameter -> C variable. Variadic parameters break this:
+
+| Pattern | Python | C Representation |
+|---------|--------|------------------|
+| `def f(a)` | `a` is one value | `a` is one variable |
+| `def f(*args)` | `args` is a tuple | Need to BUILD a tuple |
+| `def f(**kwargs)` | `kwargs` is a dict | Need to BUILD a dict |
+
+The compiler must generate code that **constructs** the expected Python containers at runtime.
+
+## The Argument Kinds Hierarchy
+
+Understanding how Python handles arguments helps us generate correct C:
+
+```
+def example(a, b=10, *args, **kwargs):
+            ^  ^      ^       ^
+            |  |      |       +-- Collects keyword arguments into dict
+            |  |      +-- Collects extra positional args into tuple
+            |  +-- Optional (has default)
+            +-- Required positional
+
+Call: example(1, 2, 3, 4, x=5, y=6)
+                      ^  ^  ^   ^
+                      |  |  |   +-- Goes to kwargs["y"]
+                      |  |  +-- Goes to kwargs["x"]
+                      |  +-- Goes to args[1]
+                      +-- Goes to args[0] (after a, b consumed)
+```
+
+The compiler must emit code that:
+1. Extracts required/optional positional args first
+2. Builds a tuple from remaining positional args
+3. Builds a dict from keyword args
+
+---
+
+# Part 2: C Background for Python Developers
+
+## Pointer Arithmetic: Navigating Arrays
+
+In C, pointers support arithmetic operations:
+
+```c
+int nums[] = {10, 20, 30, 40, 50};
+int *p = nums;      // p points to nums[0]
+
+p + 1               // Points to nums[1] (address + sizeof(int))
+p + 2               // Points to nums[2]
+*(p + 3)            // Value at nums[3] = 40
+```
+
+**Visual:**
+
+```
+nums:     +----+----+----+----+----+
+          | 10 | 20 | 30 | 40 | 50 |
+          +----+----+----+----+----+
+Address:  p    p+1  p+2  p+3  p+4
+```
+
+### Why This Matters
+
+When we have `def f(a, b, *args)` and receive 5 arguments:
+
+```c
+const mp_obj_t *args = ...;  // Array of all arguments
+// args[0] = a, args[1] = b, args[2..4] = *args
+
+// To get just the *args portion:
+mp_obj_t *star_args_start = args + 2;  // Skip first 2
+size_t star_args_count = n_args - 2;   // Remaining count
+```
+
+Pointer arithmetic lets us "slice" the array without copying.
+
+## Hash Tables: MicroPython's mp_map_t
+
+Python dicts and keyword arguments use hash tables. MicroPython implements these with `mp_map_t`:
+
+```c
+typedef struct _mp_map_t {
+    size_t alloc;           // Allocated slots
+    size_t used;            // Filled slots
+    mp_map_elem_t *table;   // Array of key-value pairs
+} mp_map_t;
+
+typedef struct _mp_map_elem_t {
+    mp_obj_t key;
+    mp_obj_t value;
+} mp_map_elem_t;
+```
+
+**Visual: Hash table with 4 slots, 2 used:**
+
+```
+mp_map_t:
++-------+------+-----------------+
+| alloc | used | table           |
+|   4   |   2  | ----+           |
++-------+------+-----|-----------+
+                     v
+                +--------+--------+--------+--------+
+table:          | "x": 1 | (empty)| "y": 2 | (empty)|
+                +--------+--------+--------+--------+
+                   [0]      [1]      [2]      [3]
+```
+
+### Iterating a Hash Table
+
+Hash tables aren't contiguous — we must check each slot:
+
+```c
+for (size_t i = 0; i < kw_args->alloc; i++) {
+    if (mp_map_slot_is_filled(kw_args, i)) {
+        // This slot has data
+        mp_obj_t key = kw_args->table[i].key;
+        mp_obj_t value = kw_args->table[i].value;
+    }
+}
+```
+
+## MicroPython's Variadic Macros
+
+### MP_DEFINE_CONST_FUN_OBJ_VAR — Unlimited Positional
+
+```c
+MP_DEFINE_CONST_FUN_OBJ_VAR(name_obj, min_args, func);
+
+static mp_obj_t func(size_t n_args, const mp_obj_t *args) {
+    // n_args: actual argument count
+    // args: array of all arguments
+}
+```
+
+**Visual: Calling `sum_all(1, 2, 3)`:**
+
+```
+Python: sum_all(1, 2, 3)
+                 |
+        MicroPython validates: n_args >= min_args
+                 |
+C receives:
+  n_args = 3
+  args -> +-----+-----+-----+
+          |  1  |  2  |  3  |
+          +-----+-----+-----+
+           [0]   [1]   [2]
+```
+
+### MP_DEFINE_CONST_FUN_OBJ_KW — Positional + Keywords
+
+```c
+MP_DEFINE_CONST_FUN_OBJ_KW(name_obj, min_positional, func);
+
+static mp_obj_t func(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
+    // n_args: positional argument count
+    // pos_args: array of positional arguments
+    // kw_args: hash table of keyword arguments (may be NULL)
+}
+```
+
+**Visual: Calling `config("host", timeout=30, debug=True)`:**
+
+```
+Python: config("host", timeout=30, debug=True)
+                 |
+C receives:
+  n_args = 1
+  pos_args -> +--------+
+              | "host" |
+              +--------+
+                 [0]
+  
+  kw_args -> mp_map_t with:
+             table[i] = {"timeout": 30}
+             table[j] = {"debug": True}
+```
+
+## Tuple and Dict Construction
+
+MicroPython provides functions to create containers:
+
+### Creating Tuples
+
+```c
+// Create tuple from array
+mp_obj_t tuple = mp_obj_new_tuple(count, array);
+
+// Example: Make tuple from args[2] onwards
+mp_obj_t star_args = mp_obj_new_tuple(
+    n_args - 2,      // count
+    args + 2         // pointer to first element
+);
+```
+
+### Creating Dicts
+
+```c
+// Create empty dict with size hint
+mp_obj_t dict = mp_obj_new_dict(initial_size);
+
+// Add entries
+mp_obj_dict_store(dict, key, value);
+```
+
+---
+
+# Part 3: Implementation
+
+## The Python Patterns We Support
 
 ```python
 def log(*messages):
@@ -24,46 +309,18 @@ def call(name, *args, **kwargs):
     pass
 ```
 
-These patterns appear everywhere: logging, configuration, decorators, wrappers. Any serious Python-to-C compiler needs them.
-
-## MicroPython's Variadic Macros
-
-MicroPython provides two macros for variadic functions:
-
-**`MP_DEFINE_CONST_FUN_OBJ_VAR`** — Unlimited positional arguments:
-```c
-MP_DEFINE_CONST_FUN_OBJ_VAR(name_obj, min_args, func);
-
-// Function signature:
-static mp_obj_t func(size_t n_args, const mp_obj_t *args);
-```
-
-**`MP_DEFINE_CONST_FUN_OBJ_KW`** — Positional and keyword arguments:
-```c
-MP_DEFINE_CONST_FUN_OBJ_KW(name_obj, min_positional, func);
-
-// Function signature:
-static mp_obj_t func(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args);
-```
-
-The KW variant gives us a hash map (`mp_map_t`) of keyword arguments, while positional arguments come as a separate array.
+These patterns appear everywhere: logging, configuration, decorators, wrappers.
 
 ## IR Representation
 
-We extended our IR to track star parameters:
+We track star parameters in the IR:
 
 ```python
-class ArgKind(Enum):
-    ARG_POS = 0      # Required positional: def f(a)
-    ARG_OPT = 1      # Optional positional: def f(a=1)
-    ARG_STAR = 2     # Star args: def f(*args)
-    ARG_STAR2 = 3    # Star kwargs: def f(**kwargs)
-
 @dataclass
 class ParamIR:
     name: str
     c_type: CType
-    kind: ArgKind
+    kind: ArgKind  # ARG_STAR or ARG_STAR2
     default: DefaultArg | None = None
 
 @dataclass
@@ -99,7 +356,7 @@ def _parse_star_args(self, args: ast.arguments) -> tuple[ParamIR | None, ParamIR
 
 ## Generating *args
 
-For `def sum_all(*numbers) -> int`, we generate:
+For `def sum_all(*numbers) -> int`:
 
 ```c
 static mp_obj_t module_sum_all(size_t n_args, const mp_obj_t *args) {
@@ -119,11 +376,24 @@ static mp_obj_t module_sum_all(size_t n_args, const mp_obj_t *args) {
 MP_DEFINE_CONST_FUN_OBJ_VAR(module_sum_all_obj, 0, module_sum_all);
 ```
 
-The `mp_obj_new_tuple(n_args, args)` creates a Python tuple from the C array. The function body treats it like any other tuple.
+**Visualizing the transformation:**
+
+```
+Python call: sum_all(10, 20, 30)
+
+C function receives:
+  n_args = 3
+  args -> +----+----+----+
+          | 10 | 20 | 30 |
+          +----+----+----+
+
+After mp_obj_new_tuple(n_args, args):
+  _star_numbers -> (10, 20, 30)  # Python tuple object
+```
 
 ## Generating **kwargs
 
-For `def configure(**options) -> dict`, we generate:
+For `def configure(**options) -> dict`:
 
 ```c
 static mp_obj_t module_configure(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
@@ -145,7 +415,20 @@ static mp_obj_t module_configure(size_t n_args, const mp_obj_t *pos_args, mp_map
 MP_DEFINE_CONST_FUN_OBJ_KW(module_configure_obj, 0, module_configure);
 ```
 
-The `mp_map_t` is MicroPython's internal hash table. We iterate its slots and copy filled entries to a Python dict.
+**Visualizing the transformation:**
+
+```
+Python call: configure(debug=True, timeout=30)
+
+C function receives:
+  kw_args -> mp_map_t:
+    table[0] = {key: "debug", value: True}
+    table[3] = {key: "timeout", value: 30}
+    (other slots empty)
+
+After iteration:
+  _star_options -> {"debug": True, "timeout": 30}  # Python dict object
+```
 
 ## Combined: Positional + *args + **kwargs
 
@@ -159,7 +442,7 @@ static mp_obj_t module_call(size_t n_args, const mp_obj_t *pos_args, mp_map_t *k
     // *args: tuple from remaining positional arguments (skip the first one)
     mp_obj_t _star_args = mp_obj_new_tuple(
         n_args > 1 ? n_args - 1 : 0,      // count
-        n_args > 1 ? pos_args + 1 : NULL  // start pointer
+        n_args > 1 ? pos_args + 1 : NULL  // start pointer (uses pointer arithmetic!)
     );
     
     // **kwargs: dict from keyword arguments
@@ -179,14 +462,29 @@ static mp_obj_t module_call(size_t n_args, const mp_obj_t *pos_args, mp_map_t *k
 MP_DEFINE_CONST_FUN_OBJ_KW(module_call_obj, 1, module_call);  // 1 required positional
 ```
 
-Key details:
-- The `1` in `MP_DEFINE_CONST_FUN_OBJ_KW` means 1 required positional argument
-- `*args` gets remaining positional args after the required ones
-- `**kwargs` gets all keyword arguments
+**Complete example flow:**
+
+```
+Python call: call("test", 1, 2, 3, x=10, y=20)
+
+C function receives:
+  n_args = 4 (positional only)
+  pos_args -> +--------+-----+-----+-----+
+              | "test" |  1  |  2  |  3  |
+              +--------+-----+-----+-----+
+                 [0]     [1]   [2]   [3]
+  
+  kw_args -> {"x": 10, "y": 20}
+
+After extraction:
+  name = "test"
+  _star_args = (1, 2, 3)           # pos_args + 1, count = 3
+  _star_kwargs = {"x": 10, "y": 20}
+```
 
 ## The Name Collision Problem
 
-What if someone writes `def f(*args)`? The parameter is named `args`, but our C function also has a parameter called `args`:
+What if someone writes `def f(*args)`? The Python parameter is named `args`, but MicroPython's C signature also has `args`:
 
 ```c
 static mp_obj_t func(size_t n_args, const mp_obj_t *args) {
@@ -198,67 +496,107 @@ We solve this by prefixing star parameter names with `_star_`:
 
 ```c
 static mp_obj_t func(size_t n_args, const mp_obj_t *args) {
-    mp_obj_t _star_args = mp_obj_new_tuple(n_args, args);  // OK
+    mp_obj_t _star_args = mp_obj_new_tuple(n_args, args);  // OK!
 }
 ```
 
-The IR builder tracks this mapping so references to `args` in the function body correctly resolve to `_star_args` in the generated C.
+The IR builder tracks this mapping so references to `args` in the Python function body correctly resolve to `_star_args` in the generated C.
 
 ## Macro Selection Logic
 
-The emitter chooses the right macro based on what the function needs:
+The emitter chooses the right macro based on function signature:
 
 ```python
-def _emit_signature(self) -> tuple[str, str]:
-    if self.func_ir.has_star_kwargs:
-        # **kwargs always needs KW macro (handles *args too)
-        return (
-            f"static mp_obj_t {name}(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args)",
-            f"MP_DEFINE_CONST_FUN_OBJ_KW({name}_obj, {min_args}, {name});"
-        )
+def _select_macro(self) -> str:
+    if self.func_ir.star_kwargs:
+        # **kwargs needs KW macro (also handles *args)
+        return "MP_DEFINE_CONST_FUN_OBJ_KW"
     
-    if self.func_ir.has_star_args:
-        # *args without **kwargs uses VAR macro
-        return (
-            f"static mp_obj_t {name}(size_t n_args, const mp_obj_t *args)",
-            f"MP_DEFINE_CONST_FUN_OBJ_VAR({name}_obj, {min_args}, {name});"
-        )
+    if self.func_ir.star_args:
+        # *args only uses VAR macro
+        return "MP_DEFINE_CONST_FUN_OBJ_VAR"
     
-    # No star args - use fixed-count or VAR_BETWEEN
-    # ...
+    if self.func_ir.defaults:
+        # Has defaults but no star params
+        return "MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN"
+    
+    # Fixed argument count
+    return f"MP_DEFINE_CONST_FUN_OBJ_{len(self.func_ir.params)}"
 ```
 
-## Why This Matters
+### Macro Selection Table
 
-Variadic functions enable idiomatic Python patterns:
+| Function Signature | Macro |
+|-------------------|-------|
+| `def f(a, b)` | `OBJ_2` |
+| `def f(a, b=1)` | `VAR_BETWEEN` |
+| `def f(*args)` | `VAR` |
+| `def f(**kwargs)` | `KW` |
+| `def f(a, *args)` | `VAR` |
+| `def f(a, **kwargs)` | `KW` |
+| `def f(*args, **kwargs)` | `KW` |
+
+## Performance Considerations
+
+Creating containers for star arguments has overhead:
+
+| Operation | Cost |
+|-----------|------|
+| `mp_obj_new_tuple(n, arr)` | Allocate + copy n pointers |
+| `mp_obj_new_dict(n)` | Allocate hash table |
+| `mp_obj_dict_store` | Hash key + insert |
+
+For performance-critical code, users can refactor to avoid star args:
 
 ```python
-def log(level: str, *messages):
-    for msg in messages:
-        print(f"[{level}] {msg}")
+# Slower: creates tuple each call
+def sum_all(*numbers):
+    return sum(numbers)
 
-def make_request(url: str, **options):
-    timeout = options.get("timeout", 30)
-    # ...
-
-def decorator(func, *args, **kwargs):
-    # Wrap and forward
-    return func(*args, **kwargs)
+# Faster: no container allocation
+def sum_list(numbers: list):
+    return sum(numbers)
 ```
 
-Without `*args` and `**kwargs`, users would need awkward workarounds like passing lists or dicts explicitly. With them, Python code that uses these patterns can compile directly.
+But for most use cases — logging, configuration, wrappers — the flexibility is worth the cost.
 
-## Performance Notes
+## Testing
 
-Creating tuple and dict objects for star arguments has overhead:
-- Memory allocation for the container
-- Copying argument values
+Unit tests verify the generated patterns:
 
-For performance-critical code, users can refactor to avoid star args. But for most use cases — logging, configuration, wrappers — the flexibility is worth the cost.
+```python
+def test_star_args_only(self):
+    source = '''
+def sum_all(*numbers) -> int:
+    total = 0
+    for n in numbers:
+        total += n
+    return total
+'''
+    result = compile_source(source, "test")
+    assert "MP_DEFINE_CONST_FUN_OBJ_VAR" in result
+    assert "_star_numbers" in result
+    assert "mp_obj_new_tuple" in result
+```
 
-## The Complete Picture
+Device tests verify actual execution on ESP32:
 
-With default arguments from the previous post plus variadic functions:
+```python
+test(
+    "sum_all_star_args",
+    "import m; print(m.sum_all(1, 2, 3, 4, 5))",
+    "15",
+)
+test(
+    "configure_kwargs",
+    "import m; d = m.configure(debug=True, timeout=30); print(d['debug'])",
+    "True",
+)
+```
+
+## Complete Example: Full Signature
+
+Combining everything from this post and the previous one:
 
 ```python
 def flexible(required: int, optional: int = 10, *args, **kwargs) -> dict:
@@ -271,14 +609,29 @@ def flexible(required: int, optional: int = 10, *args, **kwargs) -> dict:
 ```
 
 This compiles to C that:
-1. Validates at least 1 argument (MicroPython runtime check)
-2. Extracts `required` from `pos_args[0]`
-3. Extracts `optional` from `pos_args[1]` or uses default `10`
-4. Builds `_star_args` tuple from remaining positional args
-5. Builds `_star_kwargs` dict from keyword args
-6. Executes the function body with all values available
+
+1. Uses `MP_DEFINE_CONST_FUN_OBJ_KW` (because of **kwargs)
+2. Validates at least 1 argument (MicroPython runtime check)
+3. Extracts `required` from `pos_args[0]`
+4. Extracts `optional` from `pos_args[1]` or uses default `10`
+5. Builds `_star_args` tuple from remaining positional args (pointer arithmetic)
+6. Builds `_star_kwargs` dict from `kw_args` hash table
+7. Executes the function body with all values available
 
 Python's full function signature flexibility, compiled to efficient C.
+
+---
+
+## Conclusion
+
+Variadic functions required us to:
+
+1. **Track star parameters in IR**: Separate fields for `*args` and `**kwargs`
+2. **Generate container construction**: Build tuples and dicts at runtime
+3. **Handle naming conflicts**: Prefix star params with `_star_`
+4. **Select correct macros**: VAR for positional-only, KW for keywords
+
+The pattern of extracting information during IR building and generating appropriate C during emission applies here just as it did for default arguments. Each Python feature maps to specific MicroPython C API calls.
 
 ---
 

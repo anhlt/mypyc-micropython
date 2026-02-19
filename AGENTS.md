@@ -51,7 +51,7 @@ tests/
 examples/                # Sample Python input files
 modules/                 # Generated C output (gitignored except committed examples)
 docs/                    # Documentation and ESP-IDF setup guides
-blogs/                   # Technical blog posts
+blogs/                   # Technical blog posts (see Blog Writing Guidelines below)
 Makefile                 # Build commands for firmware compilation and flashing
 ```
 
@@ -342,6 +342,60 @@ Always run `source ~/esp/esp-idf/export.sh` before firmware builds.
 | `BOARD` | `ESP32_GENERIC` | Target board (`ESP32_GENERIC_C3`, `ESP32_GENERIC_C6`, `ESP32_GENERIC_S3`) |
 | `PORT` | `/dev/ttyACM0` | Serial port (macOS: `/dev/cu.usbmodem2101`) |
 | `ESP_IDF_DIR` | `~/esp/esp-idf` | ESP-IDF installation path |
+
+## Blog Writing Guidelines
+
+Technical blog posts in `blogs/` document compiler features with educational depth. Follow this structure:
+
+### Required Structure (3 Parts)
+
+1. **Part 1: Compiler Theory** — Explain relevant compiler concepts
+   - What is a compiler and why we need one
+   - The compilation pipeline (Python → AST → IR → C)
+   - Why intermediate representation matters
+   - IR node design and the prelude pattern
+
+2. **Part 2: C Background** — Essential C for Python developers
+   - Pointers and memory addresses
+   - Structs and memory layout
+   - Arrow operator (`->`) for pointer access
+   - Type casting and macros
+   - MicroPython-specific patterns (`MP_OBJ_TO_PTR`, boxing/unboxing)
+
+3. **Part 3: Implementation** — The actual feature implementation
+   - The problem being solved
+   - The bug or missing case
+   - The solution (new IR nodes, tracking, emission)
+   - Complete step-by-step compilation example
+   - Testing approach
+
+### Blog File Naming
+
+Use sequential numbering: `NN-feature-name.md`
+
+```
+blogs/
+├── 01-list-and-forloop-support.md
+├── 02-dict-support.md
+├── ...
+├── 11-class-parameter-access.md
+```
+
+### Code Examples
+
+- Show Python input and C output side-by-side
+- Include IR representation when relevant
+- Use ASCII diagrams for memory layouts
+- Add tables for comparisons (Python runtime vs compiled C)
+
+### Target Audience
+
+Write for Python developers unfamiliar with:
+- C programming
+- Compiler internals
+- MicroPython's C API
+
+Explain every C concept before using it.
 
 ## Version Matrix
 

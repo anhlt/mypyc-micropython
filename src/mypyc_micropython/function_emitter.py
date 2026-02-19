@@ -33,6 +33,7 @@ from .ir import (
     IRType,
     MethodIR,
     NameIR,
+    ParamAttrIR,
     PassIR,
     PrintIR,
     ReturnIR,
@@ -372,6 +373,8 @@ class BaseEmitter:
             return self._emit_class_instantiation(value, native)
         elif isinstance(value, SelfAttrIR):
             return self._emit_self_attr(value)
+        elif isinstance(value, ParamAttrIR):
+            return self._emit_param_attr(value)
         elif isinstance(value, SelfMethodCallIR):
             return self._emit_self_method_call(value, native)
         return "/* unsupported */", "mp_obj_t"
@@ -698,6 +701,12 @@ class BaseEmitter:
 
     def _emit_self_attr(self, attr: SelfAttrIR) -> tuple[str, str]:
         return f"self->{attr.attr_path}", attr.result_type.to_c_type_str()
+
+    def _emit_param_attr(self, attr: ParamAttrIR) -> tuple[str, str]:
+        expr = (
+            f"(({attr.class_c_name}_obj_t *)MP_OBJ_TO_PTR({attr.c_param_name}))->{attr.attr_name}"
+        )
+        return expr, attr.result_type.to_c_type_str()
 
     def _emit_self_method_call(
         self, call: SelfMethodCallIR, native: bool = False

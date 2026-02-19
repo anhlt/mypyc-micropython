@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Class parameter attribute access**: Functions can now take user-defined class types as parameters and access their attributes (e.g., `def get_x(p: Point) -> int: return p.x`)
+- `ParamAttrIR` for IR representation of class parameter attribute access
+- `examples/class_param.py` - demonstrating class parameter attribute access patterns
 - **`*args` support**: Functions can accept unlimited positional arguments via `*args` (e.g., `def f(*args)`)
 - **`**kwargs` support**: Functions can accept keyword arguments via `**kwargs` (e.g., `def f(**kwargs)`)
 - Combined `*args` and `**kwargs` support (e.g., `def f(name, *args, **kwargs)`)

@@ -701,6 +701,7 @@ static inline mp_obj_t mp_call_method_n_kw(size_t n_args, size_t n_kw, const mp_
 }
 
 #define MP_OBJ_FROM_PTR(p) ((mp_obj_t)(p))
+#define MP_OBJ_TO_PTR(o) ((void *)(o))
 
 #define MP_MOCK_BUILTIN_TAG_MIN 1001
 #define MP_MOCK_BUILTIN_TAG_MAX 1002

@@ -1018,6 +1018,59 @@ def test_star_args():
     )
 
 
+def test_class_param():
+    """Test class_param module with functions taking class parameters."""
+    print("\n[TEST] Testing class_param module (class parameters)...")
+
+    test(
+        "get_x(Point(10, 20))",
+        "import class_param as cp; p = cp.Point(10, 20); print(cp.get_x(p))",
+        "10",
+    )
+
+    test(
+        "get_y(Point(10, 20))",
+        "import class_param as cp; p = cp.Point(10, 20); print(cp.get_y(p))",
+        "20",
+    )
+
+    test(
+        "add_coords(Point(3, 4))",
+        "import class_param as cp; p = cp.Point(3, 4); print(cp.add_coords(p))",
+        "7",
+    )
+
+    test(
+        "distance_squared two points",
+        "import class_param as cp; p1 = cp.Point(0, 0); p2 = cp.Point(3, 4); print(cp.distance_squared(p1, p2))",
+        "25",
+    )
+
+    test(
+        "midpoint_x two points",
+        "import class_param as cp; p1 = cp.Point(0, 0); p2 = cp.Point(10, 10); print(cp.midpoint_x(p1, p2))",
+        "5",
+    )
+
+    test(
+        "scale_point(Point(2, 3), 4)",
+        "import class_param as cp; p = cp.Point(2, 3); print(cp.scale_point(p, 4))",
+        "20",
+    )
+
+    test(
+        "dot_product vectors",
+        "import class_param as cp; v1 = cp.Vector(1.0, 2.0); v2 = cp.Vector(3.0, 4.0); print(cp.dot_product(v1, v2))",
+        "11.0",
+    )
+
+    test(
+        "length_squared vector",
+        "import class_param as cp; v = cp.Vector(3.0, 4.0); print(cp.length_squared(v))",
+        "25.0",
+    )
+
+
 def run_all_tests():
     """Run all test suites."""
     global total_tests, passed_tests, failed_tests
@@ -1047,6 +1100,7 @@ def run_all_tests():
     test_builtins_demo()
     test_default_args()
     test_star_args()
+    test_class_param()
 
     # Print summary
     print("\n" + "=" * 70)

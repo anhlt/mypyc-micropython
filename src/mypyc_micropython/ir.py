@@ -934,6 +934,23 @@ class SelfAttrIR(ExprIR):
 
 
 @dataclass
+class ParamAttrIR(ExprIR):
+    """Attribute access on a typed class parameter: param.attr (for functions).
+
+    When a function takes a user-defined class as a parameter (e.g., p: Point),
+    accessing p.x requires unboxing the mp_obj_t to the class struct pointer.
+
+    Generated C code: ((ClassName_obj_t *)MP_OBJ_TO_PTR(param))->attr
+    """
+
+    param_name: str  # Python parameter name (e.g., "p1")
+    c_param_name: str  # C parameter name (sanitized)
+    attr_name: str  # Attribute name (e.g., "x")
+    class_c_name: str  # C class name (e.g., "module_Point")
+    result_type: IRType
+
+
+@dataclass
 class SelfMethodCallIR(ExprIR):
     """Method call on self: self.method(args) (for methods)."""
 
