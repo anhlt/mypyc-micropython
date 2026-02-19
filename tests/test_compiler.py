@@ -3058,3 +3058,102 @@ def process(d: Data) -> int:
         result = compile_source(source, "test")
         assert "/* unknown constant */" not in result
         assert "mp_const_none" not in result or "return mp_const_none" in result
+
+
+class TestChainedClassAttrAccess:
+    """Tests for chained attribute access on nested class types."""
+
+    def test_simple_chained_access(self):
+        source = """
+from dataclasses import dataclass
+
+@dataclass
+class Point:
+    x: int
+    y: int
+
+@dataclass
+class Rectangle:
+    top_left: Point
+    bottom_right: Point
+
+def get_width(rect: Rectangle) -> int:
+    return rect.bottom_right.x - rect.top_left.x
+"""
+        result = compile_source(source, "test")
+        assert "test_Point_obj_t" in result
+        assert "test_Rectangle_obj_t" in result
+        assert "->bottom_right" in result
+        assert "->top_left" in result
+        assert "->x" in result
+        assert "mp_const_none" not in result or "return mp_const_none" not in result
+
+    def test_chained_access_multiple_fields(self):
+        source = """
+from dataclasses import dataclass
+
+@dataclass
+class Point:
+    x: int
+    y: int
+
+@dataclass
+class Rectangle:
+    top_left: Point
+    bottom_right: Point
+
+def get_area(rect: Rectangle) -> int:
+    width = rect.bottom_right.x - rect.top_left.x
+    height = rect.bottom_right.y - rect.top_left.y
+    return width * height
+"""
+        result = compile_source(source, "test")
+        assert "->x" in result
+        assert "->y" in result
+        assert "width" in result
+        assert "height" in result
+
+    def test_chained_access_float_fields(self):
+        source = """
+from dataclasses import dataclass
+
+@dataclass
+class Vector2D:
+    x: float
+    y: float
+
+@dataclass
+class Line:
+    start: Vector2D
+    end: Vector2D
+
+def line_length_squared(line: Line) -> float:
+    dx = line.end.x - line.start.x
+    dy = line.end.y - line.start.y
+    return dx * dx + dy * dy
+"""
+        result = compile_source(source, "test")
+        assert "test_Vector2D_obj_t" in result
+        assert "test_Line_obj_t" in result
+        assert "->start" in result
+        assert "->end" in result
+
+    def test_chained_access_in_expression(self):
+        source = """
+from dataclasses import dataclass
+
+@dataclass
+class Inner:
+    value: int
+
+@dataclass
+class Outer:
+    inner: Inner
+
+def double_value(obj: Outer) -> int:
+    return obj.inner.value * 2
+"""
+        result = compile_source(source, "test")
+        assert "->inner" in result
+        assert "->value" in result
+        assert "* 2" in result or "MP_BINARY_OP_MULTIPLY" in result

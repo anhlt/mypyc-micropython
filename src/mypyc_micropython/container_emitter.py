@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from .ir import (
+    AttrAccessIR,
     BinOpIR,
     BoxIR,
     CompareIR,
@@ -24,6 +25,7 @@ from .ir import (
     ListNewIR,
     MethodCallIR,
     NameIR,
+    ParamAttrIR,
     SelfAttrIR,
     SetItemIR,
     SetNewIR,
@@ -58,6 +60,8 @@ class ContainerEmitter:
             return self.emit_box(instr)
         elif isinstance(instr, UnboxIR):
             return self.emit_unbox(instr)
+        elif isinstance(instr, AttrAccessIR):
+            return self.emit_attr_access(instr)
         return [f"    /* unsupported IR instruction: {type(instr).__name__} */"]
 
     def emit_prelude(self, prelude: list[InstrIR]) -> list[str]:
@@ -173,6 +177,13 @@ class ContainerEmitter:
         elif target == IRType.BOOL:
             return [f"    {c_type} {result_name} = mp_obj_is_true({src_c});"]
         return [f"    mp_obj_t {result_name} = {src_c};"]
+
+    def emit_attr_access(self, instr: AttrAccessIR) -> list[str]:
+        result_name = instr.result.name
+        obj_c = self._value_to_c(instr.obj)
+        c_type = instr.result_type.to_c_type_str()
+        access_expr = f"(({instr.class_c_name}_obj_t *)MP_OBJ_TO_PTR({obj_c}))->{instr.attr_name}"
+        return [f"    {c_type} {result_name} = {access_expr};"]
 
     # ------------------------------------------------------------------
     # Method call handlers (table-driven)
@@ -321,6 +332,11 @@ class ContainerEmitter:
             return "".join(parts)
         elif isinstance(value, SelfAttrIR):
             return f"self->{value.attr_path}"
+        elif isinstance(value, ParamAttrIR):
+            return (
+                f"(({value.class_c_name}_obj_t *)MP_OBJ_TO_PTR({value.c_param_name}))"
+                f"->{value.attr_name}"
+            )
         return "/* unknown value */"
 
     def _const_to_c(self, const: ConstIR) -> str:

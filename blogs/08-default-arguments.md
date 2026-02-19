@@ -411,11 +411,37 @@ mp_obj_t items = (n_args > 0) ? args[0] : mp_obj_new_list(0, NULL);
 For this Python function:
 
 ```python
+def connect(host: str, port: int = 8080, timeout: int = 30) -> bool:
+    return True
+```
+
+### IR Visualization
+
+Using `mpy-compile --dump-ir text`:
+
+```
+def connect(host: MP_OBJ_T, port: MP_INT_T, timeout: MP_INT_T) -> BOOL:
+  c_name: blog08_example_connect
+  max_temp: 0
+  locals: {host: MP_OBJ_T, port: MP_INT_T, timeout: MP_INT_T}
+  body:
+    return True
+```
+
+The IR shows:
+- **All parameters listed** - `host`, `port`, `timeout` regardless of defaults
+- **C types preserved** - `host: MP_OBJ_T` (string stays boxed), `port/timeout: MP_INT_T` (unboxed)
+- **`max_temp: 0`** - No temps needed for this simple function
+- **Default info not in IR body** - Defaults are metadata used during emission
+
+### Generated C
+
+For a simpler greet example:
+
+```python
 def greet(name: str, greeting: str = "Hello") -> str:
     return greeting
 ```
-
-We generate:
 
 ```c
 static mp_obj_t module_greet(size_t n_args, const mp_obj_t *args) {

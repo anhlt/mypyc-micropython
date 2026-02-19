@@ -301,6 +301,64 @@ def test_tuple_operations():
 
 Each module should have a `test_<module>()` function added to `run_all_tests()`.
 
+### Benchmarks (run_benchmarks.py)
+
+Compare native compiled modules vs vanilla MicroPython interpreter performance.
+
+```bash
+# Run all benchmarks on device
+make benchmark PORT=/dev/cu.usbmodem2101
+```
+
+#### Adding New Benchmarks
+
+Add entries to the `BENCHMARKS` list in `run_benchmarks.py`:
+
+```python
+BENCHMARKS = [
+    # (name, native_code, python_code)
+    (
+        "my_func(1000) x100",           # Descriptive name with iterations
+        """
+import my_module
+import time
+start = time.ticks_us()
+for _ in range(100):
+    my_module.my_func(1000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def my_func(n):
+    # Vanilla Python implementation
+    pass
+start = time.ticks_us()
+for _ in range(100):
+    my_func(1000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+]
+```
+
+**Benchmark naming convention**: `function_name(args) xN` where N is iteration count.
+
+#### Example Output
+
+```
+Benchmark                            Native       Python    Speedup
+----------------------------------------------------------------------
+sum_range(1000) x100                 8929us     310206us     34.74x
+chained_attr x10000                129663us     234032us      1.80x
+container_attr x10000               99621us     190022us      1.91x
+----------------------------------------------------------------------
+TOTAL                             9060383us   33422565us      3.69x
+
+Average speedup: 10.90x
+```
+
 ## ESP-IDF / Firmware
 
 For building firmware and flashing to ESP32, see platform-specific guides:
@@ -369,6 +427,41 @@ Technical blog posts in `blogs/` document compiler features with educational dep
    - Complete step-by-step compilation example
    - Testing approach
 
+### IR Visualization (REQUIRED)
+
+**Always include IR dump output in blog posts.** This helps readers understand the intermediate representation before seeing generated C code.
+
+Use the `--dump-ir` flag to generate IR output:
+
+```bash
+# Text format (most readable for blogs)
+mpy-compile examples/myfile.py --dump-ir text
+
+# For specific function
+mpy-compile examples/myfile.py --dump-ir text --ir-function my_func
+```
+
+Example IR output to include in blogs:
+
+```
+def get_width(rect: MP_OBJ_T) -> MP_INT_T:
+  c_name: module_get_width
+  max_temp: 2
+  locals: {rect: MP_OBJ_T}
+  body:
+    # prelude:
+      _tmp1 = rect.bottom_right.x
+      _tmp2 = rect.top_left.x
+    return (_tmp1 - _tmp2)
+```
+
+The IR visualization shows:
+- Function signature with C types
+- Temp variable allocation (`max_temp`)
+- Local variable types
+- Prelude instructions (side effects)
+- Expression structure
+
 ### Blog File Naming
 
 Use sequential numbering: `NN-feature-name.md`
@@ -383,8 +476,8 @@ blogs/
 
 ### Code Examples
 
-- Show Python input and C output side-by-side
-- Include IR representation when relevant
+- Show Python input, IR output, AND C output (three-stage view)
+- Include IR representation to bridge Python and C understanding
 - Use ASCII diagrams for memory layouts
 - Add tables for comparisons (Python runtime vs compiled C)
 

@@ -358,6 +358,30 @@ def _parse_star_args(self, args: ast.arguments) -> tuple[ParamIR | None, ParamIR
 
 For `def sum_all(*numbers) -> int`:
 
+### IR Visualization
+
+Using `mpy-compile --dump-ir text`:
+
+```
+def sum_all() -> MP_INT_T:
+  c_name: blog09_example_sum_all
+  max_temp: 0
+  locals: {numbers: MP_OBJ_T, total: MP_INT_T, n: MP_OBJ_T}
+  body:
+    total: mp_int_t = 0
+    for n in numbers:
+      total = (total + n)
+    return total
+```
+
+The IR shows:
+- **Empty parameter list in signature** - `*numbers` is not a regular parameter
+- **`numbers: MP_OBJ_T` in locals** - Star args become a local variable (tuple)
+- **`n: MP_OBJ_T`** - Loop variable is always boxed (iterator returns objects)
+- **`total: MP_INT_T`** - Typed local stays unboxed
+
+### Generated C
+
 ```c
 static mp_obj_t module_sum_all(size_t n_args, const mp_obj_t *args) {
     // Build tuple from all arguments

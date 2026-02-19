@@ -603,6 +603,20 @@ class UnboxIR(InstrIR):
     target_type: IRType
 
 
+@dataclass
+class AttrAccessIR(InstrIR):
+    """Access an attribute on a class-typed object.
+
+    Generated C: result = ((ClassName_obj_t *)MP_OBJ_TO_PTR(obj))->attr
+    """
+
+    result: TempIR
+    obj: ValueIR
+    attr_name: str
+    class_c_name: str
+    result_type: IRType
+
+
 # ---------------------------------------------------------------------------
 # Lowered expression: prelude instructions + final value
 # ---------------------------------------------------------------------------

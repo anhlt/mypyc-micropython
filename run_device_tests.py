@@ -1018,6 +1018,142 @@ def test_star_args():
     )
 
 
+def test_chained_attr():
+    """Test chained_attr module with nested class attribute access."""
+    print("\n[TEST] Testing chained_attr module (chained attribute access)...")
+
+    test(
+        "get_width(rect)",
+        "import chained_attr as ca; tl = ca.Point(0, 0); br = ca.Point(100, 50); r = ca.Rectangle(tl, br); print(ca.get_width(r))",
+        "100",
+    )
+
+    test(
+        "get_height(rect)",
+        "import chained_attr as ca; tl = ca.Point(0, 0); br = ca.Point(100, 50); r = ca.Rectangle(tl, br); print(ca.get_height(r))",
+        "50",
+    )
+
+    test(
+        "get_area(rect)",
+        "import chained_attr as ca; tl = ca.Point(0, 0); br = ca.Point(10, 5); r = ca.Rectangle(tl, br); print(ca.get_area(r))",
+        "50",
+    )
+
+    test(
+        "get_top_left_x(rect)",
+        "import chained_attr as ca; tl = ca.Point(3, 7); br = ca.Point(10, 20); r = ca.Rectangle(tl, br); print(ca.get_top_left_x(r))",
+        "3",
+    )
+
+    test(
+        "get_top_left_y(rect)",
+        "import chained_attr as ca; tl = ca.Point(3, 7); br = ca.Point(10, 20); r = ca.Rectangle(tl, br); print(ca.get_top_left_y(r))",
+        "7",
+    )
+
+    test(
+        "get_bottom_right_x(rect)",
+        "import chained_attr as ca; tl = ca.Point(3, 7); br = ca.Point(10, 20); r = ca.Rectangle(tl, br); print(ca.get_bottom_right_x(r))",
+        "10",
+    )
+
+    test(
+        "get_bottom_right_y(rect)",
+        "import chained_attr as ca; tl = ca.Point(3, 7); br = ca.Point(10, 20); r = ca.Rectangle(tl, br); print(ca.get_bottom_right_y(r))",
+        "20",
+    )
+
+    test(
+        "get_next_value(node) self-ref",
+        "import chained_attr as ca; n2 = ca.Node(42, None); n1 = ca.Node(10, n2); print(ca.get_next_value(n1))",
+        "42",
+    )
+
+
+def test_container_attrs():
+    """Test container_attrs module with list/dict/set class attributes."""
+    print("\n[TEST] Testing container_attrs module (container attributes)...")
+
+    test(
+        "get_items(Container)",
+        "import container_attrs as ca; c = ca.Container([1,2,3], {'a':1}, {1,2}); print(ca.get_items(c))",
+        "[1, 2, 3]",
+    )
+
+    test(
+        "get_mapping(Container)",
+        "import container_attrs as ca; c = ca.Container([1], {'x':10}, {1}); print(ca.get_mapping(c))",
+        "{'x': 10}",
+    )
+
+    test(
+        "get_unique(Container)",
+        "import container_attrs as ca; c = ca.Container([1], {'a':1}, {5,10,15}); r = ca.get_unique(c); print(5 in r and 10 in r)",
+        "True",
+    )
+
+    test(
+        "get_first_item(Container)",
+        "import container_attrs as ca; c = ca.Container([42,2,3], {}, set()); print(ca.get_first_item(c))",
+        "42",
+    )
+
+    test(
+        "get_mapping_key(Container)",
+        "import container_attrs as ca; c = ca.Container([], {'key':99}, set()); print(ca.get_mapping_key(c, 'key'))",
+        "99",
+    )
+
+    test(
+        "has_in_unique(Container) True",
+        "import container_attrs as ca; c = ca.Container([], {}, {1,2,3}); print(ca.has_in_unique(c, 2))",
+        "True",
+    )
+
+    test(
+        "has_in_unique(Container) False",
+        "import container_attrs as ca; c = ca.Container([], {}, {1,2,3}); print(ca.has_in_unique(c, 5))",
+        "False",
+    )
+
+    test(
+        "get_inner_items(Outer)",
+        "import container_attrs as ca; i = ca.Inner([10,20,30], {}); o = ca.Outer(i, 'test'); print(ca.get_inner_items(o))",
+        "[10, 20, 30]",
+    )
+
+    test(
+        "get_inner_data(Outer)",
+        "import container_attrs as ca; i = ca.Inner([], {'k':5}); o = ca.Outer(i, 'test'); print(ca.get_inner_data(o))",
+        "{'k': 5}",
+    )
+
+    test(
+        "get_first_inner_item(Outer)",
+        "import container_attrs as ca; i = ca.Inner([100,200], {}); o = ca.Outer(i, 'test'); print(ca.get_first_inner_item(o))",
+        "100",
+    )
+
+    test(
+        "get_inner_data_key(Outer)",
+        "import container_attrs as ca; i = ca.Inner([], {'val':77}); o = ca.Outer(i, 'test'); print(ca.get_inner_data_key(o, 'val'))",
+        "77",
+    )
+
+    test(
+        "count_inner_items(Outer)",
+        "import container_attrs as ca; i = ca.Inner([1,2,3,4,5], {}); o = ca.Outer(i, 'test'); print(ca.count_inner_items(o))",
+        "5",
+    )
+
+    test(
+        "sum_inner_items(Outer)",
+        "import container_attrs as ca; i = ca.Inner([1,2,3,4,5], {}); o = ca.Outer(i, 'test'); print(ca.sum_inner_items(o))",
+        "15",
+    )
+
+
 def test_class_param():
     """Test class_param module with functions taking class parameters."""
     print("\n[TEST] Testing class_param module (class parameters)...")
@@ -1101,6 +1237,8 @@ def run_all_tests():
     test_default_args()
     test_star_args()
     test_class_param()
+    test_chained_attr()
+    test_container_attrs()
 
     # Print summary
     print("\n" + "=" * 70)

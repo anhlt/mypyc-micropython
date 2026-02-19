@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Chained class attribute access**: Access attributes through multiple levels of class composition (e.g., `rect.bottom_right.x`, `dept.manager.department.name`)
+- `AttrAccessIR` instruction for IR representation of chained attribute access
+- `_get_class_type_of_attr()` helper for recursive type tracking through attribute chains
+- `examples/chained_attr.py` - demonstrating nested class attribute access patterns
+- 4 unit tests for chained attribute access compilation
+- 8 device tests for chained_attr module
+- Blog post: `12-chained-attribute-access.md` documenting the recursive solution
 - **Class parameter attribute access**: Functions can now take user-defined class types as parameters and access their attributes (e.g., `def get_x(p: Point) -> int: return p.x`)
 - `ParamAttrIR` for IR representation of class parameter attribute access
 - `examples/class_param.py` - demonstrating class parameter attribute access patterns
