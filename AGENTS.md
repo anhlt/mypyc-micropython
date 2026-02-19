@@ -301,6 +301,64 @@ def test_tuple_operations():
 
 Each module should have a `test_<module>()` function added to `run_all_tests()`.
 
+### Benchmarks (run_benchmarks.py)
+
+Compare native compiled modules vs vanilla MicroPython interpreter performance.
+
+```bash
+# Run all benchmarks on device
+make benchmark PORT=/dev/cu.usbmodem2101
+```
+
+#### Adding New Benchmarks
+
+Add entries to the `BENCHMARKS` list in `run_benchmarks.py`:
+
+```python
+BENCHMARKS = [
+    # (name, native_code, python_code)
+    (
+        "my_func(1000) x100",           # Descriptive name with iterations
+        """
+import my_module
+import time
+start = time.ticks_us()
+for _ in range(100):
+    my_module.my_func(1000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def my_func(n):
+    # Vanilla Python implementation
+    pass
+start = time.ticks_us()
+for _ in range(100):
+    my_func(1000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+]
+```
+
+**Benchmark naming convention**: `function_name(args) xN` where N is iteration count.
+
+#### Example Output
+
+```
+Benchmark                            Native       Python    Speedup
+----------------------------------------------------------------------
+sum_range(1000) x100                 8929us     310206us     34.74x
+chained_attr x10000                129663us     234032us      1.80x
+container_attr x10000               99621us     190022us      1.91x
+----------------------------------------------------------------------
+TOTAL                             9060383us   33422565us      3.69x
+
+Average speedup: 10.90x
+```
+
 ## ESP-IDF / Firmware
 
 For building firmware and flashing to ESP32, see platform-specific guides:

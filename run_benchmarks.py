@@ -604,6 +604,84 @@ end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
+    (
+        "chained_attr x10000",
+        """
+import chained_attr as ca
+import time
+tl = ca.Point(0, 0)
+br = ca.Point(100, 50)
+rect = ca.Rectangle(tl, br)
+start = time.ticks_us()
+for _ in range(10000):
+    ca.get_width(rect)
+    ca.get_height(rect)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+class Rectangle:
+    def __init__(self, tl, br):
+        self.top_left = tl
+        self.bottom_right = br
+def get_width(r):
+    return r.bottom_right.x - r.top_left.x
+def get_height(r):
+    return r.bottom_right.y - r.top_left.y
+tl = Point(0, 0)
+br = Point(100, 50)
+rect = Rectangle(tl, br)
+start = time.ticks_us()
+for _ in range(10000):
+    get_width(rect)
+    get_height(rect)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "container_attr x10000",
+        """
+import container_attrs as ca
+import time
+inner = ca.Inner([0, 1, 2], {'key': 42})
+outer = ca.Outer(inner, 'test')
+start = time.ticks_us()
+for _ in range(10000):
+    ca.benchmark_inner_list_update(outer, 1)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+class Inner:
+    def __init__(self, items, data):
+        self.items = items
+        self.data = data
+class Outer:
+    def __init__(self, inner, name):
+        self.inner = inner
+        self.name = name
+def benchmark(o, n):
+    i = 0
+    while i < n:
+        o.inner.items[0] = i
+        i += 1
+    return o.inner.items[0]
+inner = Inner([0, 1, 2], {'key': 42})
+outer = Outer(inner, 'test')
+start = time.ticks_us()
+for _ in range(10000):
+    benchmark(outer, 1)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
 ]
 
 
