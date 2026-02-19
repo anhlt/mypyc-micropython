@@ -682,6 +682,44 @@ end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
+    (
+        "inner_list_update(10000) x10",
+        """
+import container_attrs as ca
+import time
+inner = ca.Inner([0, 1, 2], {})
+outer = ca.Outer(inner, 'test')
+start = time.ticks_us()
+for _ in range(10):
+    ca.benchmark_inner_list_update(outer, 10000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+class Inner:
+    def __init__(self, items, data):
+        self.items = items
+        self.data = data
+class Outer:
+    def __init__(self, inner, name):
+        self.inner = inner
+        self.name = name
+def benchmark(o, n):
+    i = 0
+    while i < n:
+        o.inner.items[0] = i
+        i += 1
+    return o.inner.items[0]
+inner = Inner([0, 1, 2], {})
+outer = Outer(inner, 'test')
+start = time.ticks_us()
+for _ in range(10):
+    benchmark(outer, 10000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
 ]
 
 
