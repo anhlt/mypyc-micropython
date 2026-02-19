@@ -499,6 +499,16 @@ Explain every C concept before using it.
 | ESP-IDF (for firmware) | v5.4.2 |
 | mypy | ≥1.0.0 |
 
+## GitHub CLI Configuration
+
+This repository uses the `anhlt` GitHub account. Before any `gh` commands, ensure the correct account is active:
+
+```bash
+gh auth switch --user anhlt
+```
+
+Always verify with `gh auth status` if PR creation fails with "must be a collaborator" error.
+
 ## Changelog
 
 This project uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
