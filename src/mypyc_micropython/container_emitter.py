@@ -287,6 +287,25 @@ class ContainerEmitter:
             return [f"    mp_obj_t {instr.result.name} = {call};"]
         return [f"    (void){call};"]
 
+    def _emit_two_arg_method(self, instr: MethodCallIR, receiver: str) -> list[str]:
+        """Handler for methods with 1 or 2 arguments (replace, find, etc.)."""
+        method = instr.method
+        n_args = len(instr.args)
+        if n_args == 0:
+            call = f"mp_call_function_0(mp_load_attr({receiver}, MP_QSTR_{method}))"
+        elif n_args == 1:
+            arg_c = self._box_value_ir(instr.args[0])
+            call = f"mp_call_function_1(mp_load_attr({receiver}, MP_QSTR_{method}), {arg_c})"
+        else:
+            args_c = ", ".join(self._box_value_ir(a) for a in instr.args)
+            call = (
+                f"mp_call_function_n_kw(mp_load_attr({receiver}, MP_QSTR_{method}), "
+                f"{n_args}, 0, (mp_obj_t[]){{{args_c}}})"
+            )
+        if instr.result:
+            return [f"    mp_obj_t {instr.result.name} = {call};"]
+        return [f"    (void){call};"]
+
     def _emit_generic_method_call(self, instr: MethodCallIR, receiver: str) -> list[str]:
         """Fallback for unknown methods: mp_load_method + mp_call_method."""
         n_args = len(instr.args)
@@ -393,4 +412,47 @@ _METHOD_TABLE: dict[
     "add": ContainerEmitter._emit_set_add,
     "discard": ContainerEmitter._emit_one_arg_method,
     "remove": ContainerEmitter._emit_one_arg_method,
+    # String methods - zero arg
+    "upper": ContainerEmitter._emit_zero_arg_method,
+    "lower": ContainerEmitter._emit_zero_arg_method,
+    "isdigit": ContainerEmitter._emit_zero_arg_method,
+    "isalpha": ContainerEmitter._emit_zero_arg_method,
+    "isspace": ContainerEmitter._emit_zero_arg_method,
+    "isupper": ContainerEmitter._emit_zero_arg_method,
+    "islower": ContainerEmitter._emit_zero_arg_method,
+    "isalnum": ContainerEmitter._emit_zero_arg_method,
+    "isnumeric": ContainerEmitter._emit_zero_arg_method,
+    "isdecimal": ContainerEmitter._emit_zero_arg_method,
+    "isidentifier": ContainerEmitter._emit_zero_arg_method,
+    "isprintable": ContainerEmitter._emit_zero_arg_method,
+    "istitle": ContainerEmitter._emit_zero_arg_method,
+    "title": ContainerEmitter._emit_zero_arg_method,
+    "capitalize": ContainerEmitter._emit_zero_arg_method,
+    "casefold": ContainerEmitter._emit_zero_arg_method,
+    "swapcase": ContainerEmitter._emit_zero_arg_method,
+    "splitlines": ContainerEmitter._emit_one_arg_method,
+    # String methods - one/two arg
+    "strip": ContainerEmitter._emit_one_arg_method,
+    "lstrip": ContainerEmitter._emit_one_arg_method,
+    "rstrip": ContainerEmitter._emit_one_arg_method,
+    "startswith": ContainerEmitter._emit_one_arg_method,
+    "endswith": ContainerEmitter._emit_one_arg_method,
+    "join": ContainerEmitter._emit_one_arg_method,
+    "encode": ContainerEmitter._emit_two_arg_method,
+    # String methods - variable args
+    "split": ContainerEmitter._emit_two_arg_method,
+    "rsplit": ContainerEmitter._emit_two_arg_method,
+    "find": ContainerEmitter._emit_two_arg_method,
+    "rfind": ContainerEmitter._emit_two_arg_method,
+    "index": ContainerEmitter._emit_two_arg_method,
+    "rindex": ContainerEmitter._emit_two_arg_method,
+    "count": ContainerEmitter._emit_two_arg_method,
+    "replace": ContainerEmitter._emit_two_arg_method,
+    "partition": ContainerEmitter._emit_one_arg_method,
+    "rpartition": ContainerEmitter._emit_one_arg_method,
+    "center": ContainerEmitter._emit_two_arg_method,
+    "ljust": ContainerEmitter._emit_two_arg_method,
+    "rjust": ContainerEmitter._emit_two_arg_method,
+    "zfill": ContainerEmitter._emit_one_arg_method,
+    "expandtabs": ContainerEmitter._emit_one_arg_method,
 }

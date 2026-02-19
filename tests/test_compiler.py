@@ -3157,3 +3157,299 @@ def double_value(obj: Outer) -> int:
         assert "->inner" in result
         assert "->value" in result
         assert "* 2" in result or "MP_BINARY_OP_MULTIPLY" in result
+
+
+class TestStringOperations:
+    def test_string_upper(self):
+        source = """
+def make_upper(s: str) -> str:
+    return s.upper()
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_upper" in result
+        assert "mp_load_attr" in result or "mp_call_function_0" in result
+
+    def test_string_lower(self):
+        source = """
+def make_lower(s: str) -> str:
+    return s.lower()
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_lower" in result
+
+    def test_string_strip(self):
+        source = """
+def strip_whitespace(s: str) -> str:
+    return s.strip()
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_strip" in result
+
+    def test_string_strip_with_chars(self):
+        source = """
+def strip_chars(s: str, chars: str) -> str:
+    return s.strip(chars)
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_strip" in result
+        assert "mp_call_function_1" in result
+
+    def test_string_split_no_args(self):
+        source = """
+def split_string(s: str) -> list:
+    return s.split()
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_split" in result
+
+    def test_string_split_with_sep(self):
+        source = """
+def split_on_comma(s: str) -> list:
+    return s.split(",")
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_split" in result
+        assert 'mp_obj_new_str(",", 1)' in result
+
+    def test_string_split_with_maxsplit(self):
+        source = """
+def split_limited(s: str, sep: str, count: int) -> list:
+    return s.split(sep, count)
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_split" in result
+        assert "mp_call_function_n_kw" in result
+
+    def test_string_join(self):
+        source = """
+def join_list(sep: str, items: list) -> str:
+    return sep.join(items)
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_join" in result
+        assert "mp_call_function_1" in result
+
+    def test_string_replace(self):
+        source = """
+def replace_text(s: str, old: str, new: str) -> str:
+    return s.replace(old, new)
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_replace" in result
+
+    def test_string_startswith(self):
+        source = """
+def starts_with_hello(s: str) -> bool:
+    return s.startswith("hello")
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_startswith" in result
+        assert 'mp_obj_new_str("hello"' in result
+
+    def test_string_endswith(self):
+        source = """
+def ends_with_py(s: str) -> bool:
+    return s.endswith(".py")
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_endswith" in result
+        assert 'mp_obj_new_str(".py"' in result
+
+    def test_string_find(self):
+        source = """
+def find_substring(s: str, sub: str) -> int:
+    return s.find(sub)
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_find" in result
+
+    def test_string_find_with_start(self):
+        source = """
+def find_from_pos(s: str, sub: str, start: int) -> int:
+    return s.find(sub, start)
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_find" in result
+
+    def test_string_isdigit(self):
+        source = """
+def check_digit(s: str) -> bool:
+    return s.isdigit()
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_isdigit" in result
+
+    def test_string_isalpha(self):
+        source = """
+def check_alpha(s: str) -> bool:
+    return s.isalpha()
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_isalpha" in result
+
+    def test_string_partition(self):
+        source = """
+def split_on_colon(s: str) -> tuple:
+    return s.partition(":")
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_partition" in result
+        assert 'mp_obj_new_str(":"' in result
+
+    def test_string_count(self):
+        source = """
+def count_char(s: str, c: str) -> int:
+    return s.count(c)
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_count" in result
+
+    def test_string_encode(self):
+        source = """
+def to_bytes(s: str) -> bytes:
+    return s.encode()
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_encode" in result
+
+    def test_string_concatenation_vars(self):
+        source = """
+def concat(a: str, b: str) -> str:
+    return a + b
+"""
+        result = compile_source(source, "test")
+        assert "MP_BINARY_OP_ADD" in result
+
+    def test_string_concatenation_literals(self):
+        source = """
+def greet() -> str:
+    return "hello" + " " + "world"
+"""
+        result = compile_source(source, "test")
+        assert "MP_BINARY_OP_ADD" in result
+        assert 'mp_obj_new_str("hello"' in result
+        assert 'mp_obj_new_str(" "' in result
+        assert 'mp_obj_new_str("world"' in result
+
+    def test_string_concatenation_mixed(self):
+        source = """
+def greet_name(name: str) -> str:
+    return "Hello, " + name + "!"
+"""
+        result = compile_source(source, "test")
+        assert "MP_BINARY_OP_ADD" in result
+        assert 'mp_obj_new_str("Hello, "' in result
+        assert 'mp_obj_new_str("!"' in result
+
+    def test_string_in_operator(self):
+        source = """
+def contains(haystack: str, needle: str) -> bool:
+    return needle in haystack
+"""
+        result = compile_source(source, "test")
+        assert "MP_BINARY_OP_IN" in result
+
+    def test_string_indexing(self):
+        source = """
+def get_first_char(s: str) -> str:
+    return s[0]
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_subscr" in result
+
+    def test_string_slicing(self):
+        source = """
+def get_first_three(s: str) -> str:
+    return s[:3]
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_subscr" in result
+        assert "mp_obj_new_slice" in result
+
+    def test_string_len(self):
+        source = """
+def get_length(s: str) -> int:
+    return len(s)
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_len" in result
+
+    def test_string_lstrip(self):
+        source = """
+def left_strip(s: str) -> str:
+    return s.lstrip()
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_lstrip" in result
+
+    def test_string_rstrip(self):
+        source = """
+def right_strip(s: str) -> str:
+    return s.rstrip()
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_rstrip" in result
+
+    def test_string_rfind(self):
+        source = """
+def find_last(s: str, sub: str) -> int:
+    return s.rfind(sub)
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_rfind" in result
+
+    def test_string_rsplit(self):
+        source = """
+def rsplit_string(s: str, sep: str) -> list:
+    return s.rsplit(sep)
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_rsplit" in result
+
+    def test_string_rpartition(self):
+        source = """
+def rpartition_string(s: str, sep: str) -> tuple:
+    return s.rpartition(sep)
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_rpartition" in result
+
+    def test_string_capitalize(self):
+        source = """
+def capitalize_string(s: str) -> str:
+    return s.capitalize()
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_capitalize" in result
+
+    def test_string_title(self):
+        source = """
+def title_string(s: str) -> str:
+    return s.title()
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_title" in result
+
+    def test_string_isspace(self):
+        source = """
+def is_whitespace(s: str) -> bool:
+    return s.isspace()
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_isspace" in result
+
+    def test_string_isupper(self):
+        source = """
+def is_uppercase(s: str) -> bool:
+    return s.isupper()
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_isupper" in result
+
+    def test_string_islower(self):
+        source = """
+def is_lowercase(s: str) -> bool:
+    return s.islower()
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_islower" in result

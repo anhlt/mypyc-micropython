@@ -27,7 +27,7 @@ This document defines what Python features mypyc-micropython will support, parti
 | `int` | ✅ Implemented | Maps to `mp_int_t` |
 | `float` | ✅ Implemented | Maps to `mp_float_t` |
 | `bool` | ✅ Implemented | Maps to `bool` |
-| `str` | 🔄 Partial | Basic support implemented |
+| `str` | ✅ Implemented | Full method support via MicroPython runtime |
 | `bytes` | 📋 Planned | Phase 1 |
 | `None` | ✅ Implemented | Maps to `mp_const_none` |
 
@@ -246,23 +246,76 @@ class MyProtocol(Protocol): ...  # ❌
 def specific(x: Literal[1, 2, 3]) -> int: ...  # ❌
 ```
 
-### String Operations ⚠️
+### String Operations ✅
 
-**Supported:**
-```python
-# Basic operations
-s = "hello"
-length = len(s)
-upper = s.upper()
-concat = s + " world"
-```
+String operations are fully supported via MicroPython's runtime, matching mypyc's native string operations.
+
+#### Construction
+
+| Operation | Status | Notes |
+|-----------|--------|-------|
+| String literal `"hello"` | ✅ Implemented | `mp_obj_new_str()` |
+| `str(x: int)` | ✅ Implemented | Via `mp_obj_str_make_new()` |
+| `str(x: object)` | ✅ Implemented | Via `mp_obj_print_helper()` |
+
+#### Operators
+
+| Operation | Status | Notes |
+|-----------|--------|-------|
+| Concatenation `s1 + s2` | ✅ Implemented | `mp_binary_op(MP_BINARY_OP_ADD)` |
+| Indexing `s[n]` | ✅ Implemented | `mp_obj_subscr()` |
+| Slicing `s[n:m]` | ✅ Implemented | `mp_obj_subscr()` with slice |
+| Comparison `==`, `!=` | ✅ Implemented | `mp_binary_op()` |
+| Augmented `s1 += s2` | ✅ Implemented | `mp_binary_op(MP_BINARY_OP_INPLACE_ADD)` |
+| Containment `s1 in s2` | ✅ Implemented | `mp_binary_op(MP_BINARY_OP_IN)` |
+
+#### Methods
+
+| Operation | Status | Notes |
+|-----------|--------|-------|
+| `s.split()` | ✅ Implemented | `mp_load_attr(MP_QSTR_split)` + call |
+| `s.split(sep)` | ✅ Implemented | With separator argument |
+| `s.split(sep, maxsplit)` | ✅ Implemented | With maxsplit argument |
+| `s.rsplit()` | ✅ Implemented | Right-to-left split |
+| `s.join(iterable)` | ✅ Implemented | `mp_load_attr(MP_QSTR_join)` + call |
+| `s.replace(old, new)` | ✅ Implemented | String replacement |
+| `s.replace(old, new, count)` | ✅ Implemented | With count limit |
+| `s.startswith(prefix)` | ✅ Implemented | Prefix check |
+| `s.endswith(suffix)` | ✅ Implemented | Suffix check |
+| `s.find(sub)` | ✅ Implemented | Find substring index |
+| `s.find(sub, start)` | ✅ Implemented | With start position |
+| `s.find(sub, start, end)` | ✅ Implemented | With start and end |
+| `s.rfind(sub)` | ✅ Implemented | Right-to-left find |
+| `s.strip()` | ✅ Implemented | Strip whitespace |
+| `s.strip(chars)` | ✅ Implemented | Strip specific chars |
+| `s.lstrip()` | ✅ Implemented | Left strip |
+| `s.rstrip()` | ✅ Implemented | Right strip |
+| `s.upper()` | ✅ Implemented | Uppercase conversion |
+| `s.lower()` | ✅ Implemented | Lowercase conversion |
+| `s.isdigit()` | ✅ Implemented | Check if all digits |
+| `s.isalpha()` | ✅ Implemented | Check if all letters |
+| `s.isspace()` | ✅ Implemented | Check if all whitespace |
+| `s.isupper()` | ✅ Implemented | Check if uppercase |
+| `s.islower()` | ✅ Implemented | Check if lowercase |
+| `s.partition(sep)` | ✅ Implemented | Split into 3 parts |
+| `s.rpartition(sep)` | ✅ Implemented | Right-to-left partition |
+| `s.splitlines()` | ✅ Implemented | Split by line boundaries |
+| `s.encode()` | ✅ Implemented | Encode to bytes |
+| `s.encode(encoding)` | ✅ Implemented | With encoding |
+
+#### Functions
+
+| Operation | Status | Notes |
+|-----------|--------|-------|
+| `len(s)` | ✅ Implemented | `mp_obj_len()` |
+| `ord(s)` | ✅ Implemented | Get character code |
 
 **NOT Supported:**
 ```python
 # f-strings with expressions
 f"{x + y}"  # ❌ Complex expressions in f-strings
 
-# String formatting
+# String formatting with complex specs
 "{:04d}".format(42)  # ❌ Complex format specs
 ```
 

@@ -44,11 +44,11 @@ A 6-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 - **Performance**: RTuple internal ops (57x speedup), list[tuple] (9.2x speedup), 22 benchmarks
   suite with 11.8x average speedup
 - **Testing**: 414 tests (unit + C runtime), comprehensive device test coverage
+- **Strings**: Full method support (`split`, `join`, `replace`, `find`, `strip`, `upper`, `lower`, etc.)
 - **Other**: Local variables (typed and inferred), string literals, `None`, `True`/`False`
 
 ### What's Next ❌
 
-- String operations
 - `sum(generator_expr)` — inline loop optimization (Phase 5)
 - Remaining list methods (`extend`, `insert`, `remove`, `count`, `index`, `reverse`, `sort`)
 - List/dict comprehensions
@@ -61,8 +61,8 @@ A 6-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 ## Phase Overview
 
 ```
-Phase 1: Core Completion        █████████████░░  ~85% done
-  for loops ✅ │ lists ✅ │ dicts ✅ │ tuples ✅ │ sets ✅ │ builtins (partial)
+Phase 1: Core Completion        ██████████████░  ~90% done
+  for loops ✅ │ lists ✅ │ dicts ✅ │ tuples ✅ │ sets ✅ │ strings ✅ │ builtins (partial)
 
 Phase 2: Functions & Arguments  ████████████░░░  ~80% done
   default args ✅ │ *args ✅ │ **kwargs ✅ │ bool ✅ │ min/max ✅ │ sum ✅
@@ -249,7 +249,73 @@ All for-loop forms are implemented:
 | Set iteration | ✅ | `mp_getiter()`/`mp_iternext()` |
 | Set operations: `union`, `intersection`, `difference` | ❌ TODO | |
 
-### 1.6 Built-in Functions
+### 1.6 String Operations ✅ DONE
+
+**Implemented: Full string method support via MicroPython runtime**
+
+String operations are implemented using MicroPython's `mp_load_attr(MP_QSTR_method)` + call pattern,
+matching mypyc's approach of delegating to the runtime for string operations.
+
+#### Construction
+
+| Operation | Status | C API |
+|-----------|--------|-------|
+| `"hello"` | ✅ | `mp_obj_new_str("hello", 5)` |
+| `str(x)` | ✅ | `mp_obj_str_make_new()` |
+
+#### Operators
+
+| Operation | Status | C API |
+|-----------|--------|-------|
+| `s1 + s2` | ✅ | `mp_binary_op(MP_BINARY_OP_ADD)` |
+| `s[n]` | ✅ | `mp_obj_subscr()` |
+| `s[n:m]` | ✅ | `mp_obj_subscr()` with slice |
+| `s1 == s2` | ✅ | `mp_binary_op(MP_BINARY_OP_EQUAL)` |
+| `s1 += s2` | ✅ | `mp_binary_op(MP_BINARY_OP_INPLACE_ADD)` |
+| `s1 in s2` | ✅ | `mp_binary_op(MP_BINARY_OP_IN)` |
+
+#### Methods
+
+| Operation | Status | C API |
+|-----------|--------|-------|
+| `s.split()` | ✅ | `mp_load_attr(MP_QSTR_split)` + call |
+| `s.split(sep)` | ✅ | With separator argument |
+| `s.split(sep, maxsplit)` | ✅ | With maxsplit argument |
+| `s.rsplit()` | ✅ | Right-to-left split |
+| `s.join(iterable)` | ✅ | `mp_load_attr(MP_QSTR_join)` + call |
+| `s.replace(old, new)` | ✅ | `mp_load_attr(MP_QSTR_replace)` + call |
+| `s.replace(old, new, count)` | ✅ | With count limit |
+| `s.startswith(prefix)` | ✅ | `mp_load_attr(MP_QSTR_startswith)` + call |
+| `s.endswith(suffix)` | ✅ | `mp_load_attr(MP_QSTR_endswith)` + call |
+| `s.find(sub)` | ✅ | `mp_load_attr(MP_QSTR_find)` + call |
+| `s.find(sub, start)` | ✅ | With start position |
+| `s.find(sub, start, end)` | ✅ | With start and end |
+| `s.rfind(sub)` | ✅ | Right-to-left find |
+| `s.strip()` | ✅ | `mp_load_attr(MP_QSTR_strip)` + call |
+| `s.strip(chars)` | ✅ | Strip specific chars |
+| `s.lstrip()` | ✅ | Left strip |
+| `s.rstrip()` | ✅ | Right strip |
+| `s.upper()` | ✅ | `mp_load_attr(MP_QSTR_upper)` + call |
+| `s.lower()` | ✅ | `mp_load_attr(MP_QSTR_lower)` + call |
+| `s.isdigit()` | ✅ | `mp_load_attr(MP_QSTR_isdigit)` + call |
+| `s.isalpha()` | ✅ | `mp_load_attr(MP_QSTR_isalpha)` + call |
+| `s.isspace()` | ✅ | `mp_load_attr(MP_QSTR_isspace)` + call |
+| `s.isupper()` | ✅ | `mp_load_attr(MP_QSTR_isupper)` + call |
+| `s.islower()` | ✅ | `mp_load_attr(MP_QSTR_islower)` + call |
+| `s.partition(sep)` | ✅ | `mp_load_attr(MP_QSTR_partition)` + call |
+| `s.rpartition(sep)` | ✅ | `mp_load_attr(MP_QSTR_rpartition)` + call |
+| `s.splitlines()` | ✅ | `mp_load_attr(MP_QSTR_splitlines)` + call |
+| `s.encode()` | ✅ | `mp_load_attr(MP_QSTR_encode)` + call |
+| `s.count(sub)` | ✅ | `mp_load_attr(MP_QSTR_count)` + call |
+
+#### Functions
+
+| Operation | Status | C API |
+|-----------|--------|-------|
+| `len(s)` | ✅ | `mp_obj_len()` |
+| `ord(s)` | ✅ | `mp_ord()` via builtin |
+
+### 1.7 Built-in Functions
 
 | Feature | Status | Notes |
 |---------|--------|-------|
