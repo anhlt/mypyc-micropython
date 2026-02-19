@@ -18,15 +18,17 @@ We added support for 25+ string methods organized into categories:
 
 | Category | Methods |
 |----------|---------|
-| **Case** | `upper()`, `lower()`, `capitalize()`, `title()`, `swapcase()` |
-| **Search** | `find()`, `rfind()`, `index()`, `rindex()`, `count()` |
+| **Case** | `upper()`, `lower()` |
+| **Search** | `find()`, `rfind()`, `count()` |
 | **Check** | `startswith()`, `endswith()`, `isdigit()`, `isalpha()`, `isspace()`, `isupper()`, `islower()` |
 | **Modify** | `replace()`, `strip()`, `lstrip()`, `rstrip()` |
 | **Split/Join** | `split()`, `rsplit()`, `join()`, `partition()`, `rpartition()` |
-| **Padding** | `center()`, `ljust()`, `rjust()`, `zfill()` |
+| **Padding** | `center()` |
 | **Other** | `encode()` |
 
 Plus the operators: `+` (concat), `*` (repeat), `in` (contains), `[]` (indexing/slicing), `len()`.
+
+**MicroPython ESP32 Limitation**: Some methods like `capitalize()`, `title()`, `swapcase()`, `ljust()`, `rjust()`, and `zfill()` are not available in the default MicroPython ESP32 build. They require enabling `MICROPY_PY_BUILTINS_STR_UNICODE_FULL` in the firmware configuration.
 
 ### Method Dispatch Pattern
 

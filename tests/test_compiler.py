@@ -3453,3 +3453,26 @@ def is_lowercase(s: str) -> bool:
 """
         result = compile_source(source, "test")
         assert "MP_QSTR_islower" in result
+
+    def test_str_builtin_conversion(self):
+        source = """
+def format_number(n: int, width: int) -> str:
+    s: str = str(n)
+    return s.zfill(width)
+"""
+        result = compile_source(source, "test")
+        assert "mp_call_function_1" in result
+        assert "mp_type_str" in result
+        assert "mp_obj_t s" in result
+
+    def test_str_type_variable(self):
+        source = """
+def process_text(text: str) -> str:
+    s: str = text.lower()
+    s = s.strip()
+    return s
+"""
+        result = compile_source(source, "test")
+        assert "mp_obj_t s" in result
+        assert "MP_QSTR_lower" in result
+        assert "MP_QSTR_strip" in result

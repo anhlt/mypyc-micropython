@@ -1236,24 +1236,6 @@ def test_string_operations():
     )
 
     test(
-        "capitalize_string",
-        "import string_operations as s; print(s.capitalize_string('hello world'))",
-        "Hello world",
-    )
-
-    test(
-        "title_string",
-        "import string_operations as s; print(s.title_string('hello world'))",
-        "Hello World",
-    )
-
-    test(
-        "swapcase_string",
-        "import string_operations as s; print(s.swapcase_string('Hello World'))",
-        "hELLO wORLD",
-    )
-
-    test(
         "find_substring found",
         "import string_operations as s; print(s.find_substring('hello world', 'world'))",
         "6",
@@ -1356,24 +1338,6 @@ def test_string_operations():
     )
 
     test(
-        "ljust_string",
-        "import string_operations as s; print(repr(s.ljust_string('hi', 5)))",
-        "'hi   '",
-    )
-
-    test(
-        "rjust_string",
-        "import string_operations as s; print(repr(s.rjust_string('hi', 5)))",
-        "'   hi'",
-    )
-
-    test(
-        "zfill_string",
-        "import string_operations as s; print(s.zfill_string('42', 5))",
-        "00042",
-    )
-
-    test(
         "partition_string",
         "import string_operations as s; print(s.partition_string('hello=world', '='))",
         "('hello', '=', 'world')",
@@ -1413,12 +1377,6 @@ def test_string_operations():
         "extract_extension no ext",
         "import string_operations as s; print(repr(s.extract_extension('README')))",
         "''",
-    )
-
-    test(
-        "format_number",
-        "import string_operations as s; print(s.format_number(42, 5))",
-        "00042",
     )
 
 

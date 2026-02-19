@@ -256,12 +256,15 @@ All for-loop forms are implemented:
 String operations are implemented using MicroPython's `mp_load_attr(MP_QSTR_method)` + call pattern,
 matching mypyc's approach of delegating to the runtime for string operations.
 
+**Note:** Some methods (`capitalize`, `title`, `swapcase`, `ljust`, `rjust`, `zfill`) are not
+available in MicroPython ESP32 by default. They require `MICROPY_PY_BUILTINS_STR_UNICODE_FULL`.
+
 #### Construction
 
 | Operation | Status | C API |
 |-----------|--------|-------|
 | `"hello"` | ✅ | `mp_obj_new_str("hello", 5)` |
-| `str(x)` | ✅ | `mp_obj_str_make_new()` |
+| `str(x)` | ✅ | `mp_call_function_1(&mp_type_str, x)` |
 
 #### Operators
 
@@ -274,7 +277,7 @@ matching mypyc's approach of delegating to the runtime for string operations.
 | `s1 += s2` | ✅ | `mp_binary_op(MP_BINARY_OP_INPLACE_ADD)` |
 | `s1 in s2` | ✅ | `mp_binary_op(MP_BINARY_OP_IN)` |
 
-#### Methods
+#### Methods (Available on ESP32)
 
 | Operation | Status | C API |
 |-----------|--------|-------|
@@ -297,6 +300,7 @@ matching mypyc's approach of delegating to the runtime for string operations.
 | `s.rstrip()` | ✅ | Right strip |
 | `s.upper()` | ✅ | `mp_load_attr(MP_QSTR_upper)` + call |
 | `s.lower()` | ✅ | `mp_load_attr(MP_QSTR_lower)` + call |
+| `s.center(width)` | ✅ | `mp_load_attr(MP_QSTR_center)` + call |
 | `s.isdigit()` | ✅ | `mp_load_attr(MP_QSTR_isdigit)` + call |
 | `s.isalpha()` | ✅ | `mp_load_attr(MP_QSTR_isalpha)` + call |
 | `s.isspace()` | ✅ | `mp_load_attr(MP_QSTR_isspace)` + call |

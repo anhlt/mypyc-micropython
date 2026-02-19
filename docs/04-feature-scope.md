@@ -250,12 +250,16 @@ def specific(x: Literal[1, 2, 3]) -> int: ...  # ❌
 
 String operations are fully supported via MicroPython's runtime, matching mypyc's native string operations.
 
+**Note:** Some string methods are not available in MicroPython ESP32 by default:
+`capitalize()`, `title()`, `swapcase()`, `ljust()`, `rjust()`, `zfill()`.
+These require enabling `MICROPY_PY_BUILTINS_STR_UNICODE_FULL` in the MicroPython build.
+
 #### Construction
 
 | Operation | Status | Notes |
 |-----------|--------|-------|
 | String literal `"hello"` | ✅ Implemented | `mp_obj_new_str()` |
-| `str(x: int)` | ✅ Implemented | Via `mp_obj_str_make_new()` |
+| `str(x: int)` | ✅ Implemented | Via `mp_call_function_1(&mp_type_str, ...)` |
 | `str(x: object)` | ✅ Implemented | Via `mp_obj_print_helper()` |
 
 #### Operators
@@ -269,7 +273,7 @@ String operations are fully supported via MicroPython's runtime, matching mypyc'
 | Augmented `s1 += s2` | ✅ Implemented | `mp_binary_op(MP_BINARY_OP_INPLACE_ADD)` |
 | Containment `s1 in s2` | ✅ Implemented | `mp_binary_op(MP_BINARY_OP_IN)` |
 
-#### Methods
+#### Methods (Available on ESP32)
 
 | Operation | Status | Notes |
 |-----------|--------|-------|
@@ -292,6 +296,7 @@ String operations are fully supported via MicroPython's runtime, matching mypyc'
 | `s.rstrip()` | ✅ Implemented | Right strip |
 | `s.upper()` | ✅ Implemented | Uppercase conversion |
 | `s.lower()` | ✅ Implemented | Lowercase conversion |
+| `s.center(width)` | ✅ Implemented | Center in width |
 | `s.isdigit()` | ✅ Implemented | Check if all digits |
 | `s.isalpha()` | ✅ Implemented | Check if all letters |
 | `s.isspace()` | ✅ Implemented | Check if all whitespace |
@@ -302,6 +307,18 @@ String operations are fully supported via MicroPython's runtime, matching mypyc'
 | `s.splitlines()` | ✅ Implemented | Split by line boundaries |
 | `s.encode()` | ✅ Implemented | Encode to bytes |
 | `s.encode(encoding)` | ✅ Implemented | With encoding |
+| `s.count(sub)` | ✅ Implemented | Count occurrences |
+
+#### Methods (NOT available on ESP32 by default)
+
+| Operation | Status | Notes |
+|-----------|--------|-------|
+| `s.capitalize()` | ⚠️ Limited | Requires `MICROPY_PY_BUILTINS_STR_UNICODE_FULL` |
+| `s.title()` | ⚠️ Limited | Requires `MICROPY_PY_BUILTINS_STR_UNICODE_FULL` |
+| `s.swapcase()` | ⚠️ Limited | Requires `MICROPY_PY_BUILTINS_STR_UNICODE_FULL` |
+| `s.ljust(width)` | ⚠️ Limited | Requires `MICROPY_PY_BUILTINS_STR_UNICODE_FULL` |
+| `s.rjust(width)` | ⚠️ Limited | Requires `MICROPY_PY_BUILTINS_STR_UNICODE_FULL` |
+| `s.zfill(width)` | ⚠️ Limited | Requires `MICROPY_PY_BUILTINS_STR_UNICODE_FULL` |
 
 #### Functions
 

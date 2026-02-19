@@ -539,6 +539,10 @@ class BaseEmitter:
                 return arg_expr, "bool"
             boxed = self._box_value(arg_expr, arg_type)
             return f"mp_obj_is_true({boxed})", "bool"
+        elif func == "str" and args:
+            arg_expr, arg_type = args[0]
+            boxed = self._box_value(arg_expr, arg_type)
+            return f"mp_call_function_1(MP_OBJ_FROM_PTR(&mp_type_str), {boxed})", "mp_obj_t"
         elif func == "min":
             if len(args) == 2:
                 a_expr, a_type = args[0]
