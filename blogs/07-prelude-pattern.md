@@ -411,7 +411,40 @@ def _emit_prelude(self, prelude: list[InstrIR]) -> list[str]:
 
 ## Complete Example: `result.append(i * i)`
 
-Let's trace through the full compilation:
+Let's trace through the full compilation of a function that builds a list of squares:
+
+```python
+def build_squares(n: int) -> list:
+    result: list = []
+    for i in range(n):
+        result.append(i * i)
+    return result
+```
+
+### IR Visualization
+
+Using `mpy-compile --dump-ir text`:
+
+```
+def build_squares(n: MP_INT_T) -> MP_OBJ_T:
+  c_name: blog07_example_build_squares
+  max_temp: 1
+  locals: {n: MP_INT_T, result: MP_OBJ_T, i: MP_INT_T}
+  body:
+    result: mp_obj_t = []
+    for i in range(0, n, 1):
+      # prelude:
+        _tmp1 = result.append((i * i))
+      _tmp1
+    return result
+```
+
+The IR shows:
+- **`max_temp: 1`** - One temp variable allocated for the method call result
+- **`# prelude:`** - The `append` call with its argument `(i * i)` is in the prelude
+- **`_tmp1`** - The expression statement just references the temp (value unused)
+
+The prelude ensures `i * i` is computed and `append` is called before `_tmp1` is referenced.
 
 ### Step 1: Build the Expression
 

@@ -204,6 +204,30 @@ def max_of_args(*nums) -> int:
     return result
 ```
 
+### IR Visualization
+
+Using `mpy-compile --dump-ir text`:
+
+```
+def max_of_args() -> MP_INT_T:
+  c_name: blog10_example_max_of_args
+  max_temp: 0
+  locals: {nums: MP_OBJ_T, result: MP_INT_T, n: MP_OBJ_T}
+  body:
+    result: mp_int_t = nums[0]
+    for n in nums:
+      if (n > result):
+        result = n
+    return result
+```
+
+The IR reveals the type mismatch:
+- **`result: MP_INT_T`** - Declared as unboxed integer
+- **`n: MP_OBJ_T`** - Loop variable is boxed (from iterator)
+- **`result = n`** - Assigning `MP_OBJ_T` to `MP_INT_T`!
+
+The IR correctly shows both types. The bug was in the emitter not inserting conversion.
+
 ### Generated C (Buggy)
 
 ```c
