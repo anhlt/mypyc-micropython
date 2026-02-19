@@ -720,6 +720,190 @@ end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
+    (
+        "str.upper() x10000",
+        """
+import string_operations as s
+import time
+text = "hello world"
+start = time.ticks_us()
+for _ in range(10000):
+    s.to_upper(text)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+text = "hello world"
+start = time.ticks_us()
+for _ in range(10000):
+    text.upper()
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "str.replace() x10000",
+        """
+import string_operations as s
+import time
+text = "hello world hello"
+start = time.ticks_us()
+for _ in range(10000):
+    s.replace_string(text, "hello", "hi")
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+text = "hello world hello"
+start = time.ticks_us()
+for _ in range(10000):
+    text.replace("hello", "hi")
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "str.find() x10000",
+        """
+import string_operations as s
+import time
+text = "hello world hello world"
+start = time.ticks_us()
+for _ in range(10000):
+    s.find_substring(text, "world")
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+text = "hello world hello world"
+start = time.ticks_us()
+for _ in range(10000):
+    text.find("world")
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "str.split() x5000",
+        """
+import string_operations as s
+import time
+text = "a,b,c,d,e,f,g,h,i,j"
+start = time.ticks_us()
+for _ in range(5000):
+    s.split_on_sep(text, ",")
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+text = "a,b,c,d,e,f,g,h,i,j"
+start = time.ticks_us()
+for _ in range(5000):
+    text.split(",")
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "str.join() x5000",
+        """
+import string_operations as s
+import time
+items = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]
+start = time.ticks_us()
+for _ in range(5000):
+    s.join_strings(",", items)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+items = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]
+start = time.ticks_us()
+for _ in range(5000):
+    ",".join(items)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "str.strip() x10000",
+        """
+import string_operations as s
+import time
+text = "  hello world  "
+start = time.ticks_us()
+for _ in range(10000):
+    s.strip_string(text)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+text = "  hello world  "
+start = time.ticks_us()
+for _ in range(10000):
+    text.strip()
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "str concat x10000",
+        """
+import string_operations as s
+import time
+a = "hello"
+b = " world"
+start = time.ticks_us()
+for _ in range(10000):
+    s.concat_strings(a, b)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+a = "hello"
+b = " world"
+start = time.ticks_us()
+for _ in range(10000):
+    a + b
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "normalize_text x1000",
+        """
+import string_operations as s
+import time
+text = "  Hello   World  "
+start = time.ticks_us()
+for _ in range(1000):
+    s.normalize_text(text)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def normalize_text(text):
+    s = text.lower()
+    s = s.strip()
+    while "  " in s:
+        s = s.replace("  ", " ")
+    return s
+text = "  Hello   World  "
+start = time.ticks_us()
+for _ in range(1000):
+    normalize_text(text)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
 ]
 
 

@@ -1207,6 +1207,179 @@ def test_class_param():
     )
 
 
+def test_string_operations():
+    """Test string_operations module."""
+    print("\n[TEST] Testing string_operations module...")
+
+    test(
+        "concat_strings",
+        "import string_operations as s; print(s.concat_strings('hello', ' world'))",
+        "hello world",
+    )
+
+    test(
+        "repeat_string",
+        "import string_operations as s; print(s.repeat_string('ab', 3))",
+        "ababab",
+    )
+
+    test(
+        "to_upper",
+        "import string_operations as s; print(s.to_upper('hello'))",
+        "HELLO",
+    )
+
+    test(
+        "to_lower",
+        "import string_operations as s; print(s.to_lower('HELLO'))",
+        "hello",
+    )
+
+    test(
+        "find_substring found",
+        "import string_operations as s; print(s.find_substring('hello world', 'world'))",
+        "6",
+    )
+
+    test(
+        "find_substring not found",
+        "import string_operations as s; print(s.find_substring('hello world', 'xyz'))",
+        "-1",
+    )
+
+    test(
+        "rfind_substring",
+        "import string_operations as s; print(s.rfind_substring('hello hello', 'hello'))",
+        "6",
+    )
+
+    test(
+        "count_substring",
+        "import string_operations as s; print(s.count_substring('abababab', 'ab'))",
+        "4",
+    )
+
+    test(
+        "split_string",
+        "import string_operations as s; print(s.split_string('a b c'))",
+        "['a', 'b', 'c']",
+    )
+
+    test(
+        "split_on_sep",
+        "import string_operations as s; print(s.split_on_sep('a,b,c', ','))",
+        "['a', 'b', 'c']",
+    )
+
+    test(
+        "join_strings",
+        "import string_operations as s; print(s.join_strings('-', ['a', 'b', 'c']))",
+        "a-b-c",
+    )
+
+    test(
+        "strip_string",
+        "import string_operations as s; print(repr(s.strip_string('  hello  ')))",
+        "'hello'",
+    )
+
+    test(
+        "lstrip_string",
+        "import string_operations as s; print(repr(s.lstrip_string('  hello  ')))",
+        "'hello  '",
+    )
+
+    test(
+        "rstrip_string",
+        "import string_operations as s; print(repr(s.rstrip_string('  hello  ')))",
+        "'  hello'",
+    )
+
+    test(
+        "strip_chars",
+        "import string_operations as s; print(s.strip_chars('xxxhelloxxx', 'x'))",
+        "hello",
+    )
+
+    test(
+        "replace_string",
+        "import string_operations as s; print(s.replace_string('hello world', 'world', 'python'))",
+        "hello python",
+    )
+
+    test(
+        "starts_with true",
+        "import string_operations as s; print(s.starts_with('hello world', 'hello'))",
+        "True",
+    )
+
+    test(
+        "starts_with false",
+        "import string_operations as s; print(s.starts_with('hello world', 'world'))",
+        "False",
+    )
+
+    test(
+        "ends_with true",
+        "import string_operations as s; print(s.ends_with('hello world', 'world'))",
+        "True",
+    )
+
+    test(
+        "ends_with false",
+        "import string_operations as s; print(s.ends_with('hello world', 'hello'))",
+        "False",
+    )
+
+    test(
+        "center_string",
+        "import string_operations as s; print(repr(s.center_string('hi', 6)))",
+        "'  hi  '",
+    )
+
+    test(
+        "partition_string",
+        "import string_operations as s; print(s.partition_string('hello=world', '='))",
+        "('hello', '=', 'world')",
+    )
+
+    test(
+        "rpartition_string",
+        "import string_operations as s; print(s.rpartition_string('a=b=c', '='))",
+        "('a=b', '=', 'c')",
+    )
+
+    test(
+        "process_csv_line",
+        "import string_operations as s; print(s.process_csv_line('a, b, c'))",
+        "['a', 'b', 'c']",
+    )
+
+    test(
+        "normalize_text",
+        "import string_operations as s; print(s.normalize_text('  Hello   World  '))",
+        "hello world",
+    )
+
+    test(
+        "build_path",
+        "import string_operations as s; print(s.build_path(['home', 'user', 'file.txt']))",
+        "home/user/file.txt",
+    )
+
+    test(
+        "extract_extension",
+        "import string_operations as s; print(s.extract_extension('document.pdf'))",
+        "pdf",
+    )
+
+    test(
+        "extract_extension no ext",
+        "import string_operations as s; print(repr(s.extract_extension('README')))",
+        "''",
+    )
+
+
 def run_all_tests():
     """Run all test suites."""
     global total_tests, passed_tests, failed_tests
@@ -1239,6 +1412,7 @@ def run_all_tests():
     test_class_param()
     test_chained_attr()
     test_container_attrs()
+    test_string_operations()
 
     # Print summary
     print("\n" + "=" * 70)

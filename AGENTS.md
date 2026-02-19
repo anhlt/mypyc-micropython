@@ -401,6 +401,156 @@ Always run `source ~/esp/esp-idf/export.sh` before firmware builds.
 | `PORT` | `/dev/ttyACM0` | Serial port (macOS: `/dev/cu.usbmodem2101`) |
 | `ESP_IDF_DIR` | `~/esp/esp-idf` | ESP-IDF installation path |
 
+## MicroPython C API Internals
+
+Understanding how MicroPython works internally is essential for this compiler project.
+
+### Object Representation: `mp_obj_t`
+
+Every Python object in MicroPython is represented as `mp_obj_t` - a pointer-sized value:
+
+```c
+typedef void *mp_obj_t;  // Simplified
+```
+
+Small integers are stored directly (tagged pointers), while complex objects are heap-allocated.
+
+### Boxing and Unboxing
+
+Native C values must be "boxed" into Python objects before passing to MicroPython APIs:
+
+```c
+// Boxing: C value -> Python object
+mp_int_t n = 42;
+mp_obj_t boxed = mp_obj_new_int(n);
+
+// Unboxing: Python object -> C value
+mp_obj_t obj = ...;
+mp_int_t n = mp_obj_get_int(obj);
+```
+
+### Type Objects
+
+Python types (like `str`, `list`, `dict`) are represented as `mp_obj_type_t` structs:
+
+```c
+const mp_obj_type_t mp_type_str = {
+    { &mp_type_type },
+    .name = MP_QSTR_str,
+    .make_new = mp_obj_str_make_new,  // Constructor
+    .print = str_print,
+    .binary_op = str_binary_op,
+    // ... other slots
+};
+```
+
+When you "call" a type (e.g., `str(42)`), MicroPython:
+1. Sees it's a type object
+2. Looks up its `.make_new` slot
+3. Calls that function with your arguments
+
+### Key Runtime Functions
+
+| Function | Purpose | Example |
+|----------|---------|---------|
+| `mp_obj_new_int(n)` | Box integer | `mp_obj_new_int(42)` |
+| `mp_obj_get_int(obj)` | Unbox integer | `mp_int_t n = mp_obj_get_int(obj)` |
+| `mp_obj_new_str(s, len)` | Create string | `mp_obj_new_str("hello", 5)` |
+| `mp_obj_new_list(n, items)` | Create list | `mp_obj_new_list(0, NULL)` |
+| `mp_obj_new_dict(n)` | Create dict | `mp_obj_new_dict(0)` |
+| `mp_load_attr(obj, qstr)` | Get attribute | `mp_load_attr(s, MP_QSTR_upper)` |
+| `mp_call_function_1(fn, arg)` | Call with 1 arg | `mp_call_function_1(method, arg)` |
+| `mp_call_function_n_kw(fn, n, kw, args)` | Call with n args | `mp_call_function_n_kw(fn, 2, 0, args)` |
+| `mp_binary_op(op, lhs, rhs)` | Binary operation | `mp_binary_op(MP_BINARY_OP_ADD, a, b)` |
+| `mp_obj_subscr(obj, idx, val)` | Subscript get/set | `mp_obj_subscr(list, idx, MP_OBJ_SENTINEL)` |
+| `mp_obj_len(obj)` | Get length | `mp_obj_t len = mp_obj_len(list)` |
+| `mp_getiter(obj)` | Get iterator | `mp_obj_t iter = mp_getiter(list)` |
+| `mp_iternext(iter)` | Next item | `mp_obj_t item = mp_iternext(iter)` |
+
+### Method Dispatch Pattern
+
+MicroPython methods are often `static` (not public). To call them, use dynamic dispatch:
+
+```c
+// Python: s.upper()
+// C equivalent:
+mp_obj_t method = mp_load_attr(s, MP_QSTR_upper);
+mp_obj_t result = mp_call_function_n_kw(method, 0, 0, NULL);
+```
+
+How `mp_load_attr` works:
+1. Get the object's type (`mp_obj_get_type(obj)`)
+2. Search the type's `locals_dict` for the attribute name
+3. Return a bound method object
+
+### Calling Type Constructors
+
+To call a type's constructor (like `str(42)`):
+
+```c
+// Python: str(42)
+// C equivalent:
+mp_obj_t result = mp_call_function_1(
+    MP_OBJ_FROM_PTR(&mp_type_str),  // The str type itself
+    mp_obj_new_int(42)              // Argument (boxed)
+);
+```
+
+`MP_OBJ_FROM_PTR` converts a C pointer to `mp_obj_t`.
+
+### QSTRs (Interned Strings)
+
+MicroPython uses interned strings (QSTRs) for attribute names:
+
+```c
+MP_QSTR_upper    // Interned "upper"
+MP_QSTR_split    // Interned "split"
+MP_QSTR___init__ // Interned "__init__"
+```
+
+QSTRs are compile-time constants, making attribute lookup fast.
+
+### Iterator Protocol
+
+For `for item in container:` loops:
+
+```c
+mp_obj_t iter = mp_getiter(container);
+mp_obj_t item;
+while ((item = mp_iternext(iter)) != MP_OBJ_STOP_ITERATION) {
+    // Process item
+}
+```
+
+### Subscript Operations
+
+`mp_obj_subscr` handles both get and set:
+
+```c
+// Get: list[i]
+mp_obj_t val = mp_obj_subscr(list, idx, MP_OBJ_SENTINEL);
+
+// Set: list[i] = val
+mp_obj_subscr(list, idx, val);
+```
+
+`MP_OBJ_SENTINEL` signals "get" mode.
+
+### Binary Operations
+
+`mp_binary_op` is polymorphic - works on any types:
+
+```c
+// Works for int + int, str + str, list + list, etc.
+mp_obj_t result = mp_binary_op(MP_BINARY_OP_ADD, a, b);
+```
+
+Common operations:
+- `MP_BINARY_OP_ADD`, `MP_BINARY_OP_SUBTRACT`, `MP_BINARY_OP_MULTIPLY`
+- `MP_BINARY_OP_EQUAL`, `MP_BINARY_OP_LESS`, `MP_BINARY_OP_MORE`
+- `MP_BINARY_OP_IN` (containment check)
+- `MP_BINARY_OP_INPLACE_ADD` (+=)
+
 ## Blog Writing Guidelines
 
 Technical blog posts in `blogs/` document compiler features with educational depth. Follow this structure:
@@ -498,6 +648,49 @@ Explain every C concept before using it.
 | MicroPython submodule | v1.28.0-preview |
 | ESP-IDF (for firmware) | v5.4.2 |
 | mypy | ≥1.0.0 |
+
+## Pre-PR Device Testing (REQUIRED)
+
+**Before creating any PR that adds or modifies compiler features, ALWAYS run device tests on real hardware.**
+
+### When Device Testing is Required
+
+- Adding new language features (string methods, operators, builtins)
+- Modifying code generation (emitters, IR builder)
+- Adding new example modules
+- Fixing bugs in compiled output
+
+### Device Testing Workflow
+
+```bash
+# 1. Detect connected device
+ls /dev/cu.usb*
+
+# 2. Compile all examples including new ones
+make compile-all
+
+# 3. Build firmware with new modules
+make build BOARD=ESP32_GENERIC_C6
+
+# 4. Flash to device
+make flash BOARD=ESP32_GENERIC_C6 PORT=/dev/cu.usbmodem2101
+
+# 5. Run device tests (REQUIRED before PR)
+make run-device-tests PORT=/dev/cu.usbmodem2101
+
+# 6. Run benchmarks (optional but recommended)
+make benchmark PORT=/dev/cu.usbmodem2101
+```
+
+### If No Device Available
+
+If hardware is not connected, explicitly note in the PR:
+- "Device tests pending - no hardware available"
+- Request reviewer to run device tests before merge
+
+**DO NOT create PRs for compiler features without either:**
+1. Running device tests successfully, OR
+2. Explicitly noting device tests are pending in PR description
 
 ## GitHub CLI Configuration
 

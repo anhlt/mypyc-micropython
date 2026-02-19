@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Comprehensive string operations support**: 25+ string methods via dynamic method dispatch
+  - Case methods: `upper()`, `lower()`, `capitalize()`, `title()`, `swapcase()`
+  - Search methods: `find()`, `rfind()`, `index()`, `rindex()`, `count()`
+  - Check methods: `startswith()`, `endswith()`, `isdigit()`, `isalpha()`, `isspace()`, `isupper()`, `islower()`
+  - Modify methods: `replace()`, `strip()`, `lstrip()`, `rstrip()`
+  - Split/Join methods: `split()`, `rsplit()`, `join()`, `partition()`, `rpartition()`
+  - Padding methods: `center()`, `ljust()`, `rjust()`, `zfill()`
+  - Other: `encode()`
+  - Operators: `+` (concat), `*` (repeat), `in` (contains), `[]` (indexing/slicing), `len()`
+- `examples/string_operations.py` - demonstrating all string operation patterns (26 functions)
+- 35 unit tests for string operations compilation
+- 40 device tests for string_operations module
+- 8 string operation benchmarks (upper, replace, find, split, join, strip, concat, normalize)
+- Blog post: `13-string-operations.md` documenting the method dispatch implementation
+- Updated roadmap: String Operations section (1.7) added to Phase 1
 - **Chained class attribute access**: Access attributes through multiple levels of class composition (e.g., `rect.bottom_right.x`, `dept.manager.department.name`)
 - `AttrAccessIR` instruction for IR representation of chained attribute access
 - `_get_class_type_of_attr()` helper for recursive type tracking through attribute chains
