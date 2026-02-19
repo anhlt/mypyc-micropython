@@ -17,6 +17,7 @@ from typing import Any
 from .ir import (
     AnnAssignIR,
     AssignIR,
+    AttrAccessIR,
     AttrAssignIR,
     AugAssignIR,
     BinOpIR,
@@ -43,6 +44,7 @@ from .ir import (
     MethodIR,
     ModuleIR,
     NameIR,
+    ParamAttrIR,
     PassIR,
     PrintIR,
     ReturnIR,
@@ -430,6 +432,10 @@ class IRPrinter:
             return f"{self._i()}{instr.result.name} = Box({self.print_value(instr.value)})"
         elif isinstance(instr, UnboxIR):
             return f"{self._i()}{instr.result.name} = Unbox({self.print_value(instr.value)}, {instr.target_type.name})"
+        elif isinstance(instr, AttrAccessIR):
+            return (
+                f"{self._i()}{instr.result.name} = {self.print_value(instr.obj)}.{instr.attr_name}"
+            )
         else:
             return f"{self._i()}/* unknown instr: {type(instr).__name__} */"
 
@@ -466,6 +472,8 @@ class IRPrinter:
             return f"({self.print_value(value.body)} if {self.print_value(value.test)} else {self.print_value(value.orelse)})"
         elif isinstance(value, SelfAttrIR):
             return f"self.{value.attr_name}"
+        elif isinstance(value, ParamAttrIR):
+            return f"{value.param_name}.{value.attr_name}"
         elif isinstance(value, SelfMethodCallIR):
             args = ", ".join(self.print_value(a) for a in value.args)
             return f"self.{value.method_name}({args})"

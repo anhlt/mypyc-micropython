@@ -14,6 +14,7 @@ from .ir import (
     AnnAssignIR,
     ArgKind,
     AssignIR,
+    AttrAccessIR,
     AttrAssignIR,
     AugAssignIR,
     BinOpIR,
@@ -928,38 +929,79 @@ class IRBuilder:
         ), value_prelude + slice_prelude
 
     def _build_attribute(self, expr: ast.Attribute, locals_: list[str]) -> tuple[ValueIR, list]:
-        if not isinstance(expr.value, ast.Name):
-            return ConstIR(ir_type=IRType.OBJ, value=None), []
-
-        var_name = expr.value.id
         attr_name = expr.attr
 
-        if var_name in self._class_typed_params:
-            class_name = self._class_typed_params[var_name]
-            class_ir = self._known_classes[class_name]
+        if isinstance(expr.value, ast.Name):
+            var_name = expr.value.id
+            if var_name in self._class_typed_params:
+                class_name = self._class_typed_params[var_name]
+                class_ir = self._known_classes[class_name]
 
-            for fld in class_ir.get_all_fields():
-                if fld.name == attr_name:
-                    result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
-                    return ParamAttrIR(
-                        ir_type=result_type,
-                        param_name=var_name,
-                        c_param_name=sanitize_name(var_name),
-                        attr_name=attr_name,
-                        class_c_name=class_ir.c_name,
-                        result_type=result_type,
-                    ), []
+                for fld in class_ir.get_all_fields():
+                    if fld.name == attr_name:
+                        result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
+                        return ParamAttrIR(
+                            ir_type=result_type,
+                            param_name=var_name,
+                            c_param_name=sanitize_name(var_name),
+                            attr_name=attr_name,
+                            class_c_name=class_ir.c_name,
+                            result_type=result_type,
+                        ), []
 
-            return ParamAttrIR(
-                ir_type=IRType.OBJ,
-                param_name=var_name,
-                c_param_name=sanitize_name(var_name),
-                attr_name=attr_name,
-                class_c_name=class_ir.c_name,
-                result_type=IRType.OBJ,
-            ), []
+                return ParamAttrIR(
+                    ir_type=IRType.OBJ,
+                    param_name=var_name,
+                    c_param_name=sanitize_name(var_name),
+                    attr_name=attr_name,
+                    class_c_name=class_ir.c_name,
+                    result_type=IRType.OBJ,
+                ), []
+
+        if isinstance(expr.value, ast.Attribute):
+            base_value, base_prelude = self._build_attribute(expr.value, locals_)
+            base_class_name = self._get_class_type_of_attr(expr.value)
+
+            if base_class_name and base_class_name in self._known_classes:
+                base_class_ir = self._known_classes[base_class_name]
+
+                for fld in base_class_ir.get_all_fields():
+                    if fld.name == attr_name:
+                        result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
+                        temp_name = self._fresh_temp()
+                        result_temp = TempIR(ir_type=result_type, name=temp_name)
+
+                        attr_access = AttrAccessIR(
+                            result=result_temp,
+                            obj=base_value,
+                            attr_name=attr_name,
+                            class_c_name=base_class_ir.c_name,
+                            result_type=result_type,
+                        )
+
+                        return result_temp, base_prelude + [attr_access]
 
         return ConstIR(ir_type=IRType.OBJ, value=None), []
+
+    def _get_class_type_of_attr(self, expr: ast.Attribute) -> str | None:
+        """Get the class type name that an attribute access returns."""
+        if isinstance(expr.value, ast.Name):
+            var_name = expr.value.id
+            if var_name in self._class_typed_params:
+                class_name = self._class_typed_params[var_name]
+                if class_name in self._known_classes:
+                    class_ir = self._known_classes[class_name]
+                    for fld in class_ir.get_all_fields():
+                        if fld.name == expr.attr:
+                            return fld.py_type
+        elif isinstance(expr.value, ast.Attribute):
+            parent_class = self._get_class_type_of_attr(expr.value)
+            if parent_class and parent_class in self._known_classes:
+                class_ir = self._known_classes[parent_class]
+                for fld in class_ir.get_all_fields():
+                    if fld.name == expr.attr:
+                        return fld.py_type
+        return None
 
     def _build_slice(self, slice_node: ast.Slice, locals_: list[str]) -> SliceIR:
         lower = None

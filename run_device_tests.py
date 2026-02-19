@@ -1018,6 +1018,59 @@ def test_star_args():
     )
 
 
+def test_chained_attr():
+    """Test chained_attr module with nested class attribute access."""
+    print("\n[TEST] Testing chained_attr module (chained attribute access)...")
+
+    test(
+        "get_width(rect)",
+        "import chained_attr as ca; tl = ca.Point(0, 0); br = ca.Point(100, 50); r = ca.Rectangle(tl, br); print(ca.get_width(r))",
+        "100",
+    )
+
+    test(
+        "get_height(rect)",
+        "import chained_attr as ca; tl = ca.Point(0, 0); br = ca.Point(100, 50); r = ca.Rectangle(tl, br); print(ca.get_height(r))",
+        "50",
+    )
+
+    test(
+        "get_area(rect)",
+        "import chained_attr as ca; tl = ca.Point(0, 0); br = ca.Point(10, 5); r = ca.Rectangle(tl, br); print(ca.get_area(r))",
+        "50",
+    )
+
+    test(
+        "get_top_left_x(rect)",
+        "import chained_attr as ca; tl = ca.Point(3, 7); br = ca.Point(10, 20); r = ca.Rectangle(tl, br); print(ca.get_top_left_x(r))",
+        "3",
+    )
+
+    test(
+        "get_top_left_y(rect)",
+        "import chained_attr as ca; tl = ca.Point(3, 7); br = ca.Point(10, 20); r = ca.Rectangle(tl, br); print(ca.get_top_left_y(r))",
+        "7",
+    )
+
+    test(
+        "get_bottom_right_x(rect)",
+        "import chained_attr as ca; tl = ca.Point(3, 7); br = ca.Point(10, 20); r = ca.Rectangle(tl, br); print(ca.get_bottom_right_x(r))",
+        "10",
+    )
+
+    test(
+        "get_bottom_right_y(rect)",
+        "import chained_attr as ca; tl = ca.Point(3, 7); br = ca.Point(10, 20); r = ca.Rectangle(tl, br); print(ca.get_bottom_right_y(r))",
+        "20",
+    )
+
+    test(
+        "get_next_value(node) self-ref",
+        "import chained_attr as ca; n2 = ca.Node(42, None); n1 = ca.Node(10, n2); print(ca.get_next_value(n1))",
+        "42",
+    )
+
+
 def test_class_param():
     """Test class_param module with functions taking class parameters."""
     print("\n[TEST] Testing class_param module (class parameters)...")
@@ -1101,6 +1154,7 @@ def run_all_tests():
     test_default_args()
     test_star_args()
     test_class_param()
+    test_chained_attr()
 
     # Print summary
     print("\n" + "=" * 70)

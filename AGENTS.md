@@ -369,6 +369,41 @@ Technical blog posts in `blogs/` document compiler features with educational dep
    - Complete step-by-step compilation example
    - Testing approach
 
+### IR Visualization (REQUIRED)
+
+**Always include IR dump output in blog posts.** This helps readers understand the intermediate representation before seeing generated C code.
+
+Use the `--dump-ir` flag to generate IR output:
+
+```bash
+# Text format (most readable for blogs)
+mpy-compile examples/myfile.py --dump-ir text
+
+# For specific function
+mpy-compile examples/myfile.py --dump-ir text --ir-function my_func
+```
+
+Example IR output to include in blogs:
+
+```
+def get_width(rect: MP_OBJ_T) -> MP_INT_T:
+  c_name: module_get_width
+  max_temp: 2
+  locals: {rect: MP_OBJ_T}
+  body:
+    # prelude:
+      _tmp1 = rect.bottom_right.x
+      _tmp2 = rect.top_left.x
+    return (_tmp1 - _tmp2)
+```
+
+The IR visualization shows:
+- Function signature with C types
+- Temp variable allocation (`max_temp`)
+- Local variable types
+- Prelude instructions (side effects)
+- Expression structure
+
 ### Blog File Naming
 
 Use sequential numbering: `NN-feature-name.md`
@@ -383,8 +418,8 @@ blogs/
 
 ### Code Examples
 
-- Show Python input and C output side-by-side
-- Include IR representation when relevant
+- Show Python input, IR output, AND C output (three-stage view)
+- Include IR representation to bridge Python and C understanding
 - Use ASCII diagrams for memory layouts
 - Add tables for comparisons (Python runtime vs compiled C)
 
