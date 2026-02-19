@@ -499,6 +499,49 @@ Explain every C concept before using it.
 | ESP-IDF (for firmware) | v5.4.2 |
 | mypy | ≥1.0.0 |
 
+## Pre-PR Device Testing (REQUIRED)
+
+**Before creating any PR that adds or modifies compiler features, ALWAYS run device tests on real hardware.**
+
+### When Device Testing is Required
+
+- Adding new language features (string methods, operators, builtins)
+- Modifying code generation (emitters, IR builder)
+- Adding new example modules
+- Fixing bugs in compiled output
+
+### Device Testing Workflow
+
+```bash
+# 1. Detect connected device
+ls /dev/cu.usb*
+
+# 2. Compile all examples including new ones
+make compile-all
+
+# 3. Build firmware with new modules
+make build BOARD=ESP32_GENERIC_C6
+
+# 4. Flash to device
+make flash BOARD=ESP32_GENERIC_C6 PORT=/dev/cu.usbmodem2101
+
+# 5. Run device tests (REQUIRED before PR)
+make run-device-tests PORT=/dev/cu.usbmodem2101
+
+# 6. Run benchmarks (optional but recommended)
+make benchmark PORT=/dev/cu.usbmodem2101
+```
+
+### If No Device Available
+
+If hardware is not connected, explicitly note in the PR:
+- "Device tests pending - no hardware available"
+- Request reviewer to run device tests before merge
+
+**DO NOT create PRs for compiler features without either:**
+1. Running device tests successfully, OR
+2. Explicitly noting device tests are pending in PR description
+
 ## GitHub CLI Configuration
 
 This repository uses the `anhlt` GitHub account. Before any `gh` commands, ensure the correct account is active:
