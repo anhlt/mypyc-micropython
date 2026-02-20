@@ -154,6 +154,7 @@ class IRBuilder:
         self._uses_list_opt = False
         self._loop_depth = 0
         self._class_typed_params: dict[str, str] = {}
+        self._mypy_local_types: dict[str, str] = {}
 
     def _fresh_temp(self) -> str:
         self._temp_counter += 1
@@ -169,6 +170,7 @@ class IRBuilder:
         self._uses_print = False
         self._uses_list_opt = False
         self._class_typed_params = {}
+        self._mypy_local_types = {}
 
         func_name = node.name
         c_func_name = f"{self.c_name}_{sanitize_name(func_name)}"
@@ -179,6 +181,7 @@ class IRBuilder:
         if mypy_func:
             mypy_param_types = {name: ptype for name, ptype in mypy_func.params}
             mypy_return_type = mypy_func.return_type
+            self._mypy_local_types = dict(mypy_func.local_types)
 
         params: list[tuple[str, CType]] = []
         arg_types: list[str] = []
@@ -439,13 +442,16 @@ class IRBuilder:
         is_new_var = var_name not in locals_
         if is_new_var:
             locals_.append(var_name)
-            value_type = self._get_value_ir_type(value)
-            c_type = value_type.to_c_type_str()
+            if var_name in self._mypy_local_types:
+                c_type = self._mypy_type_to_c_type(self._mypy_local_types[var_name])
+            else:
+                value_type = self._get_value_ir_type(value)
+                c_type = value_type.to_c_type_str()
             self._var_types[var_name] = c_type
         else:
             c_type = self._var_types.get(var_name, "mp_obj_t")
 
-        value_type = self._get_value_ir_type(value)
+        value_type = IRType.from_c_type_str(c_type)
 
         return AssignIR(
             target=var_name,
@@ -572,6 +578,8 @@ class IRBuilder:
             return self._build_name(expr, locals_), []
         elif isinstance(expr, ast.BinOp):
             return self._build_binop(expr, locals_)
+        elif isinstance(expr, ast.BoolOp):
+            return self._build_boolop(expr, locals_)
         elif isinstance(expr, ast.UnaryOp):
             return self._build_unaryop(expr, locals_)
         elif isinstance(expr, ast.Compare):
@@ -664,6 +672,28 @@ class IRBuilder:
             left_prelude=left_prelude,
             right_prelude=right_prelude,
         ), left_prelude + right_prelude
+
+    def _build_boolop(self, expr: ast.BoolOp, locals_: list[str]) -> tuple[BinOpIR, list]:
+        c_op = "&&" if isinstance(expr.op, ast.And) else "||"
+
+        values = expr.values
+        left, left_prelude = self._build_expr(values[0], locals_)
+        all_prelude = left_prelude[:]
+
+        for i in range(1, len(values)):
+            right, right_prelude = self._build_expr(values[i], locals_)
+            all_prelude.extend(right_prelude)
+
+            left = BinOpIR(
+                ir_type=IRType.BOOL,
+                left=left,
+                op=c_op,
+                right=right,
+                left_prelude=[],
+                right_prelude=right_prelude,
+            )
+
+        return left, all_prelude
 
     def _build_unaryop(self, expr: ast.UnaryOp, locals_: list[str]) -> tuple[UnaryOpIR, list]:
         operand, prelude = self._build_expr(expr.operand, locals_)

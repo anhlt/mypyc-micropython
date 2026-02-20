@@ -22,7 +22,7 @@ from pathlib import Path
 
 from mypy import build as mypy_build
 from mypy.errors import CompileError
-from mypy.nodes import AssignmentStmt, ClassDef, FuncDef, MypyFile, Var
+from mypy.nodes import AssignmentStmt, ClassDef, FuncDef, MypyFile, NameExpr, Var
 from mypy.nodes import TypeInfo as MypyTypeInfo
 from mypy.options import Options
 from mypy.types import CallableType, Type
@@ -56,6 +56,7 @@ class FunctionTypeInfo:
     params: list[tuple[str, str]]  # (name, type) pairs
     return_type: str
     is_method: bool = False
+    local_types: dict[str, str] = field(default_factory=dict)  # local var -> type
 
 
 @dataclass
@@ -110,6 +111,7 @@ def create_mypy_options(
     options.python_version = python_version
     options.incremental = False
     options.strict_optional = True
+    options.preserve_asts = True  # Keep AST bodies for local type extraction
 
     # Annotation requirements
     if check_untyped:
@@ -322,6 +324,7 @@ def _extract_function_info(func_def: FuncDef) -> FunctionTypeInfo:
     name = func_def.name
     params: list[tuple[str, str]] = []
     return_type = "Any"
+    local_types: dict[str, str] = {}
 
     if func_def.arguments:
         for arg in func_def.arguments:
@@ -338,12 +341,52 @@ def _extract_function_info(func_def: FuncDef) -> FunctionTypeInfo:
         else:
             return_type = _clean_type_str(str(func_def.type))
 
+    # Extract local variable types from function body
+    # mypy stores inferred types on Var nodes via AssignmentStmt lvalues
+    _extract_local_types(func_def.body.body, local_types)
+
     return FunctionTypeInfo(
         name=name,
         params=params,
         return_type=return_type,
         is_method=False,
+        local_types=local_types,
     )
+
+
+def _extract_local_types(stmts: list, local_types: dict[str, str]) -> None:
+    """Recursively extract local variable types from mypy AST statements."""
+    from mypy.nodes import Block, ForStmt, IfStmt, WhileStmt, WithStmt
+
+    for stmt in stmts:
+        if isinstance(stmt, AssignmentStmt):
+            for lvalue in stmt.lvalues:
+                if isinstance(lvalue, NameExpr) and isinstance(lvalue.node, Var):
+                    var_node = lvalue.node
+                    if var_node.type is not None:
+                        local_types[lvalue.name] = _clean_type_str(str(var_node.type))
+
+        elif isinstance(stmt, IfStmt):
+            for body in stmt.body:
+                _extract_local_types(body.body, local_types)
+            if stmt.else_body:
+                _extract_local_types(stmt.else_body.body, local_types)
+
+        elif isinstance(stmt, WhileStmt):
+            _extract_local_types(stmt.body.body, local_types)
+            if stmt.else_body:
+                _extract_local_types(stmt.else_body.body, local_types)
+
+        elif isinstance(stmt, ForStmt):
+            _extract_local_types(stmt.body.body, local_types)
+            if stmt.else_body:
+                _extract_local_types(stmt.else_body.body, local_types)
+
+        elif isinstance(stmt, WithStmt):
+            _extract_local_types(stmt.body.body, local_types)
+
+        elif isinstance(stmt, Block):
+            _extract_local_types(stmt.body, local_types)
 
 
 def _extract_class_info_from_typeinfo(type_info: MypyTypeInfo) -> ClassTypeInfo:

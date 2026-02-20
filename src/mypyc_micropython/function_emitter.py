@@ -409,6 +409,11 @@ class BaseEmitter:
 
         target_type = op.ir_type.to_c_type_str() if op.ir_type else "mp_int_t"
 
+        if op.op in ("&&", "||"):
+            left = self._to_bool_expr(left, left_type)
+            right = self._to_bool_expr(right, right_type)
+            return f"({left} {op.op} {right})", "bool"
+
         if target_type == "mp_obj_t":
             if left_type != "mp_obj_t":
                 left = self._box_value(left, left_type)
@@ -429,6 +434,14 @@ class BaseEmitter:
         right = self._unbox_if_needed(right, right_type, target_type)
 
         return f"({left} {op.op} {right})", target_type
+
+    def _to_bool_expr(self, expr: str, expr_type: str) -> str:
+        if expr_type == "bool":
+            return expr
+        elif expr_type == "mp_obj_t":
+            return f"mp_obj_is_true({expr})"
+        else:
+            return f"({expr} != 0)"
 
     def _emit_unaryop(self, op: UnaryOpIR, native: bool = False) -> tuple[str, str]:
         operand, op_type = self._emit_expr(op.operand, native)

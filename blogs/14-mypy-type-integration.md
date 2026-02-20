@@ -465,16 +465,103 @@ def get_first(items: MP_OBJ_T) -> MP_INT_T:
 
 The element type `int` from `list[int]` is **not yet extracted** from the annotation. This is a future optimization opportunity.
 
+## Local Variable Type Inference
+
+Beyond parameter and return types, mypy also infers types for **local variables** - even when they have no explicit annotation. We extract these inferred types and use them for generating correctly-typed C code.
+
+### The Problem: Expression Type vs Variable Type
+
+Consider this code:
+
+```python
+def test_func(a: bool, b: bool) -> bool:
+    x = a and b    # What type is x?
+    y = a & b      # What type is y?
+    z = a + b      # What type is z?
+    return x
+```
+
+Without mypy, the IR builder must guess types from expression structure:
+- `a and b` → logical AND, returns... bool? The first truthy value? Python semantics are complex.
+- `a & b` → bitwise AND of two bools, is result bool or int?
+- `a + b` → bool + bool, Python promotes to int
+
+### Mypy Knows the Answer
+
+Mypy's semantic analysis resolves these precisely:
+
+```python
+from mypyc_micropython.type_checker import type_check_source
+
+result = type_check_source(source, 'test_module')
+print(result.functions['test_func'].local_types)
+# Output: {'x': 'bool', 'y': 'bool', 'z': 'int'}
+```
+
+Mypy correctly infers:
+- `x = a and b` → `bool` (logical AND of bools)
+- `y = a & b` → `bool` (bitwise AND of bools)
+- `z = a + b` → `int` (bool + bool promotes to int per Python semantics)
+
+### How We Extract Local Types
+
+Mypy stores inferred types on `Var` nodes in the AST. We walk the function body to collect them:
+
+```python
+def _extract_local_types(stmts: list, local_types: dict[str, str]) -> None:
+    for stmt in stmts:
+        if isinstance(stmt, AssignmentStmt):
+            for lvalue in stmt.lvalues:
+                if isinstance(lvalue, NameExpr) and isinstance(lvalue.node, Var):
+                    var_node = lvalue.node
+                    if var_node.type is not None:
+                        local_types[lvalue.name] = str(var_node.type)
+        # Recursively handle if/while/for blocks...
+```
+
+### Using Inferred Types in IR Building
+
+The IR builder now checks mypy's inferred types before falling back to expression-based inference:
+
+```python
+def _build_assign(self, stmt, locals_):
+    var_name = stmt.target.id
+    if var_name in self._mypy_local_types:
+        # Use mypy's inferred type
+        c_type = self._mypy_type_to_c_type(self._mypy_local_types[var_name])
+    else:
+        # Fallback: infer from expression
+        c_type = self._get_value_ir_type(value).to_c_type_str()
+```
+
+### Generated C Code
+
+With mypy type inference:
+
+```c
+static mp_obj_t test_module_test_func(mp_obj_t a_obj, mp_obj_t b_obj) {
+    bool a = mp_obj_is_true(a_obj);
+    bool b = mp_obj_is_true(b_obj);
+
+    bool x = (a && b);      // Correctly typed as bool
+    bool y = (a & b);       // Correctly typed as bool
+    mp_int_t z = (a + b);   // Correctly typed as int
+    return x ? mp_const_true : mp_const_false;
+}
+```
+
+Each variable gets the exact type mypy inferred, enabling proper C code generation.
+
 ## Future Optimization Opportunities
 
 With resolved types from mypy, future phases can implement:
 
-| Optimization | Description | Est. Speedup |
-|--------------|-------------|--------------|
-| Native int arithmetic | `a + b` as C `+` instead of `mp_binary_op()` | 3-5x |
-| Typed list access | Direct `items->items[]` for `list[int]` | 2-3x |
-| Typed iteration | Native C loop for `for x in list[int]` | 3-5x |
-| Typed locals | Use `mp_int_t` for inferred `int` variables | 2x |
+| Optimization | Description | Status |
+|--------------|-------------|--------|
+| Native int arithmetic | `a + b` as C `+` instead of `mp_binary_op()` | Done |
+| Typed locals | Use `mp_int_t` for inferred `int` variables | Done |
+| Typed list access | Direct `items->items[]` for `list[int]` | Future |
+| Typed iteration | Native C loop for `for x in list[int]` | Future |
 
 ### Current vs Future: Typed Iteration
 
@@ -510,9 +597,10 @@ We integrated mypy's type checking into the compiler:
 
 1. **Type validation**: Catch type errors at compile time, not runtime
 2. **Type extraction**: Parse mypy's semantic analysis results into structured type info
-3. **IR generation**: Use type annotations to generate typed IR with proper boxing/unboxing
-4. **Strict by default**: Enable `disallow_any_generics` and other strict checks
-5. **Future-ready**: Type information available for future optimization passes
+3. **Local type inference**: Use mypy's inferred types for local variables (bool ops, arithmetic)
+4. **IR generation**: Use type annotations to generate typed IR with proper boxing/unboxing
+5. **Strict by default**: Enable `disallow_any_generics` and other strict checks
+6. **Future-ready**: Type information available for future optimization passes
 
 ### Type-to-IR Quick Reference
 
@@ -529,12 +617,12 @@ We integrated mypy's type checking into the compiler:
 
 | File | Changes |
 |------|---------|
-| `type_checker.py` | New module for mypy integration |
+| `type_checker.py` | Mypy integration + local type extraction |
+| `ir_builder.py` | Use mypy local_types for assignments |
 | `compiler.py` | Default `type_check=True, strict=True` |
 | `cli.py` | `--no-type-check` flag |
-| `examples/*.py` | All updated with generic annotations |
 
 ### Test Results
 
 - 480 unit tests pass
-- All 21 example modules compile with strict type checking
+- All example modules compile with strict type checking
