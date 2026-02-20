@@ -875,6 +875,7 @@ Tasks:
 - [ ] Clear error messages for unsupported features
 - [ ] Line number references in errors
 - [ ] Suggestions for common mistakes
+- [ ] Detect nested functions and raise compile error (currently silently ignored)
 
 ### 6.4 Documentation & Testing
 

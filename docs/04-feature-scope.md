@@ -474,6 +474,25 @@ class Outer:
 # Reason: Complexity in code generation. Use module-level classes.
 ```
 
+### Nested Functions ❌
+
+```python
+# NOT SUPPORTED - generates broken code (inner function silently ignored)
+def outer(n: int) -> int:
+    def inner(x: int) -> int:   # ❌ Inner function not compiled
+        return x * 2
+    return inner(n)             # ❌ Calls undefined function
+
+# Workaround: Move inner function to module level
+def _inner(x: int) -> int:
+    return x * 2
+
+def outer(n: int) -> int:
+    return _inner(n)            # ✅ Works
+```
+
+**Note:** Currently nested functions are silently ignored, generating broken C code. A future version should raise a compile error. Simple read-only closures may be supported in Phase 5.
+
 ### Nested Functions with Non-Local Assignment ❌
 
 ```python
