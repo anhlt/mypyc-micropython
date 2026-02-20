@@ -3572,3 +3572,78 @@ def test_count(s: str) -> int:
 """
         result = compile_source(source, "test", type_check=True)
         assert "mp_int_t x" in result
+
+
+class TestNestedFunctionDetection:
+    """Tests for nested function compile-time error detection."""
+
+    def test_nested_function_raises_error(self):
+        """Nested function should raise NotImplementedError."""
+        source = """
+def outer(x: int) -> int:
+    def inner(y: int) -> int:
+        return y + 1
+    return inner(x)
+"""
+        with pytest.raises(NotImplementedError) as exc_info:
+            compile_source(source, "test", type_check=False)
+        assert "Nested functions are not supported" in str(exc_info.value)
+        assert "def inner" in str(exc_info.value)
+        assert "line 3" in str(exc_info.value)
+
+    def test_nested_function_in_if_block(self):
+        """Nested function in if block should raise NotImplementedError."""
+        source = """
+def outer(x: int) -> int:
+    if x > 0:
+        def helper() -> int:
+            return 1
+        return helper()
+    return 0
+"""
+        with pytest.raises(NotImplementedError) as exc_info:
+            compile_source(source, "test", type_check=False)
+        assert "Nested functions are not supported" in str(exc_info.value)
+        assert "def helper" in str(exc_info.value)
+
+    def test_nested_function_in_loop(self):
+        """Nested function in loop should raise NotImplementedError."""
+        source = """
+def outer(n: int) -> int:
+    total = 0
+    for i in range(n):
+        def add_one(x: int) -> int:
+            return x + 1
+        total += add_one(i)
+    return total
+"""
+        with pytest.raises(NotImplementedError) as exc_info:
+            compile_source(source, "test", type_check=False)
+        assert "Nested functions are not supported" in str(exc_info.value)
+        assert "def add_one" in str(exc_info.value)
+
+    def test_closure_raises_error(self):
+        """Closure (nested function capturing variable) should raise error."""
+        source = """
+def make_adder(n: int):
+    def adder(x: int) -> int:
+        return x + n
+    return adder
+"""
+        with pytest.raises(NotImplementedError) as exc_info:
+            compile_source(source, "test", type_check=False)
+        assert "Nested functions are not supported" in str(exc_info.value)
+        assert "def adder" in str(exc_info.value)
+
+    def test_module_level_functions_allowed(self):
+        """Module-level functions should still work."""
+        source = """
+def helper(x: int) -> int:
+    return x + 1
+
+def main(n: int) -> int:
+    return helper(n)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "test_helper" in result
+        assert "test_main" in result

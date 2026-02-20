@@ -270,6 +270,12 @@ class IRBuilder:
         )
 
     def _build_statement(self, stmt: ast.stmt, locals_: list[str]) -> StmtIR | None:
+        if isinstance(stmt, ast.FunctionDef):
+            raise NotImplementedError(
+                f"Nested functions are not supported (line {stmt.lineno}): "
+                f"def {stmt.name}(...). "
+                "Consider refactoring to a module-level function."
+            )
         if isinstance(stmt, ast.Return):
             return self._build_return(stmt, locals_)
         elif isinstance(stmt, ast.If):

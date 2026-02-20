@@ -872,10 +872,11 @@ mp_int_t val = mp_obj_get_int(mp_obj_subscr(d, key, MP_OBJ_SENTINEL));
 ### 6.3 Error Messages
 
 Tasks:
-- [ ] Clear error messages for unsupported features
-- [ ] Line number references in errors
+- [x] Detect nested functions and raise compile error with line number and suggestion
+- [ ] Clear error messages for other unsupported features
 - [ ] Suggestions for common mistakes
-- [ ] Detect nested functions and raise compile error (currently silently ignored)
+
+See [docs/ideas/nested-functions.md](ideas/nested-functions.md) for mypyc research findings on closures.
 
 ### 6.4 Documentation & Testing
 

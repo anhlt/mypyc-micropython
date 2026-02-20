@@ -11,6 +11,7 @@ When compiling typed Python to C, we need precise type information: parameter ty
 1. [The Mypy Build API](#part-1-the-mypy-build-api) - How to run mypy programmatically
 2. [Mypy's Data Structures](#part-2-mypys-data-structures) - The AST nodes mypy uses
 3. [Type Extraction Pipeline](#part-3-type-extraction-pipeline) - How we extract and convert types
+4. [Class Attribute Type Inference](#advanced-class-attribute-type-inference) - How `point.x` gets its type
 
 ---
 
@@ -392,6 +393,179 @@ static mp_obj_t module_distance_squared(mp_obj_t p1_obj, mp_obj_t p2_obj) {
 ```
 
 The local variables `dx` and `dy` are correctly typed as `mp_int_t` because mypy told us they're `int`.
+
+---
+
+## Advanced: Class Attribute Type Inference
+
+When we access `point.x`, how do we know it's an `int`? This requires combining multiple sources of type information.
+
+### The Challenge
+
+```python
+class Point:
+    x: int
+    y: int
+
+def add_to_x(p: Point, n: int) -> int:
+    result = p.x + n  # What type is p.x? What type is result?
+    return result
+```
+
+We need to:
+1. Know that `p` is of type `Point`
+2. Look up `Point.x` to find it's `int`
+3. Infer `int + int = int` for `result`
+
+### Step 1: Track Class-Typed Parameters
+
+When building a function, we detect parameters with class type annotations:
+
+```python
+# In IRBuilder.build_function():
+for arg in node.args.args:
+    if isinstance(arg.annotation, ast.Name):
+        type_name = arg.annotation.id  # "Point"
+        if type_name in self._known_classes:
+            # Remember: parameter 'p' has type 'Point'
+            self._class_typed_params[arg.arg] = type_name
+```
+
+After this, `_class_typed_params = {"p": "Point"}`.
+
+### Step 2: Resolve Attribute Type from ClassIR
+
+When we encounter `p.x`, we look up the field type:
+
+```python
+# In IRBuilder._build_attribute():
+if isinstance(expr.value, ast.Name):
+    var_name = expr.value.id  # "p"
+    if var_name in self._class_typed_params:
+        class_name = self._class_typed_params[var_name]  # "Point"
+        class_ir = self._known_classes[class_name]
+        
+        # Find field 'x' in Point's fields
+        for fld in class_ir.get_all_fields():
+            if fld.name == attr_name:  # "x"
+                # fld.c_type is CType.MP_INT_T (from class definition)
+                result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
+                return ParamAttrIR(
+                    ir_type=result_type,  # IRType.INT
+                    param_name=var_name,
+                    attr_name=attr_name,
+                    class_c_name=class_ir.c_name,
+                    result_type=result_type,
+                ), []
+```
+
+The key insight: `ClassIR` stores field types from the class definition. When `p: Point` and we access `p.x`, we look up `Point.x` in `ClassIR.fields` to get `CType.MP_INT_T`.
+
+### Step 3: Mypy Infers the Expression Type
+
+Meanwhile, mypy independently infers the type of `result`:
+
+```python
+# Mypy's inference:
+# p.x: int (from Point.x annotation)
+# n: int (from parameter annotation)
+# p.x + n: int (int + int = int)
+# result = p.x + n => result: int
+```
+
+We extract this via `_extract_local_types()`:
+
+```python
+local_types = {"result": "int"}
+```
+
+### Step 4: Generated Code
+
+The IR builder creates `ParamAttrIR` for `p.x`:
+
+```python
+ParamAttrIR(
+    ir_type=IRType.INT,
+    param_name="p",
+    attr_name="x", 
+    class_c_name="test_Point",
+    result_type=IRType.INT,
+)
+```
+
+The function emitter generates direct struct access:
+
+```c
+static mp_obj_t test_add_to_x(mp_obj_t p_obj, mp_obj_t n_obj) {
+    mp_obj_t p = p_obj;
+    mp_int_t n = mp_obj_get_int(n_obj);
+
+    // p.x compiles to direct struct field access
+    // result is mp_int_t because mypy told us it's int
+    mp_int_t result = (((test_Point_obj_t *)MP_OBJ_TO_PTR(p))->x + n);
+    return mp_obj_new_int(result);
+}
+```
+
+### Chained Attribute Access
+
+For nested classes like `rect.top_left.x`:
+
+```python
+@dataclass
+class Point:
+    x: int
+    y: int
+
+@dataclass  
+class Rectangle:
+    top_left: Point
+    bottom_right: Point
+
+def get_left_x(rect: Rectangle) -> int:
+    return rect.top_left.x
+```
+
+We recursively resolve types:
+
+```python
+# In _get_class_type_of_attr():
+def _get_class_type_of_attr(self, expr: ast.Attribute) -> str | None:
+    if isinstance(expr.value, ast.Name):
+        # Base case: rect.top_left
+        var_name = expr.value.id  # "rect"
+        class_name = self._class_typed_params[var_name]  # "Rectangle"
+        class_ir = self._known_classes[class_name]
+        for fld in class_ir.get_all_fields():
+            if fld.name == expr.attr:  # "top_left"
+                return fld.py_type  # "Point"
+    
+    elif isinstance(expr.value, ast.Attribute):
+        # Recursive case: rect.top_left.x
+        parent_class = self._get_class_type_of_attr(expr.value)  # "Point"
+        class_ir = self._known_classes[parent_class]
+        for fld in class_ir.get_all_fields():
+            if fld.name == expr.attr:  # "x"
+                return fld.py_type  # "int"
+```
+
+Generated code for `rect.top_left.x`:
+
+```c
+// Step 1: rect.top_left -> _tmp1 (Point)
+mp_obj_t _tmp1 = ((test_Rectangle_obj_t *)MP_OBJ_TO_PTR(rect))->top_left;
+// Step 2: _tmp1.x -> mp_int_t
+mp_int_t result = ((test_Point_obj_t *)MP_OBJ_TO_PTR(_tmp1))->x;
+```
+
+### Type Information Sources Summary
+
+| Expression | Type Source | How We Get It |
+|------------|-------------|---------------|
+| `p` (parameter) | AST annotation | `arg.annotation.id` -> `_class_typed_params` |
+| `p.x` (attribute) | ClassIR fields | `class_ir.get_all_fields()` -> `fld.c_type` |
+| `result` (local) | Mypy inference | `var_node.type` -> `_mypy_local_types` |
+| `p.x + n` | Mypy inference | Expression type propagation |
 
 ---
 
