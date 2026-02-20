@@ -287,7 +287,251 @@ def sum_list(items: list[int]) -> int:
 
 ---
 
-## Part 5: Future Optimization Opportunities
+## Part 5: How Type Annotations Affect IR Generation
+
+Let's see the concrete differences in IR and generated C code for each type annotation.
+
+### Type-to-IR Mapping
+
+| Python Type | IR Type | C Type | Unbox (input) | Box (output) |
+|-------------|---------|--------|---------------|--------------|
+| `int` | `MP_INT_T` | `mp_int_t` | `mp_obj_get_int()` | `mp_obj_new_int()` |
+| `float` | `MP_FLOAT_T` | `mp_float_t` | `mp_get_float_checked()` | `mp_obj_new_float()` |
+| `bool` | `BOOL` | `bool` | `mp_obj_is_true()` | `mp_const_true/false` |
+| `str` | `MP_OBJ_T` | `mp_obj_t` | (none) | (none) |
+| `list` | `MP_OBJ_T` | `mp_obj_t` | (none) | (none) |
+| `dict` | `MP_OBJ_T` | `mp_obj_t` | (none) | (none) |
+| `None` | `VOID` | (void) | - | `mp_const_none` |
+| (untyped) | `MP_OBJ_T` | `mp_obj_t` | (none) | (none) |
+
+### Example: `int` Type
+
+```python
+def add(a: int, b: int) -> int:
+    return a + b
+```
+
+**IR Output:**
+```
+def add(a: MP_INT_T, b: MP_INT_T) -> MP_INT_T:
+  c_name: test_int_add
+  max_temp: 0
+  locals: {a: MP_INT_T, b: MP_INT_T}
+  body:
+    return (a + b)
+```
+
+**Generated C:**
+```c
+static mp_obj_t test_int_add(mp_obj_t a_obj, mp_obj_t b_obj) {
+    mp_int_t a = mp_obj_get_int(a_obj);   // Unbox to native int
+    mp_int_t b = mp_obj_get_int(b_obj);
+
+    return mp_obj_new_int((a + b));       // Box result back
+}
+```
+
+The `int` annotation causes:
+1. Parameters unboxed to `mp_int_t` (native C integer)
+2. Arithmetic performed directly: `(a + b)`
+3. Result boxed back to Python object
+
+### Example: `float` Type
+
+```python
+def add(a: float, b: float) -> float:
+    return a + b
+```
+
+**IR Output:**
+```
+def add(a: MP_FLOAT_T, b: MP_FLOAT_T) -> MP_FLOAT_T:
+  c_name: test_float_add
+  max_temp: 0
+  locals: {a: MP_FLOAT_T, b: MP_FLOAT_T}
+  body:
+    return (a + b)
+```
+
+**Generated C:**
+```c
+static mp_obj_t test_float_add(mp_obj_t a_obj, mp_obj_t b_obj) {
+    mp_float_t a = mp_get_float_checked(a_obj);  // Unbox to native float
+    mp_float_t b = mp_get_float_checked(b_obj);
+
+    return mp_obj_new_float((a + b));            // Box result back
+}
+```
+
+### Example: `bool` Type
+
+```python
+def negate(x: bool) -> bool:
+    return not x
+```
+
+**IR Output:**
+```
+def negate(x: BOOL) -> BOOL:
+  c_name: test_bool_negate
+  max_temp: 0
+  locals: {x: BOOL}
+  body:
+    return (!x)
+```
+
+**Generated C:**
+```c
+static mp_obj_t test_bool_negate(mp_obj_t x_obj) {
+    bool x = mp_obj_is_true(x_obj);              // Unbox to native bool
+
+    return (!x) ? mp_const_true : mp_const_false; // Return singleton
+}
+```
+
+### Example: `str` Type (Object Type)
+
+```python
+def greet(name: str) -> str:
+    return "Hello " + name
+```
+
+**IR Output:**
+```
+def greet(name: MP_OBJ_T) -> MP_OBJ_T:
+  c_name: test_str_greet
+  max_temp: 0
+  locals: {name: MP_OBJ_T}
+  body:
+    return ("Hello " + name)
+```
+
+**Generated C:**
+```c
+static mp_obj_t test_str_greet(mp_obj_t name_obj) {
+    mp_obj_t name = name_obj;                    // No unboxing needed
+
+    return mp_binary_op(MP_BINARY_OP_ADD,        // Runtime string concat
+        mp_obj_new_str("Hello ", 6), name);
+}
+```
+
+Object types like `str`, `list`, `dict` stay as `mp_obj_t` - no unboxing happens.
+
+### Example: `None` Return Type
+
+```python
+def do_nothing() -> None:
+    pass
+```
+
+**IR Output:**
+```
+def do_nothing() -> VOID:
+  c_name: test_none_do_nothing
+  max_temp: 0
+  body:
+    pass
+```
+
+**Generated C:**
+```c
+static mp_obj_t test_none_do_nothing(void) {
+    return mp_const_none;                        // Return None singleton
+}
+```
+
+### Example: Untyped (No Annotations)
+
+```python
+def add(a, b):
+    return a + b
+```
+
+**IR Output:**
+```
+def add(a: MP_OBJ_T, b: MP_OBJ_T) -> MP_OBJ_T:
+  c_name: test_untyped_add
+  max_temp: 0
+  locals: {a: MP_OBJ_T, b: MP_OBJ_T}
+  body:
+    return (a + b)
+```
+
+**Generated C:**
+```c
+static mp_obj_t test_untyped_add(mp_obj_t a_obj, mp_obj_t b_obj) {
+    mp_obj_t a = a_obj;
+    mp_obj_t b = b_obj;
+
+    return mp_binary_op(MP_BINARY_OP_ADD, a, b); // Runtime type dispatch
+}
+```
+
+Without type annotations, everything is `mp_obj_t` and uses runtime dispatch.
+
+### Performance Impact: Typed vs Untyped
+
+```c
+// TYPED: int + int
+mp_int_t a = mp_obj_get_int(a_obj);
+mp_int_t b = mp_obj_get_int(b_obj);
+return mp_obj_new_int((a + b));     // Direct C addition
+
+// UNTYPED: unknown + unknown  
+return mp_binary_op(MP_BINARY_OP_ADD, a, b);  // Runtime dispatch
+```
+
+The typed version:
+1. Unboxes once at function entry
+2. Uses direct C `+` operator
+3. Boxes once at return
+
+The untyped version:
+1. Calls `mp_binary_op()` which must:
+   - Check types of both operands
+   - Look up the appropriate `__add__` method
+   - Handle type coercion
+   - Return boxed result
+
+This is why typed code can be **3-5x faster** for arithmetic operations.
+
+### What's NOT Yet Optimized: Generic Type Parameters
+
+Currently, `list[int]` and `list` generate **identical IR**:
+
+```python
+# Both produce the same IR!
+def get_first(items: list[int]) -> int:
+    return items[0]
+
+def get_first(items: list) -> int:
+    return items[0]
+```
+
+**IR Output (same for both):**
+```
+def get_first(items: MP_OBJ_T) -> MP_INT_T:
+  c_name: list_int_get_first
+  max_temp: 0
+  locals: {items: MP_OBJ_T}
+  body:
+    return items[0]
+```
+
+**Generated C (same for both):**
+```c
+static mp_obj_t list_int_get_first(mp_obj_t items_obj) {
+    mp_obj_t items = items_obj;
+    return mp_list_get_fast(items, 0);  // Still uses runtime API
+}
+```
+
+The element type `int` from `list[int]` is **not yet extracted** from the annotation. This is a future optimization opportunity.
+
+---
+
+## Part 6: Future Optimization Opportunities
 
 ### What We Can Do With Type Information
 
@@ -296,25 +540,53 @@ With resolved types from mypy, future phases can implement:
 | Optimization | Description | Est. Speedup |
 |--------------|-------------|--------------|
 | Native int arithmetic | `a + b` as C `+` instead of `mp_binary_op()` | 3-5x |
-| Typed list access | Direct `items[]` access for `list[int]` | 2-3x |
+| Typed list access | Direct `items->items[]` for `list[int]` | 2-3x |
 | Typed iteration | Native C loop for `for x in list[int]` | 3-5x |
 | Typed locals | Use `mp_int_t` for inferred `int` variables | 2x |
 
-### Example: Type-Aware Code Generation
+### Current vs Future: `list[int]` Element Access
 
-**Current** (without type optimization):
+**Current** (no element type optimization):
 ```c
-// a + b where both are int
-mp_obj_t result = mp_binary_op(MP_BINARY_OP_ADD, a_obj, b_obj);
+// items[0] where items: list[int]
+mp_obj_t elem = mp_list_get_fast(items, 0);  // Returns mp_obj_t
+mp_int_t val = mp_obj_get_int(elem);          // Must unbox every access
 ```
 
-**Future** (with type optimization):
+**Future** (with element type optimization):
 ```c
-// a + b where both are known int from mypy
-mp_int_t result = a + b;  // Direct C addition
+// items[0] where items: list[int] - knowing element is int
+mp_obj_list_t *list = MP_OBJ_TO_PTR(items);
+mp_int_t val = mp_obj_get_int(list->items[0]); // Direct array access
+// Or even better with a typed array:
+// mp_int_t val = list->int_items[0];          // No unboxing needed
 ```
 
-The mypy integration lays the groundwork for these optimizations.
+### Current vs Future: Typed Iteration
+
+**Current** (generic iteration):
+```c
+// for x in items where items: list[int]
+mp_obj_iter_buf_t iter_buf;
+mp_obj_t iter = mp_getiter(items, &iter_buf);
+mp_obj_t x;
+while ((x = mp_iternext(iter)) != MP_OBJ_STOP_ITERATION) {
+    mp_int_t val = mp_obj_get_int(x);  // Unbox every iteration
+    // ...
+}
+```
+
+**Future** (typed iteration):
+```c
+// for x in items where items: list[int] - knowing it's a list of ints
+mp_obj_list_t *list = MP_OBJ_TO_PTR(items);
+for (size_t i = 0; i < list->len; i++) {
+    mp_int_t val = mp_obj_get_int(list->items[i]);  // Direct array loop
+    // ...
+}
+```
+
+The mypy integration captures `list[int]` type information - we just need to use it in code generation.
 
 ---
 
