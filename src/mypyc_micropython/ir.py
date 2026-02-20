@@ -744,7 +744,7 @@ class AugAssignIR(StmtIR):
     c_target: str
     op: str  # C operator: +=, -=, *=, etc.
     value: ValueIR
-    # Prelude instructions
+    target_c_type: str = "mp_int_t"
     prelude: list[InstrIR] = field(default_factory=list)
 
 

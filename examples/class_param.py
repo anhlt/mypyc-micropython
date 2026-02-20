@@ -45,3 +45,7 @@ def dot_product(v1: Vector, v2: Vector) -> float:
 
 def length_squared(v: Vector) -> float:
     return v.dx * v.dx + v.dy * v.dy
+
+
+def sum_three_points(p1: Point, p2: Point, p3: Point) -> int:
+    return p1.x + p1.y + p2.x + p2.y + p3.x + p3.y

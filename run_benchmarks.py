@@ -904,6 +904,38 @@ end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
+    (
+        "sum_3_points x1000",
+        """
+import class_param as cp
+import time
+p1 = cp.Point(1, 2)
+p2 = cp.Point(3, 4)
+p3 = cp.Point(5, 6)
+start = time.ticks_us()
+for _ in range(1000):
+    cp.sum_three_points(p1, p2, p3)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+def sum_three_points(p1, p2, p3):
+    return p1.x + p1.y + p2.x + p2.y + p3.x + p3.y
+p1 = Point(1, 2)
+p2 = Point(3, 4)
+p3 = Point(5, 6)
+start = time.ticks_us()
+for _ in range(1000):
+    sum_three_points(p1, p2, p3)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
 ]
 
 

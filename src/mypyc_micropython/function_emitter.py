@@ -282,8 +282,29 @@ class BaseEmitter:
     def _emit_aug_assign(self, stmt: AugAssignIR, native: bool = False) -> list[str]:
         lines = self._emit_prelude(stmt.prelude)
         expr, expr_type = self._emit_expr(stmt.value, native)
-        expr = self._unbox_if_needed(expr, expr_type)
-        lines.append(f"    {stmt.c_target} {stmt.op} {expr};")
+
+        if stmt.target_c_type == "mp_obj_t":
+            boxed_expr = self._box_value(expr, expr_type)
+            op_map = {
+                "+=": "MP_BINARY_OP_INPLACE_ADD",
+                "-=": "MP_BINARY_OP_INPLACE_SUBTRACT",
+                "*=": "MP_BINARY_OP_INPLACE_MULTIPLY",
+                "/=": "MP_BINARY_OP_INPLACE_TRUE_DIVIDE",
+                "//=": "MP_BINARY_OP_INPLACE_FLOOR_DIVIDE",
+                "%=": "MP_BINARY_OP_INPLACE_MODULO",
+                "&=": "MP_BINARY_OP_INPLACE_AND",
+                "|=": "MP_BINARY_OP_INPLACE_OR",
+                "^=": "MP_BINARY_OP_INPLACE_XOR",
+                "<<=": "MP_BINARY_OP_INPLACE_LSHIFT",
+                ">>=": "MP_BINARY_OP_INPLACE_RSHIFT",
+            }
+            mp_op = op_map.get(stmt.op, "MP_BINARY_OP_INPLACE_ADD")
+            lines.append(
+                f"    {stmt.c_target} = mp_binary_op({mp_op}, {stmt.c_target}, {boxed_expr});"
+            )
+        else:
+            expr = self._unbox_if_needed(expr, expr_type)
+            lines.append(f"    {stmt.c_target} {stmt.op} {expr};")
         return lines
 
     def _emit_self_aug_assign(self, stmt: SelfAugAssignIR, native: bool = False) -> list[str]:
@@ -534,6 +555,8 @@ class BaseEmitter:
                 )
         elif func == "list" and not args:
             return "mp_obj_new_list(0, NULL)", "mp_obj_t"
+        elif func == "list" and args:
+            return f"mp_call_function_1(MP_OBJ_FROM_PTR(&mp_type_list), {args[0][0]})", "mp_obj_t"
         elif func == "tuple" and not args:
             return "mp_const_empty_tuple", "mp_obj_t"
         elif func == "tuple" and args:
@@ -1031,8 +1054,29 @@ class FunctionEmitter(BaseEmitter):
         del native
         lines = self._emit_prelude(stmt.prelude)
         right, right_type = self._emit_expr(stmt.value)
-        right = self._unbox_if_needed(right, right_type, "mp_int_t")
-        lines.append(f"    {stmt.c_target} {stmt.op} {right};")
+
+        if stmt.target_c_type == "mp_obj_t":
+            boxed_expr = self._box_value(right, right_type)
+            op_map = {
+                "+=": "MP_BINARY_OP_INPLACE_ADD",
+                "-=": "MP_BINARY_OP_INPLACE_SUBTRACT",
+                "*=": "MP_BINARY_OP_INPLACE_MULTIPLY",
+                "/=": "MP_BINARY_OP_INPLACE_TRUE_DIVIDE",
+                "//=": "MP_BINARY_OP_INPLACE_FLOOR_DIVIDE",
+                "%=": "MP_BINARY_OP_INPLACE_MODULO",
+                "&=": "MP_BINARY_OP_INPLACE_AND",
+                "|=": "MP_BINARY_OP_INPLACE_OR",
+                "^=": "MP_BINARY_OP_INPLACE_XOR",
+                "<<=": "MP_BINARY_OP_INPLACE_LSHIFT",
+                ">>=": "MP_BINARY_OP_INPLACE_RSHIFT",
+            }
+            mp_op = op_map.get(stmt.op, "MP_BINARY_OP_INPLACE_ADD")
+            lines.append(
+                f"    {stmt.c_target} = mp_binary_op({mp_op}, {stmt.c_target}, {boxed_expr});"
+            )
+        else:
+            right = self._unbox_if_needed(right, right_type, "mp_int_t")
+            lines.append(f"    {stmt.c_target} {stmt.op} {right};")
         return lines
 
 
