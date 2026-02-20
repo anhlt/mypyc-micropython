@@ -552,9 +552,7 @@ static mp_obj_t test_module_test_func(mp_obj_t a_obj, mp_obj_t b_obj) {
 
 Each variable gets the exact type mypy inferred, enabling proper C code generation.
 
-## Future Optimization Opportunities
-
-With resolved types from mypy, future phases can implement:
+## Optimization Status
 
 | Optimization | Description | Status |
 |--------------|-------------|--------|
@@ -563,7 +561,7 @@ With resolved types from mypy, future phases can implement:
 | Typed list access | Direct `items->items[]` for `list[int]` | Future |
 | Typed iteration | Native C loop for `for x in list[int]` | Future |
 
-### Current vs Future: Typed Iteration
+### Future: Typed Iteration
 
 **Current** (generic iteration):
 ```c
