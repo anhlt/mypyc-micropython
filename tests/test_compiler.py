@@ -3476,3 +3476,99 @@ def process_text(text: str) -> str:
         assert "mp_obj_t s" in result
         assert "MP_QSTR_lower" in result
         assert "MP_QSTR_strip" in result
+
+
+class TestMypyTypeIntegration:
+    """Tests for mypy type integration - ensures mypy-provided types work correctly."""
+
+    def test_chained_attr_with_mypy_types(self):
+        """Chained attribute access must work when mypy provides qualified type names."""
+        source = """
+from dataclasses import dataclass
+
+@dataclass
+class Point:
+    x: int
+    y: int
+
+@dataclass
+class Rectangle:
+    top_left: Point
+    bottom_right: Point
+
+def get_width(rect: Rectangle) -> int:
+    return rect.bottom_right.x - rect.top_left.x
+"""
+        result = compile_source(source, "test", type_check=True)
+        assert "test_Point_obj_t" in result
+        assert "test_Rectangle_obj_t" in result
+        assert "->bottom_right" in result
+        assert "->x" in result
+        assert "mp_const_none, mp_const_none" not in result
+
+    def test_triple_chained_attr_with_mypy_types(self):
+        """Triple-level chained access with mypy types."""
+        source = """
+from dataclasses import dataclass
+
+@dataclass
+class Department:
+    name: str
+
+@dataclass
+class Employee:
+    department: Department
+
+@dataclass
+class Company:
+    ceo: Employee
+
+def get_ceo_dept_name(company: Company) -> str:
+    return company.ceo.department.name
+"""
+        result = compile_source(source, "test", type_check=True)
+        assert "->ceo" in result
+        assert "->department" in result
+        assert "->name" in result
+        assert "mp_const_none, mp_const_none" not in result
+
+    def test_bool_and_operation_type_inference(self):
+        """Boolean AND should be typed as bool via mypy inference."""
+        source = """
+def test_and(a: bool, b: bool) -> bool:
+    x = a and b
+    return x
+"""
+        result = compile_source(source, "test", type_check=True)
+        assert "bool x" in result
+        assert "&&" in result
+
+    def test_bool_bitwise_operation_type_inference(self):
+        """Boolean bitwise AND should be typed as bool via mypy inference."""
+        source = """
+def test_bitwise(a: bool, b: bool) -> bool:
+    x = a & b
+    return x
+"""
+        result = compile_source(source, "test", type_check=True)
+        assert "bool x" in result
+
+    def test_bool_arithmetic_promotion(self):
+        """Bool + bool should be typed as int via mypy inference."""
+        source = """
+def test_add(a: bool, b: bool) -> int:
+    x = a + b
+    return x
+"""
+        result = compile_source(source, "test", type_check=True)
+        assert "mp_int_t x" in result
+
+    def test_local_type_inference_from_method_call(self):
+        """Method call result type should be inferred by mypy."""
+        source = """
+def test_count(s: str) -> int:
+    x = s.count("a")
+    return x
+"""
+        result = compile_source(source, "test", type_check=True)
+        assert "mp_int_t x" in result

@@ -1129,7 +1129,9 @@ class IRBuilder:
         base_type = mypy_type.split("[")[0].strip()
         if base_type in ("int", "float", "bool", "str", "list", "dict", "tuple", "set", "None"):
             return base_type
-        return "object"
+        if "." in base_type:
+            return base_type.split(".")[-1]
+        return base_type if base_type else "object"
 
     def _annotation_to_c_type(self, annotation: ast.expr | None) -> str:
         if annotation is None:
