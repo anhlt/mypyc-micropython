@@ -326,7 +326,9 @@ The key strict option is `disallow_any_generics` - it requires `list[int]` inste
 
 Let's see the concrete IR and C code generated for each type annotation.
 
-### `int` Type
+### Primitive Types (`int`, `float`, `bool`)
+
+Primitive types are unboxed to native C types. Here's an example with `int`:
 
 ```python
 def add(a: int, b: int) -> int:
@@ -353,60 +355,11 @@ static mp_obj_t test_int_add(mp_obj_t a_obj, mp_obj_t b_obj) {
 }
 ```
 
-### `float` Type
+The pattern is identical for `float` and `bool` - only the unbox/box functions differ (see the quick reference table in the Summary).
 
-```python
-def add(a: float, b: float) -> float:
-    return a + b
-```
+### Object Types (`str`, `list`, `dict`)
 
-**IR Output:**
-```
-def add(a: MP_FLOAT_T, b: MP_FLOAT_T) -> MP_FLOAT_T:
-  c_name: test_float_add
-  max_temp: 0
-  locals: {a: MP_FLOAT_T, b: MP_FLOAT_T}
-  body:
-    return (a + b)
-```
-
-**Generated C:**
-```c
-static mp_obj_t test_float_add(mp_obj_t a_obj, mp_obj_t b_obj) {
-    mp_float_t a = mp_get_float_checked(a_obj);  // Unbox to native float
-    mp_float_t b = mp_get_float_checked(b_obj);
-
-    return mp_obj_new_float((a + b));            // Box result back
-}
-```
-
-### `bool` Type
-
-```python
-def negate(x: bool) -> bool:
-    return not x
-```
-
-**IR Output:**
-```
-def negate(x: BOOL) -> BOOL:
-  c_name: test_bool_negate
-  max_temp: 0
-  locals: {x: BOOL}
-  body:
-    return (!x)
-```
-
-**Generated C:**
-```c
-static mp_obj_t test_bool_negate(mp_obj_t x_obj) {
-    bool x = mp_obj_is_true(x_obj);              // Unbox to native bool
-
-    return (!x) ? mp_const_true : mp_const_false; // Return singleton
-}
-```
-
-### `str` Type (Object Type)
+Object types stay as `mp_obj_t` - no unboxing happens:
 
 ```python
 def greet(name: str) -> str:
@@ -433,7 +386,7 @@ static mp_obj_t test_str_greet(mp_obj_t name_obj) {
 }
 ```
 
-Object types like `str`, `list`, `dict` stay as `mp_obj_t` - no unboxing happens.
+The same pattern applies to `list` and `dict` - they use `MP_OBJ_T` and runtime APIs.
 
 ### `None` Return Type
 
