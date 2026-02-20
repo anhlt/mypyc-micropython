@@ -28,7 +28,7 @@ def format_number(n: int, prefix: str = "#") -> str:
     return prefix
 
 
-def sum_with_start(lst: list, start: int = 0) -> int:
+def sum_with_start(lst: list[int], start: int = 0) -> int:
     total: int = start
     for x in lst:
         total += x

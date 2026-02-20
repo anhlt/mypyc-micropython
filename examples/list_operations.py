@@ -5,14 +5,14 @@ def sum_range(n: int) -> int:
     return total
 
 
-def build_squares(n: int) -> list:
-    result: list = []
+def build_squares(n: int) -> list[int]:
+    result: list[int] = []
     for i in range(n):
         result.append(i * i)
     return result
 
 
-def sum_list(lst: list) -> int:
+def sum_list(lst: list[int]) -> int:
     total: int = 0
     n: int = len(lst)
     for i in range(n):
@@ -20,7 +20,7 @@ def sum_list(lst: list) -> int:
     return total
 
 
-def find_first_negative(lst: list) -> int:
+def find_first_negative(lst: list[int]) -> int:
     for i in range(len(lst)):
         if lst[i] < 0:
             return i
@@ -61,8 +61,7 @@ def reverse_sum(n: int) -> int:
 
 
 def append_many(n: int) -> int:
-    """Benchmark list.append() - build list then sum"""
-    lst: list = []
+    lst: list[int] = []
     for i in range(n):
         lst.append(i)
     total: int = 0
@@ -72,8 +71,7 @@ def append_many(n: int) -> int:
 
 
 def pop_all(n: int) -> int:
-    """Benchmark list.pop() - build list then pop all elements"""
-    lst: list = []
+    lst: list[int] = []
     for i in range(n):
         lst.append(i)
     total: int = 0
@@ -83,14 +81,12 @@ def pop_all(n: int) -> int:
 
 
 def append_pop_cycle(n: int) -> int:
-    """Benchmark mixed append/pop - stack-like operations"""
-    lst: list = []
+    lst: list[int] = []
     total: int = 0
     for i in range(n):
         lst.append(i)
         if len(lst) > 10:
             total += lst.pop()
-    # drain remaining
     while len(lst) > 0:
         total += lst.pop()
     return total

@@ -1,6 +1,6 @@
 # Implementation Roadmap
 
-A 6-phase roadmap for mypyc-micropython from proof-of-concept to production-ready compiler.
+A 7-phase roadmap for mypyc-micropython from proof-of-concept to production-ready compiler.
 
 ## Table of Contents
 
@@ -12,6 +12,7 @@ A 6-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 - [Phase 4: Exception Handling](#phase-4-exception-handling)
 - [Phase 5: Advanced Features](#phase-5-advanced-features)
 - [Phase 6: Integration & Polish](#phase-6-integration--polish)
+- [Phase 7: Type-Based Optimizations](#phase-7-type-based-optimizations)
 - [MicroPython C API Reference](#micropython-c-api-reference)
 - [Timeline Estimates](#timeline-estimates)
 - [Dependencies](#dependencies)
@@ -43,8 +44,9 @@ A 6-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 - **ESP32**: All 16 compiled modules verified on real ESP32-C6 hardware (161 device tests pass)
 - **Performance**: RTuple internal ops (57x speedup), list[tuple] (9.2x speedup), 22 benchmarks
   suite with 11.8x average speedup
-- **Testing**: 414 tests (unit + C runtime), comprehensive device test coverage
+- **Testing**: 476 tests (unit + C runtime), comprehensive device test coverage
 - **Strings**: Full method support (`split`, `join`, `replace`, `find`, `strip`, `upper`, `lower`, etc.)
+- **Type Checking**: Optional mypy integration via `type_check=True` parameter, extracts function/class signatures
 - **Other**: Local variables (typed and inferred), string literals, `None`, `True`/`False`
 
 ### What's Next ❌
@@ -79,10 +81,14 @@ Phase 4: Exception Handling     ░░░░░░░░░░░░░░░  T
 Phase 5: Advanced Features      ░░░░░░░░░░░░░░░  TODO
   closures │ generators │ list comprehensions │ map/filter
 
-Phase 6: Integration & Polish   ████████████░░░  ~80% done
+Phase 6: Integration & Polish   █████████████░░  ~85% done
   ESP32 modules ✅ (16 modules on ESP32-C6) │ RTuple optimization ✅ (57x speedup)
   list access optimization ✅ │ benchmarks ✅ (22 tests, 11.8x avg) │ Full IR pipeline ✅
-  414 tests ✅ │ error messages │ docs
+  480 tests ✅ │ type checking ✅ (strict by default) │ error messages │ docs
+
+Phase 7: Type-Based Optimizations  ░░░░░░░░░░░░░░░  TODO (new!)
+  native int arithmetic │ typed local variables │ typed list access
+  typed iteration │ dict value types │ expression type propagation
 ```
 
 ---
@@ -691,12 +697,186 @@ Tasks:
 - [ ] Dead code elimination
 - [ ] Inline small functions
 
+---
+
+## Phase 7: Type-Based Optimizations
+
+**Goal:** Use mypy's resolved type information to generate faster code.
+
+### Background: What Mypy Gives Us
+
+With strict type checking enabled (default), mypy provides:
+
+1. **Resolved generic types**: `list[int]` element type, `dict[str, int]` key/value types
+2. **Inferred local variable types**: Even without annotations
+3. **Expression types**: Type of every subexpression in the AST
+
+**Current usage**: Parameter/return C types, `len()`/`sum()` optimizations for typed lists.
+
+**Opportunity**: Much richer optimization potential remains untapped.
+
+### 7.1 Native Integer Arithmetic ❌ TODO
+
+**Problem**: Integer operations sometimes use `mp_binary_op()` even when both operands are known `int`.
+
+**Current code** (suboptimal case):
+```c
+mp_obj_t result = mp_binary_op(MP_BINARY_OP_ADD, a_obj, b_obj);
+```
+
+**Optimized code** (when both are `int`):
+```c
+mp_int_t result = a + b;
+```
+
+| Pattern | Current | Optimized | Est. Speedup |
+|---------|---------|-----------|--------------|
+| `a + b` | Sometimes `mp_binary_op` | Native `a + b` | 3-5x |
+| `a * b` | Sometimes `mp_binary_op` | Native `a * b` | 3-5x |
+| `a < b` | Sometimes `mp_binary_op` | Native `a < b` | 2-3x |
+
+**Implementation**:
+- [ ] Track expression types through IR using mypy info
+- [ ] Propagate `IRType.INT` for arithmetic on two `int` operands
+- [ ] Emit native C operators when both sides are unboxed
+
+### 7.2 Typed Local Variable Tracking ❌ TODO
+
+**Problem**: Local variables inferred by mypy are stored as `mp_obj_t` even when type is known.
+
+```python
+def process(items: list[int]) -> int:
+    total = 0          # mypy knows: int, but we use mp_obj_t
+    for x in items:    # mypy knows: x is int
+        total += x
+    return total
+```
+
+**Current**:
+```c
+mp_obj_t total = mp_obj_new_int(0);
+// ... box/unbox on every operation
+```
+
+**Optimized**:
+```c
+mp_int_t total = 0;
+// ... native operations throughout
+```
+
+**Implementation**:
+- [ ] Pass mypy's `module_types` to IRBuilder
+- [ ] Track local variable types from mypy inference
+- [ ] Use `mp_int_t` for variables mypy identifies as `int`
+- [ ] Box only when passing to MicroPython APIs
+
+### 7.3 Typed List Element Access ❌ TODO
+
+**Problem**: `list[int]` element access boxes/unboxes on every operation.
+
+```python
+def sum_list(items: list[int]) -> int:
+    total = 0
+    for i in range(len(items)):
+        total += items[i]  # Two calls: subscr + unbox
+    return total
+```
+
+**Current**:
+```c
+mp_obj_t elem = mp_obj_subscr(items, mp_obj_new_int(i), MP_OBJ_SENTINEL);
+total += mp_obj_get_int(elem);
+```
+
+**Optimized** (when type is `list[int]`):
+```c
+mp_obj_list_t *lst = MP_OBJ_TO_PTR(items);
+total += mp_obj_get_int(lst->items[i]);  // Direct array access
+```
+
+**Implementation**:
+- [ ] Extract element type from mypy's `list[int]` resolution
+- [ ] Generate direct `items[]` access for known list types
+- [ ] Combine with native arithmetic for maximum benefit
+
+### 7.4 Typed Iterator Unboxing ❌ TODO
+
+**Problem**: `for x in list[int]` boxes/unboxes on every iteration.
+
+**Current**:
+```c
+mp_obj_t iter = mp_getiter(items);
+mp_obj_t x_obj;
+while ((x_obj = mp_iternext(iter)) != MP_OBJ_STOP_ITERATION) {
+    mp_int_t x = mp_obj_get_int(x_obj);  // Unbox per iteration
+    // ...
+}
+```
+
+**Optimized** (when type is `list[int]`):
+```c
+mp_obj_list_t *lst = MP_OBJ_TO_PTR(items);
+for (size_t _i = 0; _i < lst->len; _i++) {
+    mp_int_t x = mp_obj_get_int(lst->items[_i]);
+    // ... native operations on x
+}
+```
+
+**Implementation**:
+- [ ] Detect `for x in container` where container is typed
+- [ ] Generate direct struct access loop
+- [ ] Inline unboxing once per element
+
+### 7.5 Dict Value Type Optimization ❌ TODO
+
+**Problem**: `dict[str, int]` value access doesn't use value type information.
+
+**Current**:
+```c
+mp_obj_t val = mp_obj_subscr(d, key, MP_OBJ_SENTINEL);
+// val is mp_obj_t, must unbox explicitly
+```
+
+**Optimized** (when value type is `int`):
+```c
+mp_int_t val = mp_obj_get_int(mp_obj_subscr(d, key, MP_OBJ_SENTINEL));
+// Direct to native type
+```
+
+**Implementation**:
+- [ ] Extract value type from mypy's `dict[K, V]` resolution
+- [ ] Automatically unbox subscript results to native type
+- [ ] Track result type through expressions
+
+### Expected Impact
+
+| Optimization | Patterns Affected | Est. Speedup |
+|-------------|-------------------|--------------|
+| Native int arithmetic | All int math | 3-5x |
+| Typed locals | Functions with int locals | 2x |
+| List element access | `list[int]` indexing | 2-3x |
+| Typed iteration | `for x in list[int]` | 3-5x |
+| Dict value types | `dict[str, int]` access | 2x |
+
+**Combined effect**: 2-10x speedup for numeric code with proper type annotations.
+
+### Prerequisites
+
+- [x] Mypy integration (`type_check=True` default)
+- [x] `MypyTypeInfo` passed to IRBuilder
+- [ ] Expression-level type tracking in IR
+- [ ] Type propagation through assignments
+
+---
+
 ### 6.3 Error Messages
 
 Tasks:
-- [ ] Clear error messages for unsupported features
-- [ ] Line number references in errors
+- [x] Detect nested functions and raise compile error with line number and suggestion
+- [ ] Clear error messages for other unsupported features
 - [ ] Suggestions for common mistakes
+
+See [docs/ideas/nested-functions.md](ideas/nested-functions.md) for mypyc research findings on closures.
 
 ### 6.4 Documentation & Testing
 
@@ -766,11 +946,12 @@ Quick reference for the C APIs used in generated code.
 | Phase 4: Exceptions | 2-3 weeks | 10-15 weeks |
 | Phase 5: Advanced | 4-6 weeks | 14-21 weeks |
 | Phase 6: Polish | 4-6 weeks | 18-27 weeks |
+| Phase 7: Type Optimizations | 4-6 weeks | 22-33 weeks |
 
 ## Dependencies
 
 ```
-Phase 1 (Core) ← ~65% done
+Phase 1 (Core) ← ~90% done
     │
     ├── Phase 2 (Functions) ─── needs list/tuple for *args
     │
@@ -781,12 +962,14 @@ Phase 1 (Core) ← ~65% done
                     └── Phase 5 (Advanced) ─── needs exceptions for generators
                             │
                             └── Phase 6 (Polish)
+                                    │
+                                    └── Phase 7 (Type Optimizations) ─── needs stable IR + mypy integration
 ```
 
 ### External Dependencies
 
 - MicroPython source (for headers and reference)
-- mypy (for type checking, optional future integration)
+- mypy (for strict compile-time type checking, enabled by default)
 - ESP-IDF (for ESP32 builds)
 - Cross-compiler toolchain
 

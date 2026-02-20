@@ -20,7 +20,7 @@ def gcd(a: int, b: int) -> int:
 
 
 def lcm(a: int, b: int) -> int:
-    return (a * b) / gcd(a, b)
+    return (a * b) // gcd(a, b)
 
 
 def power(base: int, exp: int) -> int:
@@ -28,7 +28,7 @@ def power(base: int, exp: int) -> int:
         return 1
     if exp == 1:
         return base
-    half: int = power(base, exp / 2)
+    half: int = power(base, exp // 2)
     if exp % 2 == 0:
         return half * half
     return half * half * base

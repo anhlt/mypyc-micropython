@@ -212,7 +212,9 @@ def multi_decorated():
     pass
 ```
 
-### Type Annotations ⚠️
+### Type Annotations ✅
+
+Type annotations are fully supported and can be validated at compile time using mypy.
 
 **Supported:**
 ```python
@@ -230,20 +232,80 @@ def flexible(x: int | str) -> str: ...
 def process(items: list[int]) -> dict[str, int]: ...
 ```
 
+**Type Checking (Default):**
+
+As of v0.x, strict type checking is **enabled by default**. This ensures code quality and enables future optimizations.
+
+```python
+from mypyc_micropython import compile_source
+
+# Default: strict type checking enabled
+code = compile_source(source, "module")
+
+# Disable type checking (for rapid prototyping)
+code = compile_source(source, "module", type_check=False)
+```
+
+**CLI:**
+```bash
+# Default: type checking enabled
+mpy-compile mymodule.py
+
+# Disable type checking
+mpy-compile mymodule.py --no-type-check
+```
+
+### Type-Based Optimization Opportunities
+
+With strict type checking, mypy resolves generic types and infers local variable types. This information enables significant performance optimizations (planned for future phases).
+
+#### Current Type Information Usage
+
+| Source | Information | Current Use |
+|--------|-------------|-------------|
+| AST annotations | `def foo(x: int)` | C type selection (`mp_int_t`) |
+| Mypy resolution | `list[int]` element type | `len()/sum()` optimizations |
+| Mypy inference | Local variable types | Not yet used |
+
+#### Planned Optimizations (Phase 7)
+
+| Pattern | Current Generated Code | Optimized Code | Est. Speedup |
+|---------|----------------------|----------------|--------------|
+| `a + b` (both `int`) | `mp_binary_op(MP_BINARY_OP_ADD, a, b)` | `a + b` (native C) | 3-5x |
+| `list[i]` on `list[int]` | `mp_obj_get_int(mp_obj_subscr(...))` | Direct array access | 2-3x |
+| `for x in list[int]` | Box/unbox per iteration | Native C iteration | 3-5x |
+| `x: int = expr` | Sometimes `mp_obj_t` | Always `mp_int_t` | 2x |
+| `dict[str, int]` value | Generic subscript | Typed fast path | 2x |
+
+#### Why Mypy Provides More Than AST
+
+```python
+def process(items: list[int]) -> int:
+    total = 0          # mypy infers: int
+    for x in items:    # mypy infers: x is int
+        total += x     # mypy knows: int + int -> int
+    return total
+```
+
+- **AST only**: Sees `total = 0` but doesn't track type through loop
+- **Mypy**: Resolves `x` to `int` from `list[int]`, tracks `total` as `int` throughout
+
+This richer type information will enable the optimizations listed above.
+
 **NOT Supported:**
 ```python
 # TypeVar
 T = TypeVar('T')
-def identity(x: T) -> T: ...  # ❌
+def identity(x: T) -> T: ...  # Parses but TypeVar not tracked
 
 # Callable types
-def higher_order(f: Callable[[int], int]) -> int: ...  # ⚠️ Limited
+def higher_order(f: Callable[[int], int]) -> int: ...  # Limited support
 
 # Protocol
-class MyProtocol(Protocol): ...  # ❌
+class MyProtocol(Protocol): ...  # Not supported
 
 # Literal types
-def specific(x: Literal[1, 2, 3]) -> int: ...  # ❌
+def specific(x: Literal[1, 2, 3]) -> int: ...  # Not supported
 ```
 
 ### String Operations ✅
@@ -411,6 +473,25 @@ class Outer:
 
 # Reason: Complexity in code generation. Use module-level classes.
 ```
+
+### Nested Functions ❌
+
+```python
+# NOT SUPPORTED - generates broken code (inner function silently ignored)
+def outer(n: int) -> int:
+    def inner(x: int) -> int:   # ❌ Inner function not compiled
+        return x * 2
+    return inner(n)             # ❌ Calls undefined function
+
+# Workaround: Move inner function to module level
+def _inner(x: int) -> int:
+    return x * 2
+
+def outer(n: int) -> int:
+    return _inner(n)            # ✅ Works
+```
+
+**Note:** Currently nested functions are silently ignored, generating broken C code. A future version should raise a compile error. Simple read-only closures may be supported in Phase 5.
 
 ### Nested Functions with Non-Local Assignment ❌
 

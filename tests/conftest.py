@@ -21,7 +21,7 @@ def compile_and_run(tmp_path: Path):
     compile_source = importlib.import_module("mypyc_micropython.compiler").compile_source
 
     def _run(python_source: str, module_name: str, test_main_c: str) -> str:
-        generated_c = compile_source(python_source, module_name)
+        generated_c = compile_source(python_source, module_name, type_check=False)
         generated_c = _rewrite_generated_includes(generated_c)
 
         test_c_path = tmp_path / f"{module_name}_runtime_test.c"

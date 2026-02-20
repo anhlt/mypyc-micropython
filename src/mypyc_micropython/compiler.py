@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .ir import FuncIR, ModuleIR, RTuple
+from .type_checker import TypeCheckResult, type_check_file, type_check_source
 
 
 @dataclass
@@ -27,6 +28,7 @@ class CompilationResult:
     cmake_code: str
     success: bool
     errors: list[str] = field(default_factory=list)
+    type_check_result: TypeCheckResult | None = None
 
 
 C_RESERVED_WORDS = {
@@ -82,7 +84,21 @@ def sanitize_name(name: str) -> str:
 def compile_to_micropython(
     source_path: str | Path,
     output_dir: str | Path | None = None,
+    *,
+    type_check: bool = True,
+    strict_type_check: bool = True,
 ) -> CompilationResult:
+    """Compile typed Python file to MicroPython usermod folder.
+
+    Args:
+        source_path: Path to the Python source file
+        output_dir: Output directory for the usermod folder (default: alongside source)
+        type_check: Enable mypy type checking before compilation (default: True)
+        strict_type_check: Enable strict mypy type checking (default: True)
+
+    Returns:
+        CompilationResult with generated C code and any errors
+    """
     source_path = Path(source_path)
 
     if not source_path.exists():
@@ -102,9 +118,26 @@ def compile_to_micropython(
         output_dir = source_path.parent / f"usermod_{module_name}"
     output_dir = Path(output_dir)
 
+    tc_result: TypeCheckResult | None = None
+    if type_check:
+        tc_result = type_check_file(source_path, strict=strict_type_check)
+        if not tc_result.success:
+            return CompilationResult(
+                module_name=module_name,
+                c_code="",
+                h_code=None,
+                mk_code="",
+                cmake_code="",
+                success=False,
+                errors=tc_result.errors,
+                type_check_result=tc_result,
+            )
+
     try:
         source_code = source_path.read_text()
-        c_code = compile_source(source_code, module_name)
+        c_code = compile_source(
+            source_code, module_name, type_check=type_check, strict=strict_type_check
+        )
         mk_code = generate_micropython_mk(module_name)
         cmake_code = generate_micropython_cmake(module_name)
 
@@ -120,6 +153,7 @@ def compile_to_micropython(
             mk_code=mk_code,
             cmake_code=cmake_code,
             success=True,
+            type_check_result=tc_result,
         )
 
     except Exception as e:
@@ -131,6 +165,7 @@ def compile_to_micropython(
             cmake_code="",
             success=False,
             errors=[str(e)],
+            type_check_result=tc_result,
         )
 
 
@@ -163,21 +198,49 @@ target_link_libraries(usermod INTERFACE usermod_{c_name})
 """
 
 
-def compile_source(source: str, module_name: str = "mymodule") -> str:
+def compile_source(
+    source: str,
+    module_name: str = "mymodule",
+    *,
+    type_check: bool = True,
+    strict: bool = True,
+) -> str:
     """Compile typed Python source to MicroPython C code.
 
-    Uses the IR pipeline: Python AST -> IR -> C code emission.
+    Args:
+        source: Python source code to compile
+        module_name: Name for the generated module
+        type_check: Enable mypy type checking before compilation (default: True)
+        strict: Enable strict mypy type checking (default: True)
+
+    Returns:
+        Generated C code as a string
+
+    Raises:
+        TypeError: If type checking is enabled and type errors are found
     """
     from .class_emitter import ClassEmitter
     from .function_emitter import FunctionEmitter, MethodEmitter
-    from .ir_builder import IRBuilder
+    from .ir_builder import IRBuilder, MypyTypeInfo
     from .module_emitter import ModuleEmitter
+
+    mypy_types: MypyTypeInfo | None = None
+    if type_check:
+        tc_result = type_check_source(source, module_name, strict=strict)
+        if not tc_result.success:
+            error_msgs = "; ".join(tc_result.errors)
+            raise TypeError(f"Type errors found: {error_msgs}")
+        mypy_types = MypyTypeInfo(
+            functions=tc_result.functions,
+            classes=tc_result.classes,
+            module_types=tc_result.module_types,
+        )
 
     tree = ast.parse(source)
     c_name = sanitize_name(module_name)
     module_ir = ModuleIR(name=module_name, c_name=c_name)
 
-    ir_builder = IRBuilder(module_name)
+    ir_builder = IRBuilder(module_name, mypy_types=mypy_types)
     function_irs: list[FuncIR] = []
     function_code: list[str] = []
     forward_decls: list[str] = []

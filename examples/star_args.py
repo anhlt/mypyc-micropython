@@ -1,49 +1,49 @@
-def sum_all(*numbers) -> int:
+def sum_all(*numbers: int) -> int:
     total: int = 0
     for x in numbers:
         total += x
     return total
 
 
-def sum_args(*args) -> int:
+def sum_args(*args: int) -> int:
     total: int = 0
     for x in args:
         total += x
     return total
 
 
-def count_args(*items) -> int:
+def count_args(*items: int) -> int:
     count: int = 0
     for _ in items:
         count += 1
     return count
 
 
-def first_or_default(*values) -> int:
+def first_or_default(*values: int) -> int:
     for v in values:
         return v
     return -1
 
 
-def log_values(prefix: int, *values) -> int:
+def log_values(prefix: int, *values: int) -> int:
     total: int = prefix
     for v in values:
         total += v
     return total
 
 
-def count_kwargs(**kwargs) -> int:
+def count_kwargs(**kwargs: int) -> int:
     count: int = 0
     for k in kwargs:
         count += 1
     return count
 
 
-def make_config(**options) -> dict:
+def make_config(**options: int) -> dict[str, int]:
     return options
 
 
-def process(name: int, *args, **kwargs) -> int:
+def process(name: int, *args: int, **kwargs: int) -> int:
     total: int = name
     for a in args:
         total += a
@@ -52,7 +52,7 @@ def process(name: int, *args, **kwargs) -> int:
     return total
 
 
-def max_of_args(*nums) -> int:
+def max_of_args(*nums: int) -> int:
     result: int = 0
     first: bool = True
     for n in nums:
@@ -65,7 +65,7 @@ def max_of_args(*nums) -> int:
     return result
 
 
-def min_of_args(*nums) -> int:
+def min_of_args(*nums: int) -> int:
     result: int = 0
     first: bool = True
     for n in nums:

@@ -1,6 +1,6 @@
 class Inventory:
-    items: list
-    counts: dict
+    items: list[int]
+    counts: dict[int, int]
     total_count: int
 
     def __init__(self) -> None:

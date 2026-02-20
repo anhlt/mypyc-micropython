@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Mypy local type inference**: Use mypy's inferred types for local variables instead of expression-based inference
+  - Correctly types `a and b` as `bool` (was incorrectly typed before)
+  - Correctly types `a & b` as `bool` for bool operands
+  - Correctly types `a + b` as `int` for bool operands (Python promotes bool+bool to int)
+  - Extracts local variable types from mypy's semantic analysis via `FunctionTypeInfo.local_types`
 - **Comprehensive string operations support**: 25+ string methods via dynamic method dispatch
   - Case methods: `upper()`, `lower()`, `capitalize()`, `title()`, `swapcase()`
   - Search methods: `find()`, `rfind()`, `index()`, `rindex()`, `count()`
