@@ -9,6 +9,11 @@ from __future__ import annotations
 
 import ast
 import re
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .type_checker import ClassTypeInfo, FunctionTypeInfo
 
 from .ir import (
     AnnAssignIR,
@@ -113,13 +118,32 @@ def sanitize_name(name: str) -> str:
     return result
 
 
-class IRBuilder:
-    """Builds IR from Python AST nodes."""
+@dataclass
+class MypyTypeInfo:
+    """Container for mypy type information passed to IRBuilder."""
 
-    def __init__(self, module_name: str, known_classes: dict[str, ClassIR] | None = None):
+    functions: dict[str, "FunctionTypeInfo"] = field(default_factory=dict)
+    classes: dict[str, "ClassTypeInfo"] = field(default_factory=dict)
+    module_types: dict[str, str] = field(default_factory=dict)
+
+
+class IRBuilder:
+    """Builds IR from Python AST nodes.
+
+    Optionally uses mypy's type information when available for more accurate
+    type resolution, including type inference and generic resolution.
+    """
+
+    def __init__(
+        self,
+        module_name: str,
+        known_classes: dict[str, ClassIR] | None = None,
+        mypy_types: "MypyTypeInfo | None" = None,
+    ):
         self.module_name = module_name
         self.c_name = sanitize_name(module_name)
         self._known_classes = known_classes or {}
+        self._mypy_types = mypy_types
         self._temp_counter = 0
         self._var_types: dict[str, str] = {}
         self._star_c_names: dict[str, str] = {}
@@ -149,17 +173,29 @@ class IRBuilder:
         func_name = node.name
         c_func_name = f"{self.c_name}_{sanitize_name(func_name)}"
 
+        mypy_func = self._get_mypy_func_type(func_name)
+        mypy_param_types: dict[str, str] = {}
+        mypy_return_type: str | None = None
+        if mypy_func:
+            mypy_param_types = {name: ptype for name, ptype in mypy_func.params}
+            mypy_return_type = mypy_func.return_type
+
         params: list[tuple[str, CType]] = []
         arg_types: list[str] = []
         for arg in node.args.args:
-            c_type_str = (
-                self._annotation_to_c_type(arg.annotation) if arg.annotation else "mp_obj_t"
-            )
-            c_type = (
-                CType.from_python_type(self._annotation_to_py_type(arg.annotation))
-                if arg.annotation
-                else CType.MP_OBJ_T
-            )
+            if arg.arg in mypy_param_types:
+                py_type = self._mypy_type_to_py_type(mypy_param_types[arg.arg])
+                c_type_str = self._mypy_type_to_c_type(mypy_param_types[arg.arg])
+                c_type = CType.from_python_type(py_type)
+            else:
+                c_type_str = (
+                    self._annotation_to_c_type(arg.annotation) if arg.annotation else "mp_obj_t"
+                )
+                c_type = (
+                    CType.from_python_type(self._annotation_to_py_type(arg.annotation))
+                    if arg.annotation
+                    else CType.MP_OBJ_T
+                )
             params.append((arg.arg, c_type))
             arg_types.append(c_type_str)
             self._var_types[arg.arg] = c_type_str
@@ -176,11 +212,15 @@ class IRBuilder:
 
         star_args, star_kwargs = self._parse_star_args(node.args)
 
-        return_type = (
-            CType.from_python_type(self._annotation_to_py_type(node.returns))
-            if node.returns
-            else CType.MP_OBJ_T
-        )
+        if mypy_return_type:
+            py_type = self._mypy_type_to_py_type(mypy_return_type)
+            return_type = CType.from_python_type(py_type)
+        else:
+            return_type = (
+                CType.from_python_type(self._annotation_to_py_type(node.returns))
+                if node.returns
+                else CType.MP_OBJ_T
+            )
 
         local_vars = [arg.arg for arg in node.args.args]
         if star_args:
@@ -1019,6 +1059,48 @@ class IRBuilder:
     def _get_value_ir_type(self, value: ValueIR) -> IRType:
         return value.ir_type
 
+    def _get_mypy_func_type(self, func_name: str) -> "FunctionTypeInfo | None":
+        if self._mypy_types is None:
+            return None
+        return self._mypy_types.functions.get(func_name)
+
+    def _get_mypy_class_type(self, class_name: str) -> "ClassTypeInfo | None":
+        if self._mypy_types is None:
+            return None
+        return self._mypy_types.classes.get(class_name)
+
+    def _get_mypy_method_type(self, class_name: str, method_name: str) -> "FunctionTypeInfo | None":
+        mypy_class = self._get_mypy_class_type(class_name)
+        if mypy_class is None:
+            return None
+        for method in mypy_class.methods:
+            if method.name == method_name:
+                return method
+        return None
+
+    def _mypy_type_to_c_type(self, mypy_type: str) -> str:
+        type_map = {
+            "int": "mp_int_t",
+            "float": "mp_float_t",
+            "bool": "bool",
+            "str": "mp_obj_t",
+            "None": "void",
+            "list": "mp_obj_t",
+            "dict": "mp_obj_t",
+            "tuple": "mp_obj_t",
+            "set": "mp_obj_t",
+            "object": "mp_obj_t",
+            "Any": "mp_obj_t",
+        }
+        base_type = mypy_type.split("[")[0].strip()
+        return type_map.get(base_type, "mp_obj_t")
+
+    def _mypy_type_to_py_type(self, mypy_type: str) -> str:
+        base_type = mypy_type.split("[")[0].strip()
+        if base_type in ("int", "float", "bool", "str", "list", "dict", "tuple", "set", "None"):
+            return base_type
+        return "object"
+
     def _annotation_to_c_type(self, annotation: ast.expr | None) -> str:
         if annotation is None:
             return "mp_obj_t"
@@ -1236,12 +1318,20 @@ class IRBuilder:
 
     def _parse_class_body(self, node: ast.ClassDef, class_ir: ClassIR) -> None:
         """Parse class body to extract fields and methods."""
+        mypy_class = self._get_mypy_class_type(class_ir.name)
+        mypy_field_types: dict[str, str] = {}
+        if mypy_class:
+            mypy_field_types = {name: ftype for name, ftype in mypy_class.fields}
+
         for stmt in node.body:
             if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
-                # Class field annotation
                 field_name = stmt.target.id
-                py_type = self._annotation_to_py_type(stmt.annotation)
-                c_type = CType.from_python_type(py_type)
+                if field_name in mypy_field_types:
+                    py_type = self._mypy_type_to_py_type(mypy_field_types[field_name])
+                    c_type = CType.from_python_type(py_type)
+                else:
+                    py_type = self._annotation_to_py_type(stmt.annotation)
+                    c_type = CType.from_python_type(py_type)
 
                 has_default = stmt.value is not None
                 default_value = None
@@ -1266,22 +1356,38 @@ class IRBuilder:
         method_name = node.name
         c_method_name = f"{class_ir.c_name}_{sanitize_name(method_name)}"
 
-        # Parse parameters (skip 'self')
+        mypy_method = self._get_mypy_method_type(class_ir.name, method_name)
+        mypy_param_types: dict[str, str] = {}
+        mypy_return_type: str | None = None
+        if mypy_method:
+            mypy_param_types = {name: ptype for name, ptype in mypy_method.params}
+            mypy_return_type = mypy_method.return_type
+
         params: list[tuple[str, CType]] = []
         for arg in node.args.args[1:]:
-            py_type = self._annotation_to_py_type(arg.annotation) if arg.annotation else "object"
-            c_type = CType.from_python_type(py_type)
+            if arg.arg in mypy_param_types:
+                py_type = self._mypy_type_to_py_type(mypy_param_types[arg.arg])
+                c_type = CType.from_python_type(py_type)
+            else:
+                py_type = (
+                    self._annotation_to_py_type(arg.annotation) if arg.annotation else "object"
+                )
+                c_type = CType.from_python_type(py_type)
             params.append((arg.arg, c_type))
 
-        # Parse return type
-        return_type = CType.VOID
-        if node.returns:
-            py_type = self._annotation_to_py_type(node.returns)
+        if mypy_return_type:
+            py_type = self._mypy_type_to_py_type(mypy_return_type)
             return_type = CType.from_python_type(py_type)
             if py_type == "None":
                 return_type = CType.VOID
+        else:
+            return_type = CType.VOID
+            if node.returns:
+                py_type = self._annotation_to_py_type(node.returns)
+                return_type = CType.from_python_type(py_type)
+                if py_type == "None":
+                    return_type = CType.VOID
 
-        # Determine if virtual/special
         is_special = method_name.startswith("__") and method_name.endswith("__")
         is_virtual = not is_special or method_name in ("__len__", "__getitem__", "__setitem__")
 

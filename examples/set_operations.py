@@ -1,100 +1,83 @@
-def make_set() -> set:
-    """Create a set with initial values"""
+def make_set() -> set[int]:
     return {1, 2, 3}
 
 
-def empty_set() -> set:
-    """Create an empty set"""
+def empty_set() -> set[int]:
     return set()
 
 
-def set_from_range(n: int) -> set:
-    """Create a set from a range"""
+def set_from_range(n: int) -> set[int]:
     return set(range(n))
 
 
-def set_add(s: set, value: int) -> set:
-    """Add an element to a set"""
+def set_add(s: set[int], value: int) -> set[int]:
     s.add(value)
     return s
 
 
-def set_discard(s: set, value: int) -> set:
-    """Discard an element from a set (no error if missing)"""
+def set_discard(s: set[int], value: int) -> set[int]:
     s.discard(value)
     return s
 
 
-def set_remove(s: set, value: int) -> set:
-    """Remove an element from a set (raises KeyError if missing)"""
+def set_remove(s: set[int], value: int) -> set[int]:
     s.remove(value)
     return s
 
 
-def set_pop(s: set) -> int:
-    """Pop an arbitrary element from the set"""
+def set_pop(s: set[int]) -> int:
     return s.pop()
 
 
-def set_clear(s: set) -> set:
-    """Clear all elements from a set"""
+def set_clear(s: set[int]) -> set[int]:
     s.clear()
     return s
 
 
-def set_copy(s: set) -> set:
-    """Create a copy of a set"""
+def set_copy(s: set[int]) -> set[int]:
     return s.copy()
 
 
-def set_update(s1: set, s2: set) -> set:
-    """Update s1 with elements from s2"""
+def set_update(s1: set[int], s2: set[int]) -> set[int]:
     s1.update(s2)
     return s1
 
 
-def set_len(s: set) -> int:
-    """Get the number of elements in a set"""
+def set_len(s: set[int]) -> int:
     return len(s)
 
 
-def set_contains(s: set, value: int) -> bool:
-    """Check if value is in the set"""
+def set_contains(s: set[int], value: int) -> bool:
     return value in s
 
 
-def set_not_contains(s: set, value: int) -> bool:
-    """Check if value is NOT in the set"""
+def set_not_contains(s: set[int], value: int) -> bool:
     return value not in s
 
 
-def sum_set(s: set) -> int:
-    """Sum all elements in a set using iteration"""
+def sum_set(s: set[int]) -> int:
     total: int = 0
     for x in s:
         total += x
     return total
 
 
-def count_unique(lst: list) -> int:
-    """Count unique elements by converting list to set"""
-    s: set = set()
+def count_unique(lst: list[int]) -> int:
+    s: set[int] = set()
     for item in lst:
         s.add(item)
     return len(s)
 
 
 def build_set_incremental(n: int) -> int:
-    """Build a set incrementally and return its size"""
-    s: set = set()
+    s: set[int] = set()
     for i in range(n):
         s.add(i % 10)
     return len(s)
 
 
 def filter_duplicates(n: int) -> int:
-    """Use set to filter duplicates, return sum of unique values"""
-    s: set = set()
+    s: set[int] = set()
     for i in range(n):
         s.add(i % 5)
     total: int = 0

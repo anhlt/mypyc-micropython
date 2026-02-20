@@ -17,6 +17,11 @@ def main() -> int:
     parser.add_argument("-o", "--output", help="Output directory (default: usermod_<name>/)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     parser.add_argument(
+        "--no-type-check",
+        action="store_true",
+        help="Disable strict mypy type checking (enabled by default)",
+    )
+    parser.add_argument(
         "--dump-ir",
         choices=["text", "tree", "json"],
         help="Dump IR instead of compiling (text, tree, or json format)",
@@ -37,7 +42,10 @@ def main() -> int:
 
     output_dir = Path(args.output) if args.output else None
 
-    result = compile_to_micropython(source_path, output_dir)
+    type_check = not args.no_type_check
+    result = compile_to_micropython(
+        source_path, output_dir, type_check=type_check, strict_type_check=type_check
+    )
 
     if not result.success:
         print("Compilation failed:", file=sys.stderr)

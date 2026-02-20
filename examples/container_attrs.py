@@ -5,15 +5,15 @@ from dataclasses import dataclass
 
 @dataclass
 class Container:
-    items: list
-    mapping: dict
-    unique: set
+    items: list[int]
+    mapping: dict[str, int]
+    unique: set[int]
 
 
 @dataclass
 class Inner:
-    items: list
-    data: dict
+    items: list[int]
+    data: dict[str, int]
 
 
 @dataclass
@@ -22,15 +22,15 @@ class Outer:
     name: str
 
 
-def get_items(c: Container) -> list:
+def get_items(c: Container) -> list[int]:
     return c.items
 
 
-def get_mapping(c: Container) -> dict:
+def get_mapping(c: Container) -> dict[str, int]:
     return c.mapping
 
 
-def get_unique(c: Container) -> set:
+def get_unique(c: Container) -> set[int]:
     return c.unique
 
 
@@ -46,11 +46,11 @@ def has_in_unique(c: Container, val: int) -> bool:
     return val in c.unique
 
 
-def get_inner_items(o: Outer) -> list:
+def get_inner_items(o: Outer) -> list[int]:
     return o.inner.items
 
 
-def get_inner_data(o: Outer) -> dict:
+def get_inner_data(o: Outer) -> dict[str, int]:
     return o.inner.data
 
 
