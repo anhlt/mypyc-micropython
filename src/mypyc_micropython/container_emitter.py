@@ -276,6 +276,46 @@ class ContainerEmitter:
             ]
         return [f"    mp_obj_set_store({receiver}, {arg});"]
 
+    def _emit_extend(self, instr: MethodCallIR, receiver: str) -> list[str]:
+        """list.extend(iterable) -> mp_load_attr + mp_call_function_1."""
+        if instr.args:
+            arg_c = self._box_value_ir(instr.args[0])
+            call = f"mp_call_function_1(mp_load_attr({receiver}, MP_QSTR_extend), {arg_c})"
+        else:
+            call = f"mp_call_function_0(mp_load_attr({receiver}, MP_QSTR_extend))"
+        if instr.result:
+            return [f"    mp_obj_t {instr.result.name} = {call};"]
+        return [f"    (void){call};"]
+
+    def _emit_insert(self, instr: MethodCallIR, receiver: str) -> list[str]:
+        """list.insert(i, obj) -> mp_load_attr + mp_call_function_n_kw."""
+        if len(instr.args) >= 2:
+            idx_c = self._box_value_ir(instr.args[0])
+            obj_c = self._box_value_ir(instr.args[1])
+            call = (
+                f"mp_call_function_n_kw(mp_load_attr({receiver}, MP_QSTR_insert), "
+                f"2, 0, (mp_obj_t[]){{{idx_c}, {obj_c}}})"
+            )
+        else:
+            call = "/* insert() requires 2 args */"
+        if instr.result:
+            return [f"    mp_obj_t {instr.result.name} = {call};"]
+        return [f"    (void){call};"]
+
+    def _emit_list_reverse(self, instr: MethodCallIR, receiver: str) -> list[str]:
+        """list.reverse() -> mp_load_attr + mp_call_function_0."""
+        call = f"mp_call_function_0(mp_load_attr({receiver}, MP_QSTR_reverse))"
+        if instr.result:
+            return [f"    mp_obj_t {instr.result.name} = {call};"]
+        return [f"    (void){call};"]
+
+    def _emit_list_sort(self, instr: MethodCallIR, receiver: str) -> list[str]:
+        """list.sort() -> mp_load_attr + mp_call_function_0."""
+        call = f"mp_call_function_0(mp_load_attr({receiver}, MP_QSTR_sort))"
+        if instr.result:
+            return [f"    mp_obj_t {instr.result.name} = {call};"]
+        return [f"    (void){call};"]
+
     def _emit_one_arg_method(self, instr: MethodCallIR, receiver: str) -> list[str]:
         method = instr.method
         if instr.args:
@@ -398,6 +438,10 @@ _METHOD_TABLE: dict[
     # List methods
     "append": ContainerEmitter._emit_append,
     "pop": ContainerEmitter._emit_pop,
+    "extend": ContainerEmitter._emit_extend,
+    "insert": ContainerEmitter._emit_insert,
+    "reverse": ContainerEmitter._emit_list_reverse,
+    "sort": ContainerEmitter._emit_list_sort,
     # Dict methods
     "get": ContainerEmitter._emit_get,
     "keys": ContainerEmitter._emit_zero_arg_method,

@@ -248,6 +248,26 @@ Order: `__future__` → stdlib → third-party → local. Blank line between gro
 
 ## Test Conventions
 
+### Type Checking in Tests (IMPORTANT)
+
+**Always use strict type checking by default in tests.** This ensures test sources are valid typed Python that would pass mypy strict mode.
+
+```python
+# CORRECT: Use type_check=True (default) for strict checking
+result = compile_source(source, "test")  # type_check=True, strict=True by default
+result = compile_source(source, "test", type_check=True)  # explicit
+
+# ONLY use type_check=False when testing specific edge cases that intentionally
+# bypass type checking (e.g., testing error handling for untyped code)
+result = compile_source(source, "test", type_check=False)  # document why!
+```
+
+**Why strict by default?**
+- Catches type errors early in test sources
+- Ensures generated C code handles properly typed inputs
+- Matches production behavior (CLI uses strict by default)
+- Prevents tests from passing with invalid Python that would fail in real use
+
 ### Unit tests (test_compiler.py)
 Grouped in pytest classes. Pattern:
 ```python
@@ -258,11 +278,11 @@ def make_dict() -> dict:
     d: dict = {"key": 1}
     return d
 '''
-        result = compile_source(source, "test")
+        result = compile_source(source, "test")  # strict type checking enabled
         assert "mp_obj_new_dict" in result
 ```
 1. Define Python source as triple-quoted string
-2. Call `compile_source(source, "test")`
+2. Call `compile_source(source, "test")` (strict type check by default)
 3. Assert on substrings in generated C
 
 ### C runtime tests (test_c_runtime.py)

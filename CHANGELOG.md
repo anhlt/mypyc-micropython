@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **List methods**: `extend()`, `insert()`, `reverse()`, `sort()` via dynamic method dispatch
+- `list(iterable)` constructor for creating lists from iterables
 - **Mypy local type inference**: Use mypy's inferred types for local variables instead of expression-based inference
   - Correctly types `a and b` as `bool` (was incorrectly typed before)
   - Correctly types `a & b` as `bool` for bool operands
@@ -92,6 +94,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `set.add()` and other void-returning methods no longer generate invalid C code
 - **Type coercion in assignments**: Reassigning `mp_obj_t` values to typed variables (e.g., `result: int = 0; result = n` where `n` is a loop variable) now correctly preserves the declared type and inserts `mp_obj_get_int()`/`mp_obj_get_float()` conversion
 - Blog post: `10-type-coercion-fix.md` documenting the assignment type coercion bug and fix
+- **List augmented assignment**: `+=` and `*=` on `list` (and other `mp_obj_t`) types now correctly use `mp_binary_op(MP_BINARY_OP_INPLACE_ADD, ...)` instead of native C operations
 
 ## [0.1.0] - 2024-02-07
 

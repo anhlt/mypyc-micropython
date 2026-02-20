@@ -559,11 +559,14 @@ class IRBuilder:
         }
         c_op = op_map.get(type(stmt.op), "+=")
 
+        target_c_type = self._var_types.get(var_name, "mp_int_t")
+
         return AugAssignIR(
             target=var_name,
             c_target=c_var_name,
             op=c_op,
             value=value,
+            target_c_type=target_c_type,
             prelude=prelude,
         )
 
