@@ -1380,6 +1380,59 @@ def test_string_operations():
     )
 
 
+def test_itertools_builtins():
+    """Test itertools_builtins module (enumerate, zip, sorted)."""
+    print("\n[TEST] Testing itertools_builtins module...")
+
+    test(
+        "sum_with_indices",
+        "import itertools_builtins as ib; print(ib.sum_with_indices([10, 20, 30]))",
+        "80",
+    )
+
+    test(
+        "enumerate_from_start",
+        "import itertools_builtins as ib; print(ib.enumerate_from_start(['a', 'b', 'c'], 5))",
+        "[5, 6, 7]",
+    )
+
+    test(
+        "dot_product",
+        "import itertools_builtins as ib; print(ib.dot_product([1, 2, 3], [4, 5, 6]))",
+        "32",
+    )
+
+    test(
+        "zip_three_lists",
+        "import itertools_builtins as ib; print(ib.zip_three_lists([1, 2], [10, 20], [100, 200]))",
+        "[111, 222]",
+    )
+
+    test(
+        "get_sorted",
+        "import itertools_builtins as ib; print(ib.get_sorted([3, 1, 2]))",
+        "[1, 2, 3]",
+    )
+
+    test(
+        "sum_sorted",
+        "import itertools_builtins as ib; print(ib.sum_sorted([3, 1, 2]))",
+        "6",
+    )
+
+    test(
+        "get_first_sorted",
+        "import itertools_builtins as ib; print(ib.get_first_sorted([30, 10, 20]))",
+        "10",
+    )
+
+    test(
+        "get_last_sorted",
+        "import itertools_builtins as ib; print(ib.get_last_sorted([30, 10, 20]))",
+        "30",
+    )
+
+
 def run_all_tests():
     """Run all test suites."""
     global total_tests, passed_tests, failed_tests
@@ -1413,6 +1466,7 @@ def run_all_tests():
     test_chained_attr()
     test_container_attrs()
     test_string_operations()
+    test_itertools_builtins()
 
     # Print summary
     print("\n" + "=" * 70)

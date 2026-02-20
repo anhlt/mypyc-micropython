@@ -710,6 +710,77 @@ def sum_any_list(lst: list) -> int:
         assert "mp_list_sum_int" not in result
 
 
+class TestEnumerateBuiltin:
+    def test_enumerate_iterable(self):
+        source = """
+def enumerate_list(lst: list) -> list:
+    return list(enumerate(lst))
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_type_enumerate" in result
+        assert "mp_call_function_1" in result
+
+    def test_enumerate_with_start(self):
+        source = """
+def enumerate_with_start(lst: list, start: int) -> list:
+    return list(enumerate(lst, start))
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_type_enumerate" in result
+        assert "mp_call_function_2" in result
+
+
+class TestZipBuiltin:
+    def test_zip_two_lists(self):
+        source = """
+def zip_lists(a: list, b: list) -> list:
+    return list(zip(a, b))
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_type_zip" in result
+        assert "mp_call_function_2" in result
+
+    def test_zip_three_lists(self):
+        source = """
+def zip_three(a: list, b: list, c: list) -> list:
+    return list(zip(a, b, c))
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_type_zip" in result
+        assert "mp_call_function_n_kw" in result
+
+    def test_zip_single_list(self):
+        source = """
+def zip_one(a: list) -> list:
+    return list(zip(a))
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_type_zip" in result
+        assert "mp_call_function_1" in result
+
+
+class TestSortedBuiltin:
+    def test_sorted_list(self):
+        source = """
+def sort_list(lst: list) -> list:
+    return sorted(lst)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_builtin_sorted_obj" in result
+        assert "mp_call_function_1" in result
+
+    def test_sorted_in_loop(self):
+        source = """
+def iterate_sorted(lst: list) -> int:
+    total: int = 0
+    for x in sorted(lst):
+        total += x
+    return total
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_builtin_sorted_obj" in result
+
+
 class TestTernaryExpression:
     """Tests for ternary expression translation."""
 

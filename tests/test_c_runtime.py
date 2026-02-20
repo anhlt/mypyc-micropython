@@ -1437,3 +1437,142 @@ int main(void) {
 """
     stdout = compile_and_run(source, "test", test_main_c)
     assert stdout.strip() == "105"
+
+
+def test_c_enumerate_to_list(compile_and_run):
+    source = """
+def get_enumerate_len(lst: list) -> int:
+    e: list = list(enumerate(lst))
+    return len(e)
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t items[] = {
+        mp_obj_new_int(10),
+        mp_obj_new_int(20),
+        mp_obj_new_int(30),
+    };
+    mp_obj_t list = mp_obj_new_list(3, items);
+    mp_obj_t result = test_get_enumerate_len(list);
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "3"
+
+
+def test_c_enumerate_with_start_to_list(compile_and_run):
+    source = """
+def get_enumerate_with_start_len(lst: list, start: int) -> int:
+    e: list = list(enumerate(lst, start))
+    return len(e)
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t items[] = {
+        mp_obj_new_int(100),
+        mp_obj_new_int(200),
+    };
+    mp_obj_t list = mp_obj_new_list(2, items);
+    mp_obj_t result = test_get_enumerate_with_start_len(list, mp_obj_new_int(10));
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "2"
+
+
+def test_c_zip_two_lists_to_list(compile_and_run):
+    source = """
+def get_zip_len(a: list, b: list) -> int:
+    z: list = list(zip(a, b))
+    return len(z)
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t items_a[] = {mp_obj_new_int(1), mp_obj_new_int(2), mp_obj_new_int(3)};
+    mp_obj_t items_b[] = {mp_obj_new_int(4), mp_obj_new_int(5), mp_obj_new_int(6)};
+    mp_obj_t list_a = mp_obj_new_list(3, items_a);
+    mp_obj_t list_b = mp_obj_new_list(3, items_b);
+    mp_obj_t result = test_get_zip_len(list_a, list_b);
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "3"
+
+
+def test_c_zip_unequal_lengths_to_list(compile_and_run):
+    source = """
+def get_zip_shorter_len(a: list, b: list) -> int:
+    z: list = list(zip(a, b))
+    return len(z)
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t items_a[] = {mp_obj_new_int(1), mp_obj_new_int(2), mp_obj_new_int(3), mp_obj_new_int(4)};
+    mp_obj_t items_b[] = {mp_obj_new_int(10), mp_obj_new_int(20)};
+    mp_obj_t list_a = mp_obj_new_list(4, items_a);
+    mp_obj_t list_b = mp_obj_new_list(2, items_b);
+    mp_obj_t result = test_get_zip_shorter_len(list_a, list_b);
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "2"
+
+
+def test_c_sorted_list(compile_and_run):
+    source = """
+def get_sorted_first(lst: list) -> int:
+    s: list = sorted(lst)
+    return s[0]
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t items[] = {mp_obj_new_int(30), mp_obj_new_int(10), mp_obj_new_int(20)};
+    mp_obj_t list = mp_obj_new_list(3, items);
+    mp_obj_t result = test_get_sorted_first(list);
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "10"
+
+
+def test_c_sorted_in_loop(compile_and_run):
+    source = """
+def sum_sorted(lst: list) -> int:
+    total: int = 0
+    for x in sorted(lst):
+        total += x
+    return total
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t items[] = {mp_obj_new_int(3), mp_obj_new_int(1), mp_obj_new_int(2)};
+    mp_obj_t list = mp_obj_new_list(3, items);
+    mp_obj_t result = test_sum_sorted(list);
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "6"

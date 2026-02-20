@@ -706,6 +706,10 @@ static inline mp_obj_t mp_call_method_n_kw(size_t n_args, size_t n_kw, const mp_
 #define MP_MOCK_BUILTIN_TAG_MIN 1001
 #define MP_MOCK_BUILTIN_TAG_MAX 1002
 #define MP_MOCK_BUILTIN_TAG_SUM 1003
+#define MP_MOCK_BUILTIN_TAG_SORTED 1004
+#define MP_MOCK_TYPE_TAG_ENUMERATE 2001
+#define MP_MOCK_TYPE_TAG_ZIP 2002
+#define MP_MOCK_TYPE_TAG_LIST 2003
 
 typedef struct {
     int tag;
@@ -714,6 +718,10 @@ typedef struct {
 static mp_builtin_obj_t mp_builtin_min_obj __attribute__((unused)) = { MP_MOCK_BUILTIN_TAG_MIN };
 static mp_builtin_obj_t mp_builtin_max_obj __attribute__((unused)) = { MP_MOCK_BUILTIN_TAG_MAX };
 static mp_builtin_obj_t mp_builtin_sum_obj __attribute__((unused)) = { MP_MOCK_BUILTIN_TAG_SUM };
+static mp_builtin_obj_t mp_builtin_sorted_obj __attribute__((unused)) = { MP_MOCK_BUILTIN_TAG_SORTED };
+static mp_builtin_obj_t mp_type_enumerate __attribute__((unused)) = { MP_MOCK_TYPE_TAG_ENUMERATE };
+static mp_builtin_obj_t mp_type_zip __attribute__((unused)) = { MP_MOCK_TYPE_TAG_ZIP };
+static mp_builtin_obj_t mp_type_list __attribute__((unused)) = { MP_MOCK_TYPE_TAG_LIST };
 
 static mp_obj_t mp_mock_builtin_min(size_t n_args, const mp_obj_t *args) {
     if (n_args < 2) {
@@ -755,6 +763,133 @@ static mp_obj_t mp_mock_builtin_sum(size_t n_args, const mp_obj_t *args) {
     return mp_obj_new_int(total);
 }
 
+#define MP_MOCK_TAG_ENUMERATE_OBJ (0xE707)
+#define MP_MOCK_TAG_ZIP_OBJ (0x21B0)
+
+typedef struct {
+    int tag;
+    mp_obj_t iter;
+    mp_int_t index;
+} mp_obj_enumerate_struct;
+
+typedef struct {
+    int tag;
+    size_t n_iters;
+    mp_obj_t *iters;
+} mp_obj_zip_struct;
+
+static mp_obj_t mp_mock_enumerate_make(mp_obj_t iterable, mp_int_t start) {
+    mp_obj_enumerate_struct *e = (mp_obj_enumerate_struct *)malloc(sizeof(*e));
+    if (e == NULL) {
+        mp_mock_abort("out of memory");
+    }
+    e->tag = MP_MOCK_TAG_ENUMERATE_OBJ;
+    e->iter = mp_getiter(iterable, NULL);
+    e->index = start;
+    return (mp_obj_t)e;
+}
+
+static mp_obj_t mp_mock_enumerate_iternext(mp_obj_t self_in) {
+    mp_obj_enumerate_struct *self = (mp_obj_enumerate_struct *)self_in;
+    mp_obj_t next = mp_iternext(self->iter);
+    if (next == MP_OBJ_STOP_ITERATION) {
+        return MP_OBJ_STOP_ITERATION;
+    }
+    mp_obj_t items[] = { mp_obj_new_int(self->index++), next };
+    return mp_obj_new_tuple(2, items);
+}
+
+static mp_obj_t mp_mock_zip_make(size_t n_args, const mp_obj_t *args) {
+    mp_obj_zip_struct *z = (mp_obj_zip_struct *)malloc(sizeof(*z));
+    if (z == NULL) {
+        mp_mock_abort("out of memory");
+    }
+    z->tag = MP_MOCK_TAG_ZIP_OBJ;
+    z->n_iters = n_args;
+    z->iters = (mp_obj_t *)malloc(n_args * sizeof(mp_obj_t));
+    if (z->iters == NULL && n_args > 0) {
+        free(z);
+        mp_mock_abort("out of memory");
+    }
+    for (size_t i = 0; i < n_args; i++) {
+        z->iters[i] = mp_getiter(args[i], NULL);
+    }
+    return (mp_obj_t)z;
+}
+
+static mp_obj_t mp_mock_zip_iternext(mp_obj_t self_in) {
+    mp_obj_zip_struct *self = (mp_obj_zip_struct *)self_in;
+    mp_obj_t *items = (mp_obj_t *)malloc(self->n_iters * sizeof(mp_obj_t));
+    if (items == NULL && self->n_iters > 0) {
+        mp_mock_abort("out of memory");
+    }
+    for (size_t i = 0; i < self->n_iters; i++) {
+        mp_obj_t next = mp_iternext(self->iters[i]);
+        if (next == MP_OBJ_STOP_ITERATION) {
+            free(items);
+            return MP_OBJ_STOP_ITERATION;
+        }
+        items[i] = next;
+    }
+    mp_obj_t result = mp_obj_new_tuple(self->n_iters, items);
+    free(items);
+    return result;
+}
+
+static mp_obj_t mp_mock_sorted(mp_obj_t iterable) {
+    mp_obj_list_struct *in_list = mp_mock_list_from_obj(iterable);
+    mp_obj_t result = mp_obj_new_list(in_list->len, in_list->items);
+    mp_obj_list_struct *out_list = mp_mock_list_from_obj(result);
+    for (size_t i = 0; i < out_list->len; i++) {
+        for (size_t j = i + 1; j < out_list->len; j++) {
+            if (mp_obj_get_int(out_list->items[i]) > mp_obj_get_int(out_list->items[j])) {
+                mp_obj_t tmp = out_list->items[i];
+                out_list->items[i] = out_list->items[j];
+                out_list->items[j] = tmp;
+            }
+        }
+    }
+    return result;
+}
+
+static mp_obj_t mp_mock_list_from_iter(mp_obj_t iterable) {
+    mp_obj_t result = mp_obj_new_list(0, NULL);
+
+    mp_obj_enumerate_struct *as_enum = (mp_obj_enumerate_struct *)iterable;
+    if (as_enum->tag == MP_MOCK_TAG_ENUMERATE_OBJ) {
+        mp_obj_t item;
+        while ((item = mp_mock_enumerate_iternext(iterable)) != MP_OBJ_STOP_ITERATION) {
+            mp_obj_list_append(result, item);
+        }
+        return result;
+    }
+
+    mp_obj_zip_struct *as_zip = (mp_obj_zip_struct *)iterable;
+    if (as_zip->tag == MP_MOCK_TAG_ZIP_OBJ) {
+        mp_obj_t item;
+        while ((item = mp_mock_zip_iternext(iterable)) != MP_OBJ_STOP_ITERATION) {
+            mp_obj_list_append(result, item);
+        }
+        return result;
+    }
+
+    mp_obj_t iter = mp_getiter(iterable, NULL);
+    mp_obj_t item;
+    while ((item = mp_iternext(iter)) != MP_OBJ_STOP_ITERATION) {
+        mp_obj_list_append(result, item);
+    }
+    return result;
+}
+
+static inline mp_obj_t mp_call_function_0(mp_obj_t fun) {
+    mp_builtin_obj_t *builtin = (mp_builtin_obj_t *)fun;
+    if (builtin->tag == MP_MOCK_TYPE_TAG_ZIP) {
+        return mp_mock_zip_make(0, NULL);
+    }
+    mp_mock_abort("mp_call_function_0: unknown builtin");
+    return mp_const_none;
+}
+
 static inline mp_obj_t mp_call_function_1(mp_obj_t fun, mp_obj_t arg) {
     mp_builtin_obj_t *builtin = (mp_builtin_obj_t *)fun;
     if (builtin->tag == MP_MOCK_BUILTIN_TAG_MIN) {
@@ -767,6 +902,19 @@ static inline mp_obj_t mp_call_function_1(mp_obj_t fun, mp_obj_t arg) {
         mp_obj_t args[1] = { arg };
         return mp_mock_builtin_sum(1, args);
     }
+    if (builtin->tag == MP_MOCK_BUILTIN_TAG_SORTED) {
+        return mp_mock_sorted(arg);
+    }
+    if (builtin->tag == MP_MOCK_TYPE_TAG_ENUMERATE) {
+        return mp_mock_enumerate_make(arg, 0);
+    }
+    if (builtin->tag == MP_MOCK_TYPE_TAG_ZIP) {
+        mp_obj_t args[] = { arg };
+        return mp_mock_zip_make(1, args);
+    }
+    if (builtin->tag == MP_MOCK_TYPE_TAG_LIST) {
+        return mp_mock_list_from_iter(arg);
+    }
     mp_mock_abort("mp_call_function_1: unknown builtin");
     return mp_const_none;
 }
@@ -776,6 +924,13 @@ static inline mp_obj_t mp_call_function_2(mp_obj_t fun, mp_obj_t arg1, mp_obj_t 
     if (builtin->tag == MP_MOCK_BUILTIN_TAG_SUM) {
         mp_obj_t args[2] = { arg1, arg2 };
         return mp_mock_builtin_sum(2, args);
+    }
+    if (builtin->tag == MP_MOCK_TYPE_TAG_ENUMERATE) {
+        return mp_mock_enumerate_make(arg1, mp_obj_get_int(arg2));
+    }
+    if (builtin->tag == MP_MOCK_TYPE_TAG_ZIP) {
+        mp_obj_t args[] = { arg1, arg2 };
+        return mp_mock_zip_make(2, args);
     }
     mp_mock_abort("mp_call_function_2: not implemented in mock");
     return mp_const_none;
@@ -792,6 +947,9 @@ static inline mp_obj_t mp_call_function_n_kw(mp_obj_t fun, size_t n_args, size_t
     }
     if (builtin->tag == MP_MOCK_BUILTIN_TAG_SUM) {
         return mp_mock_builtin_sum(n_args, args);
+    }
+    if (builtin->tag == MP_MOCK_TYPE_TAG_ZIP) {
+        return mp_mock_zip_make(n_args, args);
     }
     mp_mock_abort("mp_call_function_n_kw: unknown builtin");
     return mp_const_none;

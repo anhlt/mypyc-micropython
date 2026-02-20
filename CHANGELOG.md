@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`enumerate()` builtin**: Iterate with index over sequences (e.g., `for i, val in enumerate(lst)`)
+  - `enumerate(iterable)` - start from 0
+  - `enumerate(iterable, start)` - start from custom index
+  - Uses `mp_type_enumerate` via `mp_call_function_1/2`
+- **`zip()` builtin**: Iterate over multiple sequences in parallel (e.g., `for x, y in zip(a, b)`)
+  - `zip(a)` - single iterable
+  - `zip(a, b)` - two iterables
+  - `zip(a, b, c, ...)` - multiple iterables via `mp_call_function_n_kw`
+  - Uses `mp_type_zip`
+- **`sorted()` builtin**: Return new sorted list from iterable
+  - `sorted(iterable)` - returns sorted list
+  - Uses `mp_builtin_sorted_obj` via `mp_call_function_1`
+- `examples/itertools_builtins.py` - demonstrating enumerate/zip/sorted patterns
+- 7 unit tests for enumerate/zip/sorted compilation
+- 6 C runtime tests for builtin behavior
+- 8 device tests for itertools_builtins module
+- Mock runtime support for enumerate/zip/sorted in test framework
 - **List methods**: `extend()`, `insert()`, `reverse()`, `sort()` via dynamic method dispatch
 - `list(iterable)` constructor for creating lists from iterables
 - **Mypy local type inference**: Use mypy's inferred types for local variables instead of expression-based inference
