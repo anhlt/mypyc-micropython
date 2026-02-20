@@ -796,6 +796,9 @@ class IRBuilder:
             "min",
             "max",
             "sum",
+            "enumerate",
+            "zip",
+            "sorted",
         }
         if func_name in builtins:
             is_list_len_opt = False
@@ -969,6 +972,7 @@ class IRBuilder:
         is_rtuple = False
         rtuple_index = None
         is_list_opt = False
+        result_ir_type = IRType.OBJ
 
         if isinstance(expr.value, ast.Name):
             var_name = expr.value.id
@@ -979,6 +983,9 @@ class IRBuilder:
                     if 0 <= idx < rtuple.arity:
                         is_rtuple = True
                         rtuple_index = idx
+                        result_ir_type = IRType.from_c_type_str(
+                            rtuple.element_types[idx].to_c_type_str()
+                        )
             if var_name in self._list_vars:
                 is_list_opt = True
                 self._uses_list_opt = True
@@ -986,7 +993,7 @@ class IRBuilder:
         if isinstance(expr.slice, ast.Slice):
             slice_ir = self._build_slice(expr.slice, locals_)
             return SubscriptIR(
-                ir_type=IRType.OBJ,
+                ir_type=result_ir_type,
                 value=value,
                 slice_=slice_ir,
                 is_rtuple=is_rtuple,
@@ -998,7 +1005,7 @@ class IRBuilder:
 
         slice_val, slice_prelude = self._build_expr(expr.slice, locals_)
         return SubscriptIR(
-            ir_type=IRType.OBJ,
+            ir_type=result_ir_type,
             value=value,
             slice_=slice_val,
             is_rtuple=is_rtuple,
@@ -2087,6 +2094,9 @@ class IRBuilder:
             "min",
             "max",
             "sum",
+            "enumerate",
+            "zip",
+            "sorted",
         }
         if func_name in builtins:
             if func_name in ("abs", "int", "len", "sum"):

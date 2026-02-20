@@ -66,9 +66,9 @@ A 7-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 Phase 1: Core Completion        ██████████████░  ~90% done
   for loops ✅ │ lists ✅ │ dicts ✅ │ tuples ✅ │ sets ✅ │ strings ✅ │ builtins (partial)
 
-Phase 2: Functions & Arguments  ████████████░░░  ~80% done
+Phase 2: Functions & Arguments  █████████████░░  ~85% done
   default args ✅ │ *args ✅ │ **kwargs ✅ │ bool ✅ │ min/max ✅ │ sum ✅
-  enumerate │ zip │ sorted │ keyword-only args │ positional-only args
+  enumerate ✅ │ zip ✅ │ sorted ✅ │ keyword-only args │ positional-only args
 
 Phase 3: Classes                ███████████████  ~95% done
   class def ✅ │ __init__ ✅ │ methods ✅ │ @dataclass ✅ │ inheritance ✅
@@ -82,9 +82,9 @@ Phase 5: Advanced Features      ░░░░░░░░░░░░░░░  T
   closures │ generators │ list comprehensions │ map/filter
 
 Phase 6: Integration & Polish   █████████████░░  ~85% done
-  ESP32 modules ✅ (16 modules on ESP32-C6) │ RTuple optimization ✅ (57x speedup)
+  ESP32 modules ✅ (17 modules on ESP32-C6) │ RTuple optimization ✅ (57x speedup)
   list access optimization ✅ │ benchmarks ✅ (22 tests, 11.8x avg) │ Full IR pipeline ✅
-  480 tests ✅ │ type checking ✅ (strict by default) │ error messages │ docs
+  504 tests ✅ │ type checking ✅ (strict by default) │ error messages │ docs
 
 Phase 7: Type-Based Optimizations  ░░░░░░░░░░░░░░░  TODO (new!)
   native int arithmetic │ typed local variables │ typed list access
@@ -409,9 +409,9 @@ Tasks:
 | `bool(obj)` | ✅ Implemented |
 | `min()` / `max()` | ✅ Implemented |
 | `sum(iterable)` | ✅ Implemented |
-| `enumerate(iterable, start=0)` | ❌ TODO |
-| `zip(*iterables)` | ❌ TODO |
-| `sorted(iterable, key=None, reverse=False)` | ❌ TODO |
+| `enumerate(iterable, start=0)` | ✅ Implemented |
+| `zip(*iterables)` | ✅ Implemented |
+| `sorted(iterable, key=None, reverse=False)` | ✅ Implemented (basic, no key/reverse) |
 | `reversed(sequence)` | ❌ TODO |
 
 ---

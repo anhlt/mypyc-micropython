@@ -671,6 +671,19 @@ Explain every C concept before using it.
 
 ## Pre-PR Device Testing (REQUIRED)
 
+> **CRITICAL: Unit tests passing is NOT sufficient. Real device testing is MANDATORY.**
+>
+> This is a MicroPython compiler. The generated C code runs on microcontrollers, NOT on your
+> development machine. Unit tests only verify C code generation - they DO NOT verify that
+> the code actually works on real hardware. Many bugs only appear on device:
+> - Memory alignment issues
+> - Missing MicroPython runtime symbols
+> - Integer overflow on 32-bit systems
+> - Stack size limitations
+> - Hardware-specific API differences
+>
+> **NEVER skip device testing. NEVER assume "tests pass" means "it works".**
+
 **Before creating any PR that adds or modifies compiler features, ALWAYS run device tests on real hardware.**
 
 ### When Device Testing is Required
@@ -679,6 +692,7 @@ Explain every C concept before using it.
 - Modifying code generation (emitters, IR builder)
 - Adding new example modules
 - Fixing bugs in compiled output
+- ANY change to `ir.py`, `ir_builder.py`, `function_emitter.py`, `class_emitter.py`, `module_emitter.py`, or `container_emitter.py`
 
 ### Device Testing Workflow
 
@@ -701,6 +715,14 @@ make run-device-tests PORT=/dev/cu.usbmodem2101
 # 6. Run benchmarks (optional but recommended)
 make benchmark PORT=/dev/cu.usbmodem2101
 ```
+
+### Why Device Testing Cannot Be Skipped
+
+1. **C compiler differences**: gcc on your machine vs xtensa/riscv cross-compiler for ESP32
+2. **Runtime environment**: Full libc vs MicroPython's minimal runtime
+3. **Memory model**: 64-bit development machine vs 32-bit microcontroller
+4. **API availability**: Some MicroPython APIs behave differently on device
+5. **Real-world validation**: The entire point of this project is running on devices
 
 ### If No Device Available
 

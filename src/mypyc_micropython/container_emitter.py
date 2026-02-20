@@ -29,6 +29,7 @@ from .ir import (
     SelfAttrIR,
     SetItemIR,
     SetNewIR,
+    SubscriptIR,
     TempIR,
     TupleNewIR,
     UnaryOpIR,
@@ -396,6 +397,12 @@ class ContainerEmitter:
                 f"(({value.class_c_name}_obj_t *)MP_OBJ_TO_PTR({value.c_param_name}))"
                 f"->{value.attr_name}"
             )
+        elif isinstance(value, SubscriptIR):
+            val_c = self._value_to_c(value.value)
+            if value.is_rtuple and value.rtuple_index is not None:
+                return f"{val_c}.f{value.rtuple_index}"
+            slice_c = self._value_to_c(value.slice_)
+            return f"mp_obj_subscr({val_c}, {self._box_expr(slice_c, value.slice_.ir_type)}, MP_OBJ_SENTINEL)"
         return "/* unknown value */"
 
     def _const_to_c(self, const: ConstIR) -> str:

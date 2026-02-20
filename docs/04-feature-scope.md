@@ -115,10 +115,10 @@ This document defines what Python features mypyc-micropython will support, parti
 | `print()` | ✅ Implemented | With space separator |
 | `min()`/`max()` | ✅ Implemented | 2+ args, inline optimization for 2-3 int args |
 | `sum()` | ✅ Implemented | With optional start, inline optimization for `list[int]` |
-| `enumerate()` | 📋 Planned | Phase 2 |
-| `zip()` | 📋 Planned | Phase 2 |
+| `enumerate()` | ✅ Implemented | Via `mp_type_enumerate` |
+| `zip()` | ✅ Implemented | Via `mp_type_zip` |
 | `map()`/`filter()` | 📋 Planned | Phase 5 |
-| `sorted()` | 📋 Planned | Phase 2 |
+| `sorted()` | ✅ Implemented | Via `mp_builtin_sorted_obj` |
 | `isinstance()` | 📋 Planned | Phase 3 |
 | `type()` | 📋 Planned | Phase 3 |
 | `hasattr()`/`getattr()`/`setattr()` | 📋 Planned | Phase 3 |
@@ -598,11 +598,11 @@ if (n := len(data)) > 10:
 | Phase | Features |
 |-------|----------|
 | **1 (Core)** | `for` loops ✅, `list` ✅, `tuple` ✅, `dict` ✅, `set` ✅, `range()` ✅, `len()` ✅, `print()` ✅ |
-| **2 (Functions)** | Default args ✅, `*args` ✅, `**kwargs` ✅, `bool()` ✅, `min()`/`max()` ✅, `sum()` ✅, `enumerate`, `zip`, `sorted` |
+| **2 (Functions)** | Default args ✅, `*args` ✅, `**kwargs` ✅, `bool()` ✅, `min()`/`max()` ✅, `sum()` ✅, `enumerate()` ✅, `zip()` ✅, `sorted()` ✅ |
 | **3 (Classes)** | Basic classes ✅, methods ✅, @dataclass ✅, single inheritance ✅, properties, @staticmethod |
 | **4 (Exceptions)** | `try`/`except`/`finally`, `raise`, custom exceptions |
 | **5 (Advanced)** | Simple closures, simple generators, `map()`/`filter()` |
-| **6 (Polish)** | Full IR pipeline ✅, RTuple optimization ✅ (47x speedup), list access optimization ✅, 414 tests ✅ |
+| **6 (Polish)** | Full IR pipeline ✅, RTuple optimization ✅ (47x speedup), list access optimization ✅, 504 tests ✅ |
 
 ## See Also
 

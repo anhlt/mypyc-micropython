@@ -666,6 +666,46 @@ class BaseEmitter:
                     f"mp_obj_get_int(mp_call_function_2(MP_OBJ_FROM_PTR(&mp_builtin_sum_obj), {boxed_iter}, {boxed_start}))",
                     "mp_int_t",
                 )
+        elif func == "enumerate":
+            boxed_args = [self._box_value(a[0], a[1]) for a in args]
+            if len(boxed_args) == 1:
+                return (
+                    f"mp_call_function_1(MP_OBJ_FROM_PTR(&mp_type_enumerate), {boxed_args[0]})",
+                    "mp_obj_t",
+                )
+            elif len(boxed_args) == 2:
+                return (
+                    f"mp_call_function_2(MP_OBJ_FROM_PTR(&mp_type_enumerate), {boxed_args[0]}, {boxed_args[1]})",
+                    "mp_obj_t",
+                )
+        elif func == "zip":
+            boxed_args = [self._box_value(a[0], a[1]) for a in args]
+            if len(boxed_args) == 0:
+                return "mp_call_function_0(MP_OBJ_FROM_PTR(&mp_type_zip))", "mp_obj_t"
+            elif len(boxed_args) == 1:
+                return (
+                    f"mp_call_function_1(MP_OBJ_FROM_PTR(&mp_type_zip), {boxed_args[0]})",
+                    "mp_obj_t",
+                )
+            elif len(boxed_args) == 2:
+                return (
+                    f"mp_call_function_2(MP_OBJ_FROM_PTR(&mp_type_zip), {boxed_args[0]}, {boxed_args[1]})",
+                    "mp_obj_t",
+                )
+            else:
+                args_str = ", ".join(boxed_args)
+                return (
+                    f"mp_call_function_n_kw(MP_OBJ_FROM_PTR(&mp_type_zip), {len(boxed_args)}, 0, (const mp_obj_t[]){{{args_str}}})",
+                    "mp_obj_t",
+                )
+        elif func == "sorted":
+            self._mark_uses_builtins()
+            if len(args) >= 1:
+                boxed = self._box_value(args[0][0], args[0][1])
+                return (
+                    f"mp_call_function_1(MP_OBJ_FROM_PTR(&mp_builtin_sorted_obj), {boxed})",
+                    "mp_obj_t",
+                )
 
         return "/* unsupported builtin */", "mp_obj_t"
 
@@ -1045,6 +1085,8 @@ class FunctionEmitter(BaseEmitter):
                 items.append(f"mp_obj_get_float({temp}->items[{i}])")
             elif el_type == CType.BOOL:
                 items.append(f"mp_obj_is_true({temp}->items[{i}])")
+            elif el_type == CType.MP_OBJ_T:
+                items.append(f"{temp}->items[{i}]")
             else:
                 items.append(f"mp_obj_get_int({temp}->items[{i}])")
         lines.append(f"    {c_type} {target} = {{ {', '.join(items)} }};")
