@@ -417,6 +417,7 @@ class FuncIR:
     uses_print: bool = False
     uses_list_opt: bool = False
     uses_builtins: bool = False  # min, max, sum builtins require py/builtin.h
+    uses_checked_div: bool = False  # floor divide/modulo inside try blocks
     used_rtuples: set[RTuple] = field(default_factory=set)
     rtuple_types: dict[str, RTuple] = field(default_factory=dict)
     list_vars: dict[str, str | None] = field(default_factory=dict)
@@ -984,6 +985,83 @@ class SelfAugAssignIR(StmtIR):
     attr_path: str
     op: str
     value: ValueIR
+    prelude: list[InstrIR] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Exception Handling IR
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ExceptHandlerIR:
+    """Represents a single except handler: except ExceptionType as name:
+
+    Example:
+        except ValueError as e:
+            handle_error(e)
+
+    Generated C uses mp_obj_is_subclass_fast() for type matching.
+    """
+
+    exc_type: str | None  # Exception type name (None for bare 'except:')
+    exc_var: str | None  # Variable name for 'as name' (None if not bound)
+    c_exc_var: str | None  # Sanitized C variable name
+    body: list[StmtIR] = field(default_factory=list)
+
+
+@dataclass
+class TryIR(StmtIR):
+    """Try/except/else/finally statement.
+
+    Example:
+        try:
+            risky_operation()
+        except ValueError as e:
+            handle_value_error(e)
+        except TypeError:
+            handle_type_error()
+        else:
+            no_exception_occurred()
+        finally:
+            cleanup()
+
+    Generated C uses nlr_push/nlr_pop pattern:
+        nlr_buf_t nlr;
+        if (nlr_push(&nlr) == 0) {
+            // try body
+            nlr_pop();
+            // else block
+        } else {
+            mp_obj_t exc = MP_OBJ_FROM_PTR(nlr.ret_val);
+            if (mp_obj_is_subclass_fast(...)) { ... }
+        }
+        // finally block
+    """
+
+    body: list[StmtIR]
+    handlers: list[ExceptHandlerIR] = field(default_factory=list)
+    orelse: list[StmtIR] = field(default_factory=list)  # else block
+    finalbody: list[StmtIR] = field(default_factory=list)  # finally block
+
+
+@dataclass
+class RaiseIR(StmtIR):
+    """Raise statement: raise [exception].
+
+    Example:
+        raise ValueError("invalid input")
+        raise  # re-raise current exception
+
+    Generated C:
+        mp_raise_msg(&mp_type_ValueError, MP_ERROR_TEXT("invalid input"));
+        // or for bare raise:
+        nlr_jump(nlr.ret_val);
+    """
+
+    exc_type: str | None = None  # Exception type (None for bare raise)
+    exc_msg: ValueIR | None = None  # Message argument (if any)
+    is_reraise: bool = False  # True for bare 'raise' (re-raise current)
     prelude: list[InstrIR] = field(default_factory=list)
 
 

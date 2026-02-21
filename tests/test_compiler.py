@@ -3718,3 +3718,161 @@ def main(n: int) -> int:
         result = compile_source(source, "test", type_check=False)
         assert "test_helper" in result
         assert "test_main" in result
+
+
+class TestExceptionHandling:
+    """Tests for exception handling (try/except/finally/raise)."""
+
+    def test_try_except_basic(self):
+        source = """
+def safe_divide(a: int, b: int) -> int:
+    try:
+        return a // b
+    except ZeroDivisionError:
+        return 0
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "nlr_buf_t" in result
+        assert "nlr_push" in result
+        assert "nlr_pop" in result
+        assert "mp_obj_is_subclass_fast" in result
+        assert "mp_type_ZeroDivisionError" in result
+
+    def test_try_except_with_binding(self):
+        source = """
+def get_error(a: int, b: int) -> int:
+    try:
+        return a // b
+    except ZeroDivisionError as e:
+        return -1
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "nlr_buf_t" in result
+        assert "mp_obj_t e = " in result
+
+    def test_try_except_bare(self):
+        source = """
+def catch_all(a: int, b: int) -> int:
+    try:
+        return a // b
+    except:
+        return -1
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "nlr_buf_t" in result
+        assert "nlr_push" in result
+        assert "mp_obj_is_subclass_fast" not in result
+
+    def test_try_except_multiple_handlers(self):
+        source = """
+def multi_catch(a: int, b: int) -> int:
+    try:
+        return a // b
+    except ZeroDivisionError:
+        return -1
+    except ValueError:
+        return -2
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_type_ZeroDivisionError" in result
+        assert "mp_type_ValueError" in result
+        assert "else if" in result
+
+    def test_try_finally(self):
+        source = """
+def with_cleanup(value: int) -> int:
+    result: int = 0
+    try:
+        result = value * 2
+    finally:
+        result = result + 1
+    return result
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "nlr_buf_t" in result
+        assert "bool " in result
+        assert "nlr_jump" in result
+
+    def test_try_except_finally(self):
+        source = """
+def full_try(a: int, b: int) -> int:
+    result: int = 0
+    try:
+        result = a // b
+    except ZeroDivisionError:
+        result = -1
+    finally:
+        result = result + 100
+    return result
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "nlr_buf_t" in result
+        assert "mp_type_ZeroDivisionError" in result
+        assert "bool " in result
+
+    def test_try_else(self):
+        source = """
+def with_else(a: int, b: int) -> int:
+    result: int = 0
+    try:
+        result = a // b
+    except ZeroDivisionError:
+        result = -1
+    else:
+        result = result * 2
+    return result
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "nlr_pop" in result
+        assert "result = (result * 2)" in result
+
+    def test_raise_basic(self):
+        source = """
+def validate(n: int) -> int:
+    if n < 0:
+        raise ValueError
+    return n
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_raise_msg(&mp_type_ValueError, NULL)" in result
+
+    def test_raise_with_message(self):
+        source = """
+def validate(n: int) -> int:
+    if n < 0:
+        raise ValueError("must be positive")
+    return n
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert 'mp_raise_msg(&mp_type_ValueError, MP_ERROR_TEXT("must be positive"))' in result
+
+    def test_raise_different_exceptions(self):
+        source = """
+def check_type(n: int) -> int:
+    if n < 0:
+        raise ValueError
+    if n == 0:
+        raise TypeError
+    if n > 100:
+        raise RuntimeError
+    return n
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_type_ValueError" in result
+        assert "mp_type_TypeError" in result
+        assert "mp_type_RuntimeError" in result
+
+    def test_nested_try(self):
+        source = """
+def nested_try(a: int, b: int) -> int:
+    try:
+        try:
+            return a // b
+        except ZeroDivisionError:
+            return -1
+    except:
+        return -2
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert result.count("nlr_buf_t") == 2
+        assert result.count("nlr_push") == 2

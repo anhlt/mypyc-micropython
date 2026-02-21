@@ -56,11 +56,15 @@ def test(name: str, code: str, expected: str | Callable[[str], bool]) -> None:
     global total_tests, passed_tests
     total_tests += 1
 
+    sys.stdout.write(f"  {name}... ")
+    sys.stdout.flush()
+
     success, output = run_on_device(code)
 
     if not success:
         failed_tests.append((name, f"Execution failed: {output}"))
-        print(f"  FAIL {name}: {output}")
+        print(f"FAIL")
+        print(f"    Error: {output[:80]}")
         return
 
     if callable(expected):
@@ -70,10 +74,12 @@ def test(name: str, code: str, expected: str | Callable[[str], bool]) -> None:
 
     if passed:
         passed_tests += 1
-        print(f"  PASS {name}")
+        print("PASS")
     else:
         failed_tests.append((name, f"Expected: {expected}, Got: {output}"))
-        print(f"  FAIL {name}: Expected '{expected}', got '{output}'")
+        print(f"FAIL")
+        print(f"    Expected: {expected}")
+        print(f"    Got: {output[:80]}")
 
 
 def test_factorial():
@@ -1433,6 +1439,113 @@ def test_itertools_builtins():
     )
 
 
+def test_exception_handling():
+    """Test exception_handling module (try/except/finally/raise)."""
+    print("\n[TEST] Testing exception_handling module...")
+
+    test(
+        "safe_divide(10, 2)",
+        "import exception_handling as eh; print(eh.safe_divide(10, 2))",
+        "5",
+    )
+
+    test(
+        "safe_divide(10, 0)",
+        "import exception_handling as eh; print(eh.safe_divide(10, 0))",
+        "0",
+    )
+
+    test(
+        "validate_positive(5)",
+        "import exception_handling as eh; print(eh.validate_positive(5))",
+        "5",
+    )
+
+    test(
+        "validate_range(50, 0, 100)",
+        "import exception_handling as eh; print(eh.validate_range(50, 0, 100))",
+        "50",
+    )
+
+    test(
+        "with_cleanup(5)",
+        "import exception_handling as eh; print(eh.with_cleanup(5))",
+        "11",
+    )
+
+    test(
+        "multi_catch(10, 2)",
+        "import exception_handling as eh; print(eh.multi_catch(10, 2))",
+        "5",
+    )
+
+    test(
+        "multi_catch(10, 0)",
+        "import exception_handling as eh; print(eh.multi_catch(10, 0))",
+        "-1",
+    )
+
+    test(
+        "multi_catch(-5, 2)",
+        "import exception_handling as eh; print(eh.multi_catch(-5, 2))",
+        "-2",
+    )
+
+    test(
+        "try_else(3, 4)",
+        "import exception_handling as eh; print(eh.try_else(3, 4))",
+        "14",
+    )
+
+    test(
+        "full_try(10, 2)",
+        "import exception_handling as eh; print(eh.full_try(10, 2))",
+        "105",
+    )
+
+    test(
+        "full_try(10, 0)",
+        "import exception_handling as eh; print(eh.full_try(10, 0))",
+        "99",
+    )
+
+    test(
+        "catch_all(50)",
+        "import exception_handling as eh; print(eh.catch_all(50))",
+        "50",
+    )
+
+    test(
+        "catch_all(-5)",
+        "import exception_handling as eh; print(eh.catch_all(-5))",
+        "-1",
+    )
+
+    test(
+        "catch_all(150)",
+        "import exception_handling as eh; print(eh.catch_all(150))",
+        "-1",
+    )
+
+    test(
+        "nested_try(10, 2, 1)",
+        "import exception_handling as eh; print(eh.nested_try(10, 2, 1))",
+        "5",
+    )
+
+    test(
+        "nested_try(10, 0, 2)",
+        "import exception_handling as eh; print(eh.nested_try(10, 0, 2))",
+        "0",
+    )
+
+    test(
+        "nested_try(10, 0, 0)",
+        "import exception_handling as eh; print(eh.nested_try(10, 0, 0))",
+        "-1",
+    )
+
+
 def run_all_tests():
     """Run all test suites."""
     global total_tests, passed_tests, failed_tests
@@ -1467,6 +1580,7 @@ def run_all_tests():
     test_container_attrs()
     test_string_operations()
     test_itertools_builtins()
+    test_exception_handling()
 
     # Print summary
     print("\n" + "=" * 70)

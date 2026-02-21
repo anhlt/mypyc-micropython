@@ -30,6 +30,7 @@ from .ir import (
     ConstIR,
     ContinueIR,
     DictNewIR,
+    ExceptHandlerIR,
     ExprStmtIR,
     FieldIR,
     ForIterIR,
@@ -47,6 +48,7 @@ from .ir import (
     ParamAttrIR,
     PassIR,
     PrintIR,
+    RaiseIR,
     ReturnIR,
     SelfAttrIR,
     SelfAugAssignIR,
@@ -58,6 +60,7 @@ from .ir import (
     SubscriptAssignIR,
     SubscriptIR,
     TempIR,
+    TryIR,
     TupleNewIR,
     TupleUnpackIR,
     UnaryOpIR,
@@ -193,6 +196,10 @@ class IRPrinter:
             return self._print_for_range(stmt)
         elif isinstance(stmt, ForIterIR):
             return self._print_for_iter(stmt)
+        elif isinstance(stmt, TryIR):
+            return self._print_try(stmt)
+        elif isinstance(stmt, RaiseIR):
+            return self._print_raise(stmt)
         elif isinstance(stmt, AssignIR):
             return self._print_assign(stmt)
         elif isinstance(stmt, AnnAssignIR):
@@ -294,6 +301,58 @@ class IRPrinter:
             lines.append(self.print_stmt(s))
         self._indent_dec()
         return "\n".join(lines)
+
+    def _print_try(self, stmt: TryIR) -> str:
+        lines = []
+        lines.append(f"{self._i()}try:")
+        self._indent_inc()
+        for s in stmt.body:
+            lines.append(self.print_stmt(s))
+        self._indent_dec()
+
+        for handler in stmt.handlers:
+            lines.append(self._print_except_handler(handler))
+
+        if stmt.orelse:
+            lines.append(f"{self._i()}else:")
+            self._indent_inc()
+            for s in stmt.orelse:
+                lines.append(self.print_stmt(s))
+            self._indent_dec()
+
+        if stmt.finalbody:
+            lines.append(f"{self._i()}finally:")
+            self._indent_inc()
+            for s in stmt.finalbody:
+                lines.append(self.print_stmt(s))
+            self._indent_dec()
+
+        return "\n".join(lines)
+
+    def _print_except_handler(self, handler: ExceptHandlerIR) -> str:
+        lines = []
+        if handler.exc_type is None:
+            lines.append(f"{self._i()}except:")
+        elif handler.exc_var:
+            lines.append(f"{self._i()}except {handler.exc_type} as {handler.exc_var}:")
+        else:
+            lines.append(f"{self._i()}except {handler.exc_type}:")
+
+        self._indent_inc()
+        for s in handler.body:
+            lines.append(self.print_stmt(s))
+        self._indent_dec()
+        return "\n".join(lines)
+
+    def _print_raise(self, stmt: RaiseIR) -> str:
+        if stmt.is_reraise:
+            return f"{self._i()}raise"
+        elif stmt.exc_msg:
+            return f"{self._i()}raise {stmt.exc_type}({self.print_value(stmt.exc_msg)})"
+        elif stmt.exc_type:
+            return f"{self._i()}raise {stmt.exc_type}"
+        else:
+            return f"{self._i()}raise"
 
     def _print_assign(self, stmt: AssignIR) -> str:
         lines = []

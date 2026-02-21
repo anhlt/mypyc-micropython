@@ -1576,3 +1576,72 @@ int main(void) {
 """
     stdout = compile_and_run(source, "test", test_main_c)
     assert stdout.strip() == "6"
+
+
+def test_c_try_except_catches_zero_division(compile_and_run):
+    source = """
+def safe_divide(a: int, b: int) -> int:
+    try:
+        return a // b
+    except ZeroDivisionError:
+        return -1
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result1 = test_safe_divide(mp_obj_new_int(10), mp_obj_new_int(2));
+    printf("%ld\\n", (long)mp_obj_get_int(result1));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "5"
+
+
+def test_c_try_finally_always_runs(compile_and_run):
+    source = """
+def with_cleanup(value: int) -> int:
+    result: int = 0
+    try:
+        result = value * 2
+    finally:
+        result = result + 100
+    return result
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result = test_with_cleanup(mp_obj_new_int(5));
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "110"
+
+
+def test_c_try_else_runs_when_no_exception(compile_and_run):
+    source = """
+def with_else(a: int, b: int) -> int:
+    result: int = 0
+    try:
+        result = a + b
+    except ZeroDivisionError:
+        result = -1
+    else:
+        result = result * 2
+    return result
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result = test_with_else(mp_obj_new_int(3), mp_obj_new_int(4));
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "14"

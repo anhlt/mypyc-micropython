@@ -70,6 +70,7 @@ class ModuleEmitter:
         uses_print: bool = False,
         uses_list_opt: bool = False,
         uses_builtins: bool = False,
+        uses_checked_div: bool = False,
         used_rtuples: set[RTuple] | None = None,
     ):
         self.module_ir = module_ir
@@ -77,6 +78,7 @@ class ModuleEmitter:
         self._uses_print = uses_print
         self._uses_list_opt = uses_list_opt
         self._uses_builtins = uses_builtins
+        self._uses_checked_div = uses_checked_div
         self._used_rtuples = used_rtuples or set()
 
     def emit(
@@ -103,6 +105,10 @@ class ModuleEmitter:
 
         lines.extend(self._emit_float_helper())
         lines.append("")
+
+        if self._uses_checked_div:
+            lines.extend(self._emit_checked_div_helper())
+            lines.append("")
 
         if self._uses_list_opt:
             lines.extend(self._emit_list_helpers())
@@ -146,6 +152,36 @@ class ModuleEmitter:
             "    return (mp_float_t)mp_obj_get_int(obj);",
             "}",
             "#endif",
+        ]
+
+    def _emit_checked_div_helper(self) -> list[str]:
+        return [
+            "static inline mp_int_t mp_int_floor_divide_checked(mp_int_t num, mp_int_t denom) {",
+            "    if (denom == 0) {",
+            '        mp_raise_msg(&mp_type_ZeroDivisionError, MP_ERROR_TEXT("division by zero"));',
+            "    }",
+            "    if (num >= 0) {",
+            "        if (denom < 0) {",
+            "            num += -denom - 1;",
+            "        }",
+            "    } else {",
+            "        if (denom >= 0) {",
+            "            num += -denom + 1;",
+            "        }",
+            "    }",
+            "    return num / denom;",
+            "}",
+            "",
+            "static inline mp_int_t mp_int_modulo_checked(mp_int_t dividend, mp_int_t divisor) {",
+            "    if (divisor == 0) {",
+            '        mp_raise_msg(&mp_type_ZeroDivisionError, MP_ERROR_TEXT("division by zero"));',
+            "    }",
+            "    dividend %= divisor;",
+            "    if ((dividend < 0 && divisor > 0) || (dividend > 0 && divisor < 0)) {",
+            "        dividend += divisor;",
+            "    }",
+            "    return dividend;",
+            "}",
         ]
 
     def _emit_list_helpers(self) -> list[str]:
