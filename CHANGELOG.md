@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Exception handling support**: `try`/`except`/`else`/`finally`/`raise` statements
+  - `try`/`except ExceptionType:` - catch specific exception types
+  - `try`/`except ExceptionType as e:` - catch with variable binding
+  - `try`/`except:` - bare except (catch-all)
+  - Multiple `except` handlers in order
+  - `try`/`finally` - cleanup pattern (always runs)
+  - `try`/`except`/`finally` - combined handlers
+  - `try`/`except`/`else` - else block runs when no exception
+  - `raise ExceptionType` - raise exception without message
+  - `raise ExceptionType("message")` - raise with message
+  - Nested `try` blocks
+  - Uses MicroPython's `nlr_push`/`nlr_pop` for exception handling
+  - Supports: `ZeroDivisionError`, `ValueError`, `TypeError`, `RuntimeError`, `KeyError`, `IndexError`, `AttributeError`, `OverflowError`, `MemoryError`, `OSError`, `NotImplementedError`, `AssertionError`
+- New IR nodes: `TryIR`, `RaiseIR`, `ExceptHandlerIR`
+- IR visualizer support for `TryIR` and `RaiseIR` nodes
+- `examples/exception_handling.py` - demonstrating exception handling patterns (10 functions)
+- `mp_int_floor_divide_checked()` helper for proper `ZeroDivisionError` in native division
+- `mp_int_modulo_checked()` helper for proper `ZeroDivisionError` in native modulo
+- 11 unit tests for exception handling compilation
+- 4 C runtime tests for exception handling behavior
+- 18 device tests for exception_handling module
+- Mock runtime support for `nlr_push`/`nlr_pop` and exception types
+- Blog post: `16-exception-handling.md` documenting the implementation
 - **`enumerate()` builtin**: Iterate with index over sequences (e.g., `for i, val in enumerate(lst)`)
   - `enumerate(iterable)` - start from 0
   - `enumerate(iterable, start)` - start from custom index

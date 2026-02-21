@@ -34,6 +34,7 @@ from .ir import (
     DataclassInfo,
     DefaultArg,
     DictNewIR,
+    ExceptHandlerIR,
     ExprStmtIR,
     FieldIR,
     ForIterIR,
@@ -50,6 +51,7 @@ from .ir import (
     ParamIR,
     PassIR,
     PrintIR,
+    RaiseIR,
     ReturnIR,
     RTuple,
     SelfAttrIR,
@@ -61,6 +63,7 @@ from .ir import (
     SubscriptAssignIR,
     SubscriptIR,
     TempIR,
+    TryIR,
     TupleNewIR,
     TupleUnpackIR,
     UnaryOpIR,
@@ -284,6 +287,10 @@ class IRBuilder:
             return self._build_while(stmt, locals_)
         elif isinstance(stmt, ast.For):
             return self._build_for(stmt, locals_)
+        elif isinstance(stmt, ast.Try):
+            return self._build_try(stmt, locals_)
+        elif isinstance(stmt, ast.Raise):
+            return self._build_raise(stmt, locals_)
         elif isinstance(stmt, ast.Assign):
             return self._build_assign(stmt, locals_)
         elif isinstance(stmt, ast.AnnAssign):
@@ -330,6 +337,67 @@ class IRBuilder:
         body = [s for s in body if s is not None]
         self._loop_depth -= 1
         return WhileIR(test=test, body=body, test_prelude=test_prelude)
+
+    def _build_try(self, stmt: ast.Try, locals_: list[str]) -> TryIR:
+        body = [self._build_statement(s, locals_) for s in stmt.body]
+        body = [s for s in body if s is not None]
+
+        handlers: list[ExceptHandlerIR] = []
+        for handler in stmt.handlers:
+            exc_type: str | None = None
+            if handler.type is not None:
+                if isinstance(handler.type, ast.Name):
+                    exc_type = handler.type.id
+                elif isinstance(handler.type, ast.Attribute):
+                    exc_type = handler.type.attr
+
+            exc_var = handler.name
+            c_exc_var = sanitize_name(exc_var) if exc_var else None
+
+            if exc_var and exc_var not in locals_:
+                locals_.append(exc_var)
+                self._var_types[exc_var] = "mp_obj_t"
+
+            handler_body = [self._build_statement(s, locals_) for s in handler.body]
+            handler_body = [s for s in handler_body if s is not None]
+
+            handlers.append(
+                ExceptHandlerIR(
+                    exc_type=exc_type,
+                    exc_var=exc_var,
+                    c_exc_var=c_exc_var,
+                    body=handler_body,
+                )
+            )
+
+        orelse = [self._build_statement(s, locals_) for s in stmt.orelse]
+        orelse = [s for s in orelse if s is not None]
+
+        finalbody = [self._build_statement(s, locals_) for s in stmt.finalbody]
+        finalbody = [s for s in finalbody if s is not None]
+
+        return TryIR(body=body, handlers=handlers, orelse=orelse, finalbody=finalbody)
+
+    def _build_raise(self, stmt: ast.Raise, locals_: list[str]) -> RaiseIR:
+        if stmt.exc is None:
+            return RaiseIR(is_reraise=True)
+
+        exc_type: str | None = None
+        exc_msg: ValueIR | None = None
+        prelude: list = []
+
+        if isinstance(stmt.exc, ast.Call):
+            if isinstance(stmt.exc.func, ast.Name):
+                exc_type = stmt.exc.func.id
+            elif isinstance(stmt.exc.func, ast.Attribute):
+                exc_type = stmt.exc.func.attr
+
+            if stmt.exc.args:
+                exc_msg, prelude = self._build_expr(stmt.exc.args[0], locals_)
+        elif isinstance(stmt.exc, ast.Name):
+            exc_type = stmt.exc.id
+
+        return RaiseIR(exc_type=exc_type, exc_msg=exc_msg, prelude=prelude)
 
     def _build_for(self, stmt: ast.For, locals_: list[str]) -> ForRangeIR | ForIterIR:
         if not isinstance(stmt.target, ast.Name):
@@ -648,7 +716,7 @@ class IRBuilder:
             ast.Sub: "-",
             ast.Mult: "*",
             ast.Div: "/",
-            ast.FloorDiv: "/",
+            ast.FloorDiv: "//",  # Keep as // to distinguish from true division
             ast.Mod: "%",
             ast.BitAnd: "&",
             ast.BitOr: "|",
