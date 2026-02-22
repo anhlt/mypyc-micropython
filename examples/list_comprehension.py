@@ -23,7 +23,7 @@ def filter_positive(items: list[int]) -> list[int]:
 
 def sum_squares(n: int) -> int:
     """Sum of squares using list comprehension."""
-    result: list[int] = [x * x for x in range(n)]
+    result: list[int] = [i * i for i in range(n)]
     total: int = 0
     for x in result:
         total += x
