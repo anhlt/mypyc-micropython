@@ -40,6 +40,7 @@ from .ir import (
     IfExprIR,
     IfIR,
     InstrIR,
+    ListCompIR,
     ListNewIR,
     MethodCallIR,
     MethodIR,
@@ -495,6 +496,9 @@ class IRPrinter:
             return (
                 f"{self._i()}{instr.result.name} = {self.print_value(instr.obj)}.{instr.attr_name}"
             )
+        elif isinstance(instr, ListCompIR):
+            filter_str = f" if {self.print_value(instr.filter_condition)}" if instr.filter_condition else ""
+            return f"{self._i()}{instr.result.name} = [{self.print_value(instr.element_expr)} for {instr.loop_var} in {self.print_value(instr.iterable)}{filter_str}]"
         else:
             return f"{self._i()}/* unknown instr: {type(instr).__name__} */"
 
