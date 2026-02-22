@@ -509,16 +509,14 @@ while ((x = mp_iternext(_tmp1_iter)) != MP_OBJ_STOP_ITERATION) {
 ```
 
 ## Complete Compilation Example
-
 Let's trace `filter_positive` through the entire pipeline:
-
 **Python source:**
 ```python
 def filter_positive(items: list[int]) -> list[int]:
     return [x for x in items if x > 0]
 ```
 
-**IR dump:**
+**IR dump** (generated with `mpy-compile --dump-ir text --ir-function filter_positive`):
 ```
 def filter_positive(items: MP_OBJ_T) -> MP_OBJ_T:
   c_name: list_comprehension_filter_positive
@@ -526,17 +524,19 @@ def filter_positive(items: MP_OBJ_T) -> MP_OBJ_T:
   locals: {items: MP_OBJ_T, x: MP_OBJ_T}
   body:
     # prelude:
-      ListCompIR(result=_tmp1, loop_var=x, iterable=items, 
-                 element=x, condition=(x > 0), is_range=False)
+      _tmp1 = [x for x in items if (x > 0)]
     return _tmp1
 ```
 
+Key observations from the IR:
+- **`MP_OBJ_T`** types - Both `items` and loop variable `x` are boxed objects
+- **`max_temp: 1`** - Only one temporary variable needed for the result list
+- **Prelude pattern** - The `ListCompIR` instruction executes before the return value is ready
+- **Compact representation** - The IR shows the comprehension in familiar Python syntax
 **Generated C:**
 ```c
 static mp_obj_t list_comprehension_filter_positive(mp_obj_t items_obj) {
     mp_obj_t items = items_obj;
-
-    mp_obj_t _tmp1 = mp_obj_new_list(0, NULL);
     mp_obj_t x;
     mp_obj_iter_buf_t _tmp1_iter_buf;
     mp_obj_t _tmp1_iter = mp_getiter(items, &_tmp1_iter_buf);
@@ -548,6 +548,54 @@ static mp_obj_t list_comprehension_filter_positive(mp_obj_t items_obj) {
     return _tmp1;
 }
 ```
+
+## More IR Examples
+
+### Range-Based Comprehension
+
+**Python:**
+```python
+def squares(n: int) -> list[int]:
+    return [x * x for x in range(n)]
+```
+
+**IR dump:**
+```
+def squares(n: MP_INT_T) -> MP_OBJ_T:
+  c_name: list_comprehension_squares
+  max_temp: 1
+  locals: {n: MP_INT_T, x: MP_INT_T}
+  body:
+    # prelude:
+      _tmp1 = [(x * x) for x in range(n)]
+    return _tmp1
+```
+
+Notice the difference:
+- **`MP_INT_T`** for `n` and `x` - Native integers for range-based iteration
+- **`range(n)`** in the IR - Signals optimized C for-loop generation
+
+### Comprehension with Filter
+
+**Python:**
+```python
+def evens(n: int) -> list[int]:
+    return [x for x in range(n) if x % 2 == 0]
+```
+
+**IR dump:**
+```
+def evens(n: MP_INT_T) -> MP_OBJ_T:
+  c_name: list_comprehension_evens
+  max_temp: 1
+  locals: {n: MP_INT_T, x: MP_INT_T}
+  body:
+    # prelude:
+      _tmp1 = [x for x in range(n) if ((x % 2) == 0)]
+    return _tmp1
+```
+
+The filter condition `((x % 2) == 0)` is preserved in the IR. Since `x` is `MP_INT_T`, the generated C uses native operators.
 
 ## Testing
 
