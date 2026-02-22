@@ -23,7 +23,6 @@ from .ir import (
     ConstIR,
     ContinueIR,
     CType,
-    ExceptHandlerIR,
     ExprStmtIR,
     ForIterIR,
     ForRangeIR,
@@ -297,7 +296,7 @@ class BaseEmitter:
                 lines.append("    " + line)
         self._nlr_stack.pop()
 
-        lines.append(f"        nlr_pop();")
+        lines.append("        nlr_pop();")
 
         if stmt.orelse:
             for s in stmt.orelse:
@@ -1170,7 +1169,7 @@ class FunctionEmitter(BaseEmitter):
 
         if stmt.value is None:
             if self._nlr_stack:
-                lines.append(f"        nlr_pop();")
+                lines.append("        nlr_pop();")
             lines.append("    return mp_const_none;")
             return lines
 
@@ -1190,7 +1189,7 @@ class FunctionEmitter(BaseEmitter):
                 items = ", ".join(items_parts)
                 lines.append(f"    mp_obj_t _ret_items[] = {{{items}}};")
                 if self._nlr_stack:
-                    lines.append(f"        nlr_pop();")
+                    lines.append("        nlr_pop();")
                 lines.append(f"    return mp_obj_new_tuple({arity}, _ret_items);")
                 return lines
 
@@ -1208,7 +1207,7 @@ class FunctionEmitter(BaseEmitter):
                 )
             else:
                 lines.append(f"        mp_obj_t {ret_tmp} = {expr};")
-            lines.append(f"        nlr_pop();")
+            lines.append("        nlr_pop();")
             lines.append(f"        return {ret_tmp};")
         else:
             if expr_type == "mp_obj_t" or self.func_ir.return_type == CType.MP_OBJ_T:
@@ -1414,7 +1413,7 @@ class MethodEmitter(BaseEmitter):
 
         if stmt.value is None:
             if self._nlr_stack:
-                lines.append(f"        nlr_pop();")
+                lines.append("        nlr_pop();")
             if native:
                 lines.append("    return;")
             else:
@@ -1440,7 +1439,7 @@ class MethodEmitter(BaseEmitter):
                     )
                 else:
                     lines.append(f"        mp_obj_t {ret_tmp} = {expr};")
-            lines.append(f"        nlr_pop();")
+            lines.append("        nlr_pop();")
             lines.append(f"        return {ret_tmp};")
         else:
             if native:
