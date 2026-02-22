@@ -617,6 +617,33 @@ class AttrAccessIR(InstrIR):
     class_c_name: str
     result_type: IRType
 
+@dataclass
+class ListCompIR(InstrIR):
+    """List comprehension: [expr for var in iterable] or [expr for var in iterable if cond].
+
+    This IR node represents the entire comprehension. It gets emitted as:
+    1. Create empty list
+    2. Iterate over iterable
+    3. Optionally check condition
+    4. Evaluate element expression
+    5. Append to list
+    """
+
+    result: TempIR
+    loop_var: str  # Python variable name
+    c_loop_var: str  # C variable name
+    iterable: ValueIR
+    element: ValueIR  # Expression for each element
+    condition: ValueIR | None = None  # Optional filter condition
+    # Preludes for iterable, element, and condition
+    iter_prelude: list[InstrIR] = field(default_factory=list)
+    element_prelude: list[InstrIR] = field(default_factory=list)
+    condition_prelude: list[InstrIR] = field(default_factory=list)
+    # Whether iterable is a range() call (for optimization)
+    is_range: bool = False
+    range_start: ValueIR | None = None
+    range_end: ValueIR | None = None
+    range_step: ValueIR | None = None
 
 # ---------------------------------------------------------------------------
 # Lowered expression: prelude instructions + final value

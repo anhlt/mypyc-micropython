@@ -43,6 +43,7 @@ from .ir import (
     IfExprIR,
     IfIR,
     IRType,
+    ListCompIR,
     ListNewIR,
     MethodCallIR,
     MethodIR,
@@ -677,6 +678,8 @@ class IRBuilder:
             return self._build_subscript(expr, locals_)
         elif isinstance(expr, ast.Attribute):
             return self._build_attribute(expr, locals_)
+        elif isinstance(expr, ast.ListComp):
+            return self._build_list_comp(expr, locals_)
         return ConstIR(ir_type=IRType.OBJ, value=None), []
 
     def _build_constant(self, expr: ast.Constant) -> ConstIR:
@@ -1137,6 +1140,97 @@ class IRBuilder:
                         return result_temp, base_prelude + [attr_access]
 
         return ConstIR(ir_type=IRType.OBJ, value=None), []
+
+    def _build_list_comp(
+        self, expr: ast.ListComp, locals_: list[str]
+    ) -> tuple[ValueIR, list]:
+        """Build IR for list comprehension: [expr for var in iterable] or [expr for var in iterable if cond]."""
+        if not expr.generators:
+            return ConstIR(ir_type=IRType.OBJ, value=[]), []
+
+        # We only support single generator for now
+        gen = expr.generators[0]
+
+        if not isinstance(gen.target, ast.Name):
+            # Only support simple variable targets
+            return ConstIR(ir_type=IRType.OBJ, value=[]), []
+
+        loop_var = gen.target.id
+        c_loop_var = sanitize_name(loop_var)
+
+        # Track the loop variable
+        is_new_var = loop_var not in locals_
+        if is_new_var:
+            locals_.append(loop_var)
+            self._var_types[loop_var] = "mp_obj_t"
+
+        # Build iterable expression
+        iterable, iter_prelude = self._build_expr(gen.iter, locals_)
+
+        # Check if iterable is range() for optimization
+        is_range = False
+        range_start: ValueIR | None = None
+        range_end: ValueIR | None = None
+        range_step: ValueIR | None = None
+
+        if (
+            isinstance(gen.iter, ast.Call)
+            and isinstance(gen.iter.func, ast.Name)
+            and gen.iter.func.id == "range"
+        ):
+            is_range = True
+            range_args = gen.iter.args
+            if len(range_args) == 1:
+                range_start = ConstIR(ir_type=IRType.INT, value=0)
+                range_end, _ = self._build_expr(range_args[0], locals_)
+            elif len(range_args) == 2:
+                range_start, _ = self._build_expr(range_args[0], locals_)
+                range_end, _ = self._build_expr(range_args[1], locals_)
+            elif len(range_args) == 3:
+                range_start, _ = self._build_expr(range_args[0], locals_)
+                range_end, _ = self._build_expr(range_args[1], locals_)
+                range_step, _ = self._build_expr(range_args[2], locals_)
+            # For range-based comprehensions, loop var is int
+            self._var_types[loop_var] = "mp_int_t"
+
+        # Build element expression
+        element, element_prelude = self._build_expr(expr.elt, locals_)
+
+        # Build condition if present
+        condition: ValueIR | None = None
+        condition_prelude: list = []
+        if gen.ifs:
+            # Combine multiple conditions with AND
+            cond_parts = []
+            for if_expr in gen.ifs:
+                cond, cond_pre = self._build_expr(if_expr, locals_)
+                cond_parts.append(cond)
+                condition_prelude.extend(cond_pre)
+            # For now, just use the first condition (most common case)
+            condition = cond_parts[0] if len(cond_parts) == 1 else cond_parts[0]
+
+        # Create result temp
+        temp_name = self._fresh_temp()
+        result = TempIR(ir_type=IRType.OBJ, name=temp_name)
+
+        # Create ListCompIR instruction
+        list_comp = ListCompIR(
+            result=result,
+            loop_var=loop_var,
+            c_loop_var=c_loop_var,
+            iterable=iterable,
+            element=element,
+            condition=condition,
+            iter_prelude=iter_prelude,
+            element_prelude=element_prelude,
+            condition_prelude=condition_prelude,
+            is_range=is_range,
+            range_start=range_start,
+            range_end=range_end,
+            range_step=range_step,
+        )
+
+        return result, [list_comp]
 
     def _get_class_type_of_attr(self, expr: ast.Attribute) -> str | None:
         """Get the class type name that an attribute access returns."""

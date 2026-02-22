@@ -1442,7 +1442,6 @@ def test_itertools_builtins():
 def test_exception_handling():
     """Test exception_handling module (try/except/finally/raise)."""
     print("\n[TEST] Testing exception_handling module...")
-
     test(
         "safe_divide(10, 2)",
         "import exception_handling as eh; print(eh.safe_divide(10, 2))",
@@ -1546,6 +1545,45 @@ def test_exception_handling():
     )
 
 
+def test_list_comprehension():
+    """Test list_comprehension module with list comprehension syntax."""
+    print("\n[TEST] Testing list_comprehension module...")
+    test(
+        "squares(5)",
+        "import list_comprehension as lc; print(lc.squares(5))",
+        "[0, 1, 4, 9, 16]",
+    )
+
+    test(
+        "evens(10)",
+        "import list_comprehension as lc; print(lc.evens(10))",
+        "[0, 2, 4, 6, 8]",
+    )
+
+    test(
+        "doubled([1, 2, 3])",
+        "import list_comprehension as lc; print(lc.doubled([1, 2, 3]))",
+        "[2, 4, 6]",
+    )
+
+    test(
+        "filter_positive([-1, 2, -3, 4])",
+        "import list_comprehension as lc; print(lc.filter_positive([-1, 2, -3, 4]))",
+        "[2, 4]",
+    )
+
+    test(
+        "sum_squares(5)",
+        "import list_comprehension as lc; print(lc.sum_squares(5))",
+        "30",
+    )
+
+    test(
+        "count_evens(10)",
+        "import list_comprehension as lc; print(lc.count_evens(10))",
+        "5",
+    )
+
 def run_all_tests():
     """Run all test suites."""
     global total_tests, passed_tests, failed_tests
@@ -1581,6 +1619,7 @@ def run_all_tests():
     test_string_operations()
     test_itertools_builtins()
     test_exception_handling()
+    test_list_comprehension()
 
     # Print summary
     print("\n" + "=" * 70)

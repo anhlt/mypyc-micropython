@@ -1645,3 +1645,77 @@ int main(void) {
 """
     stdout = compile_and_run(source, "test", test_main_c)
     assert stdout.strip() == "14"
+
+
+def test_c_list_comp_squares(compile_and_run):
+    """Test basic list comprehension with range."""
+    source = '''
+def squares(n: int) -> list[int]:
+    return [i * i for i in range(n)]
+'''
+    test_main_c = '''
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result = test_squares(mp_obj_new_int(5));
+    mp_int_t n = mp_obj_get_int(mp_obj_len(result));
+    printf("%ld\\n", (long)n);
+    for (mp_int_t i = 0; i < n; i++) {
+        mp_obj_t item = mp_obj_subscr(result, mp_obj_new_int(i), MP_OBJ_SENTINEL);
+        printf("%ld\\n", (long)mp_obj_get_int(item));
+    }
+    return 0;
+}
+'''
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["5", "0", "1", "4", "9", "16"]
+
+
+def test_c_list_comp_with_condition(compile_and_run):
+    """Test list comprehension with filter condition."""
+    source = '''
+def evens(n: int) -> list[int]:
+    return [i for i in range(n) if i % 2 == 0]
+'''
+    test_main_c = '''
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result = test_evens(mp_obj_new_int(10));
+    mp_int_t n = mp_obj_get_int(mp_obj_len(result));
+    printf("%ld\\n", (long)n);
+    for (mp_int_t i = 0; i < n; i++) {
+        mp_obj_t item = mp_obj_subscr(result, mp_obj_new_int(i), MP_OBJ_SENTINEL);
+        printf("%ld\\n", (long)mp_obj_get_int(item));
+    }
+    return 0;
+}
+'''
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["5", "0", "2", "4", "6", "8"]
+
+
+def test_c_list_comp_iterator(compile_and_run):
+    """Test list comprehension iterating over a list."""
+    source = '''
+def double_items(items: list[int]) -> list[int]:
+    return [x * 2 for x in items]
+'''
+    test_main_c = '''
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t items[] = {mp_obj_new_int(1), mp_obj_new_int(2), mp_obj_new_int(3)};
+    mp_obj_t list = mp_obj_new_list(3, items);
+    mp_obj_t result = test_double_items(list);
+    mp_int_t n = mp_obj_get_int(mp_obj_len(result));
+    printf("%ld\\n", (long)n);
+    for (mp_int_t i = 0; i < n; i++) {
+        mp_obj_t item = mp_obj_subscr(result, mp_obj_new_int(i), MP_OBJ_SENTINEL);
+        printf("%ld\\n", (long)mp_obj_get_int(item));
+    }
+    return 0;
+}
+'''
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["3", "2", "4", "6"]

@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Exception handling support**: `try`/`except`/`else`/`finally`/`raise` statements
+ **Exception handling support**: `try`/`except`/`else`/`finally`/`raise` statements
   - `try`/`except ExceptionType:` - catch specific exception types
   - `try`/`except ExceptionType as e:` - catch with variable binding
   - `try`/`except:` - bare except (catch-all)
@@ -21,16 +21,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Nested `try` blocks
   - Uses MicroPython's `nlr_push`/`nlr_pop` for exception handling
   - Supports: `ZeroDivisionError`, `ValueError`, `TypeError`, `RuntimeError`, `KeyError`, `IndexError`, `AttributeError`, `OverflowError`, `MemoryError`, `OSError`, `NotImplementedError`, `AssertionError`
-- New IR nodes: `TryIR`, `RaiseIR`, `ExceptHandlerIR`
-- IR visualizer support for `TryIR` and `RaiseIR` nodes
-- `examples/exception_handling.py` - demonstrating exception handling patterns (10 functions)
-- `mp_int_floor_divide_checked()` helper for proper `ZeroDivisionError` in native division
-- `mp_int_modulo_checked()` helper for proper `ZeroDivisionError` in native modulo
-- 11 unit tests for exception handling compilation
-- 4 C runtime tests for exception handling behavior
-- 18 device tests for exception_handling module
-- Mock runtime support for `nlr_push`/`nlr_pop` and exception types
-- Blog post: `16-exception-handling.md` documenting the implementation
+ New IR nodes: `TryIR`, `RaiseIR`, `ExceptHandlerIR`
+ IR visualizer support for `TryIR` and `RaiseIR` nodes
+ `examples/exception_handling.py` - demonstrating exception handling patterns (10 functions)
+ `mp_int_floor_divide_checked()` helper for proper `ZeroDivisionError` in native division
+ `mp_int_modulo_checked()` helper for proper `ZeroDivisionError` in native modulo
+ 11 unit tests for exception handling compilation
+ 4 C runtime tests for exception handling behavior
+ 18 device tests for exception_handling module
+ Mock runtime support for `nlr_push`/`nlr_pop` and exception types
+ Blog post: `16-exception-handling.md` documenting the implementation
+ **List comprehensions**: `[expr for x in iterable]` and `[expr for x in iterable if cond]` syntax support
+  - Range-based: `[x * x for x in range(n)]`, `[x for x in range(n) if x % 2 == 0]`
+  - Iterator-based: `[x * 2 for x in items]`, `[x for x in items if x > 0]`
+  - `ListCompIR` node for IR representation
+  - Inline C code generation with proper temp variable allocation
+ `examples/list_comprehension.py` - demonstrating list comprehension patterns (6 functions)
+ 6 unit tests for list comprehension compilation
+ 3 C runtime tests for list comprehension behavior
+ 6 device tests for list_comprehension module
 - **`enumerate()` builtin**: Iterate with index over sequences (e.g., `for i, val in enumerate(lst)`)
   - `enumerate(iterable)` - start from 0
   - `enumerate(iterable, start)` - start from custom index
@@ -124,11 +133,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - C runtime tests for set operations (5 tests)
 
 ### Changed
+- `make compile-all` now cleans old usermod directories and deps/ build folder before compiling
 - Move generated usermod files from `examples/` to `modules/`
 - Update roadmap: mark inherited method propagation as done (Phase 3 ~95%)
 - Update roadmap: mark `print()` as done in builtins table
 
 ### Fixed
+- `BinOpIR` with `mp_obj_t` operands now correctly uses `mp_binary_op()` instead of native C operators
+- `CompareIR` with `mp_obj_t` operands now correctly uses `mp_binary_op()` + `mp_obj_is_true()` for proper comparison
 - Void functions now properly return `mp_const_none` instead of falling through
 - Tuple unpacking with typed variables now correctly unboxes values (e.g., `a: int; b: int; a, b = t`)
 - `set.add()` and other void-returning methods no longer generate invalid C code
