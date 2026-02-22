@@ -80,7 +80,9 @@ Pipeline: `Python source → ast.parse() → IRBuilder → FuncIR/ClassIR → Em
 | **Statement** | `ReturnIR`, `IfIR`, `WhileIR`, `ForRangeIR`, `ForIterIR`, `AssignIR`, ... | Control flow, assignments |
 | **Expression** | `BinOpIR`, `CallIR`, `SubscriptIR`, `CompareIR`, ... | Computations |
 | **Value** | `ConstIR`, `NameIR`, `TempIR` | Leaf values |
-| **Instruction** | `ListNewIR`, `DictNewIR`, `MethodCallIR`, ... | Prelude instructions (side effects) |
+| **Instruction** | `ListNewIR`, `DictNewIR`, `MethodCallIR`, `ListCompIR`, ... | Prelude instructions (side effects) |
+
+**IMPORTANT**: When adding new IR classes to `ir.py`, you MUST also update `ir_visualizer.py` to handle the new type. Otherwise, IR dumps will show `/* unknown instr: YourNewIR */` instead of useful debugging output.
 
 ### The Prelude Pattern
 
