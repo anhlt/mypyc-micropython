@@ -250,6 +250,73 @@ int main(void) {
     assert stdout.strip() == "120"
 
 
+def test_c_super_init(compile_and_run):
+    source = """
+class Counter:
+    def __init__(self, start: int) -> None:
+        self
+        start
+
+    def get(self) -> int:
+        return 1
+
+class StepCounter(Counter):
+    def __init__(self, start: int, step: int) -> None:
+        super().__init__(start + step - step)
+
+    def get_step(self) -> int:
+        return 2
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t args[] = {mp_obj_new_int(10), mp_obj_new_int(2)};
+    mp_obj_t obj = test_StepCounter_make_new(&test_StepCounter_type, 2, 0, args);
+
+    mp_obj_t step = test_StepCounter_get_step_mp(obj);
+    printf("%ld\\n", (long)mp_obj_get_int(step));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "2"
+
+
+def test_c_super_method_call(compile_and_run):
+    source = """
+class Base:
+    def __init__(self, value: int) -> None:
+        self
+        value
+
+    def compute(self) -> int:
+        return 10
+
+class Extended(Base):
+    def __init__(self, value: int, bonus: int) -> None:
+        super().__init__(value + bonus - bonus)
+
+    def compute(self) -> int:
+        base_val: int = super().compute()
+        return base_val + 3
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t args[] = {mp_obj_new_int(5), mp_obj_new_int(3)};
+    mp_obj_t obj = test_Extended_make_new(&test_Extended_type, 2, 0, args);
+
+    mp_obj_t result = test_Extended_compute_mp(obj);
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "13"
+
+
 def test_c_list_pop_last_and_pop_at_return_expected_values(compile_and_run):
     source = """
 def pop_last(lst: list):

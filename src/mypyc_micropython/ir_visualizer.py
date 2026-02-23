@@ -60,6 +60,7 @@ from .ir import (
     StmtIR,
     SubscriptAssignIR,
     SubscriptIR,
+    SuperCallIR,
     TempIR,
     TryIR,
     TupleNewIR,
@@ -540,6 +541,9 @@ class IRPrinter:
         elif isinstance(value, SelfMethodCallIR):
             args = ", ".join(self.print_value(a) for a in value.args)
             return f"self.{value.method_name}({args})"
+        elif isinstance(value, SuperCallIR):
+            args = ", ".join(self.print_value(a) for a in value.args)
+            return f"super().{value.method_name}({args})"
         elif isinstance(value, ClassInstantiationIR):
             args = ", ".join(self.print_value(a) for a in value.args)
             return f"{value.class_name}({args})"

@@ -45,6 +45,7 @@ from .ir import (
     StmtIR,
     SubscriptAssignIR,
     SubscriptIR,
+    SuperCallIR,
     TempIR,
     TryIR,
     TupleNewIR,
@@ -553,6 +554,8 @@ class BaseEmitter:
             return self._emit_param_attr(value)
         elif isinstance(value, SelfMethodCallIR):
             return self._emit_self_method_call(value, native)
+        elif isinstance(value, SuperCallIR):
+            return self._emit_super_call(value, native)
         return "/* unsupported */", "mp_obj_t"
 
     def _emit_const(self, const: ConstIR) -> tuple[str, str]:
@@ -963,6 +966,37 @@ class BaseEmitter:
                 args.append(arg_expr)
         args_str = ", ".join(args)
         return f"{call.c_method_name}_native({args_str})", call.return_type.to_c_type_str()
+
+    def _emit_super_call(self, call: SuperCallIR, native: bool = False) -> tuple[str, str]:
+        if call.is_init:
+            boxed_args = []
+            for arg in call.args:
+                arg_expr, arg_type = self._emit_expr(arg, native)
+                boxed_args.append(self._box_value(arg_expr, arg_type))
+
+            total_args = len(boxed_args) + 1
+            if total_args <= 3:
+                args = ["MP_OBJ_FROM_PTR(self)"] + boxed_args
+                args_str = ", ".join(args)
+                return f"({call.parent_method_c_name}_mp({args_str}), mp_const_none)", "mp_obj_t"
+
+            args_str = ", ".join(["MP_OBJ_FROM_PTR(self)"] + boxed_args)
+            return (
+                f"({call.parent_method_c_name}_mp({total_args}, (const mp_obj_t[]){{{args_str}}}), mp_const_none)",
+                "mp_obj_t",
+            )
+
+        native_args = []
+        for arg in call.args:
+            arg_expr, arg_type = self._emit_expr(arg, native)
+            native_args.append(
+                self._unbox_if_needed(arg_expr, arg_type, arg.ir_type.to_c_type_str())
+            )
+        args_str = ", ".join(native_args)
+        return (
+            f"{call.parent_method_c_name}_native(({call.parent_c_name}_obj_t *)self{', ' if args_str else ''}{args_str})",
+            call.return_type.to_c_type_str(),
+        )
 
     def _box_value(self, expr: str, expr_type: str) -> str:
         if expr_type == "mp_int_t":

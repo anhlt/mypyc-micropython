@@ -57,8 +57,7 @@ A 7-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 - List/dict comprehensions
 - Keyword-only arguments, positional-only arguments
 - `@property`, `@staticmethod`, `@classmethod`
-- `super()` calls
-- Custom exception classes
+ Custom exception classes
 - Closures and generators
 
 ## Phase Overview
@@ -74,7 +73,7 @@ Phase 2: Functions & Arguments  █████████████░░  ~
 Phase 3: Classes                ███████████████  ~95% done
   class def ✅ │ __init__ ✅ │ methods ✅ │ @dataclass ✅ │ inheritance ✅
   vtable dispatch ✅ │ __eq__/__len__/__getitem__/__setitem__ ✅ │ inherited methods ✅
-  @property │ @staticmethod │ @classmethod │ super()
+  @property │ @staticmethod │ @classmethod
 
 Phase 4: Exception Handling     ███████████████  ~95% done
   try/except ✅ │ try/finally ✅ │ try/except/else ✅ │ raise ✅ │ custom exceptions
@@ -492,7 +491,7 @@ Tasks:
 - [x] Multi-level inheritance (grandchild classes)
 - [x] Inherited method propagation — non-overridden parent methods now visible
   in child class `locals_dict`
-- [ ] `super()` calls in methods (e.g., `super().__init__(...)`)
+- [x] `super()` calls in methods (e.g., `super().__init__(...)`)
 
 ### 3.6 Special Methods (Partial)
 
@@ -509,7 +508,6 @@ Tasks:
 
 | Issue | Description | Workaround |
 |-------|-------------|------------|
-| No `super()` calls | Cannot call parent's method implementation from child | Inline parent logic in child methods |
 | No `@property` | No getter/setter decorator support | Use explicit getter/setter methods |
 | No `@staticmethod`/`@classmethod` | Only instance methods supported | Use module-level functions instead |
 

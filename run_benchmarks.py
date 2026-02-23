@@ -960,6 +960,43 @@ print(time.ticks_diff(end, start))
 """,
     ),
     (
+        "super_init x1000",
+        """
+import super_calls
+import time
+start = time.ticks_us()
+for _ in range(1000):
+    super_calls.Dog("Rex", 5)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+class Animal:
+    def __init__(self, name, sound):
+        self.name = name
+        self.sound = sound
+    def speak(self):
+        return self.sound
+    def describe(self):
+        return self.name
+class Dog(Animal):
+    def __init__(self, name, tricks):
+        super().__init__(name, "Woof")
+        self.tricks = tricks
+    def describe(self):
+        base = super().describe()
+        return base
+    def get_tricks(self):
+        return self.tricks
+start = time.ticks_us()
+for _ in range(1000):
+    Dog("Rex", 5)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
         "listcomp evens(1000) x100",
         """
 import list_comprehension as lc
@@ -982,75 +1019,724 @@ print(time.ticks_diff(end, start))
 """,
     ),
     (
-        "listcomp doubled(500) x100",
+        "super_method x10000",
         """
-import list_comprehension as lc
+import super_calls
 import time
-items = list(range(500))
+dog = super_calls.Dog("Rex", 5)
 start = time.ticks_us()
-for _ in range(100):
-    lc.doubled(items)
+for _ in range(10000):
+    dog.describe()
 end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
         """
 import time
-def doubled(items):
-    return [x * 2 for x in items]
-items = list(range(500))
+class Animal:
+    def __init__(self, name, sound):
+        self.name = name
+        self.sound = sound
+    def speak(self):
+        return self.sound
+    def describe(self):
+        return self.name
+class Dog(Animal):
+    def __init__(self, name, tricks):
+        super().__init__(name, "Woof")
+        self.tricks = tricks
+    def describe(self):
+        base = super().describe()
+        return base
+    def get_tricks(self):
+        return self.tricks
+start = time.ticks_us()
+for _ in range(10000):
+    dog = Dog("Rex", 5)
+    dog.describe()
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+    # List comprehension benchmarks
+    (
+        "listcomp squares(500) x100",
+        """
+import list_comprehension as lc
+import time
 start = time.ticks_us()
 for _ in range(100):
-    doubled(items)
+    lc.squares(500)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def squares(n):
+    return [x * x for x in range(n)]
+start = time.ticks_us()
+for _ in range(100):
+    squares(500)
 end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
     (
-        "listcomp filter x100",
+        "super_init x1000",
         """
-import list_comprehension as lc
+import super_calls
 import time
-items = list(range(-250, 250))
 start = time.ticks_us()
-for _ in range(100):
-    lc.filter_positive(items)
+for _ in range(1000):
+    super_calls.Dog("Rex", 5)
 end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
         """
 import time
-def filter_positive(items):
-    return [x for x in items if x > 0]
-items = list(range(-250, 250))
+class Animal:
+    def __init__(self, name, sound):
+        self.name = name
+        self.sound = sound
+    def speak(self):
+        return self.sound
+    def describe(self):
+        return self.name
+class Dog(Animal):
+    def __init__(self, name, tricks):
+        super().__init__(name, "Woof")
+        self.tricks = tricks
+    def describe(self):
+        base = super().describe()
+        return base
+    def get_tricks(self):
+        return self.tricks
 start = time.ticks_us()
-for _ in range(100):
-    filter_positive(items)
+for _ in range(1000):
+    Dog("Rex", 5)
 end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
     (
-        "listcomp sum_sq(500) x100",
+        "listcomp evens(1000) x100",
         """
 import list_comprehension as lc
 import time
 start = time.ticks_us()
 for _ in range(100):
-    lc.sum_squares(500)
+    lc.evens(1000)
 end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
         """
 import time
-def sum_squares(n):
-    result = [x * x for x in range(n)]
-    total = 0
-    for x in result:
-        total += x
-    return total
+def evens(n):
+    return [x for x in range(n) if x % 2 == 0]
 start = time.ticks_us()
 for _ in range(100):
-    sum_squares(500)
+    evens(1000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "super_method x10000",
+        """
+import super_calls
+import time
+dog = super_calls.Dog("Rex", 5)
+start = time.ticks_us()
+for _ in range(10000):
+    dog.describe()
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+class Animal:
+    def __init__(self, name, sound):
+        self.name = name
+        self.sound = sound
+    def speak(self):
+        return self.sound
+    def describe(self):
+        return self.name
+class Dog(Animal):
+    def __init__(self, name, tricks):
+        super().__init__(name, "Woof")
+        self.tricks = tricks
+    def describe(self):
+        base = super().describe()
+        return base
+    def get_tricks(self):
+        return self.tricks
+start = time.ticks_us()
+for _ in range(10000):
+    dog = Dog("Rex", 5)
+    dog.describe()
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+    # List comprehension benchmarks
+    (
+        "listcomp squares(500) x100",
+        """
+import list_comprehension as lc
+import time
+start = time.ticks_us()
+for _ in range(100):
+    lc.squares(500)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def squares(n):
+    return [x * x for x in range(n)]
+start = time.ticks_us()
+for _ in range(100):
+    squares(500)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "super_init x1000",
+        """
+import super_calls
+import time
+start = time.ticks_us()
+for _ in range(1000):
+    super_calls.Dog("Rex", 5)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+class Animal:
+    def __init__(self, name, sound):
+        self.name = name
+        self.sound = sound
+    def speak(self):
+        return self.sound
+    def describe(self):
+        return self.name
+class Dog(Animal):
+    def __init__(self, name, tricks):
+        super().__init__(name, "Woof")
+        self.tricks = tricks
+    def describe(self):
+        base = super().describe()
+        return base
+    def get_tricks(self):
+        return self.tricks
+start = time.ticks_us()
+for _ in range(1000):
+    Dog("Rex", 5)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "listcomp evens(1000) x100",
+        """
+import list_comprehension as lc
+import time
+start = time.ticks_us()
+for _ in range(100):
+    lc.evens(1000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def evens(n):
+    return [x for x in range(n) if x % 2 == 0]
+start = time.ticks_us()
+for _ in range(100):
+    evens(1000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "super_method x10000",
+        """
+import super_calls
+import time
+dog = super_calls.Dog("Rex", 5)
+start = time.ticks_us()
+for _ in range(10000):
+    dog.describe()
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+class Animal:
+    def __init__(self, name, sound):
+        self.name = name
+        self.sound = sound
+    def speak(self):
+        return self.sound
+    def describe(self):
+        return self.name
+class Dog(Animal):
+    def __init__(self, name, tricks):
+        super().__init__(name, "Woof")
+        self.tricks = tricks
+    def describe(self):
+        base = super().describe()
+        return base
+    def get_tricks(self):
+        return self.tricks
+start = time.ticks_us()
+for _ in range(10000):
+    dog = Dog("Rex", 5)
+    dog.describe()
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+    # List comprehension benchmarks
+    (
+        "listcomp squares(500) x100",
+        """
+import list_comprehension as lc
+import time
+start = time.ticks_us()
+for _ in range(100):
+    lc.squares(500)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def squares(n):
+    return [x * x for x in range(n)]
+start = time.ticks_us()
+for _ in range(100):
+    squares(500)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "super_init x1000",
+        """
+import super_calls
+import time
+start = time.ticks_us()
+for _ in range(1000):
+    super_calls.Dog("Rex", 5)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+class Animal:
+    def __init__(self, name, sound):
+        self.name = name
+        self.sound = sound
+    def speak(self):
+        return self.sound
+    def describe(self):
+        return self.name
+class Dog(Animal):
+    def __init__(self, name, tricks):
+        super().__init__(name, "Woof")
+        self.tricks = tricks
+    def describe(self):
+        base = super().describe()
+        return base
+    def get_tricks(self):
+        return self.tricks
+start = time.ticks_us()
+for _ in range(1000):
+    Dog("Rex", 5)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "listcomp evens(1000) x100",
+        """
+import list_comprehension as lc
+import time
+start = time.ticks_us()
+for _ in range(100):
+    lc.evens(1000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def evens(n):
+    return [x for x in range(n) if x % 2 == 0]
+start = time.ticks_us()
+for _ in range(100):
+    evens(1000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "super_method x10000",
+        """
+import super_calls
+import time
+dog = super_calls.Dog("Rex", 5)
+start = time.ticks_us()
+for _ in range(10000):
+    dog.describe()
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+class Animal:
+    def __init__(self, name, sound):
+        self.name = name
+        self.sound = sound
+    def speak(self):
+        return self.sound
+    def describe(self):
+        return self.name
+class Dog(Animal):
+    def __init__(self, name, tricks):
+        super().__init__(name, "Woof")
+        self.tricks = tricks
+    def describe(self):
+        base = super().describe()
+        return base
+    def get_tricks(self):
+        return self.tricks
+start = time.ticks_us()
+for _ in range(10000):
+    dog = Dog("Rex", 5)
+    dog.describe()
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+    # List comprehension benchmarks
+    (
+        "listcomp squares(500) x100",
+        """
+import list_comprehension as lc
+import time
+start = time.ticks_us()
+for _ in range(100):
+    lc.squares(500)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def squares(n):
+    return [x * x for x in range(n)]
+start = time.ticks_us()
+for _ in range(100):
+    squares(500)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "super_init x1000",
+        """
+import super_calls
+import time
+start = time.ticks_us()
+for _ in range(1000):
+    super_calls.Dog("Rex", 5)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+class Animal:
+    def __init__(self, name, sound):
+        self.name = name
+        self.sound = sound
+    def speak(self):
+        return self.sound
+    def describe(self):
+        return self.name
+class Dog(Animal):
+    def __init__(self, name, tricks):
+        super().__init__(name, "Woof")
+        self.tricks = tricks
+    def describe(self):
+        base = super().describe()
+        return base
+    def get_tricks(self):
+        return self.tricks
+start = time.ticks_us()
+for _ in range(1000):
+    Dog("Rex", 5)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "listcomp evens(1000) x100",
+        """
+import list_comprehension as lc
+import time
+start = time.ticks_us()
+for _ in range(100):
+    lc.evens(1000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def evens(n):
+    return [x for x in range(n) if x % 2 == 0]
+start = time.ticks_us()
+for _ in range(100):
+    evens(1000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "super_method x10000",
+        """
+import super_calls
+import time
+dog = super_calls.Dog("Rex", 5)
+start = time.ticks_us()
+for _ in range(10000):
+    dog.describe()
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+class Animal:
+    def __init__(self, name, sound):
+        self.name = name
+        self.sound = sound
+    def speak(self):
+        return self.sound
+    def describe(self):
+        return self.name
+class Dog(Animal):
+    def __init__(self, name, tricks):
+        super().__init__(name, "Woof")
+        self.tricks = tricks
+    def describe(self):
+        base = super().describe()
+        return base
+    def get_tricks(self):
+        return self.tricks
+start = time.ticks_us()
+for _ in range(10000):
+    dog = Dog("Rex", 5)
+    dog.describe()
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+    # List comprehension benchmarks
+    (
+        "listcomp squares(500) x100",
+        """
+import list_comprehension as lc
+import time
+start = time.ticks_us()
+for _ in range(100):
+    lc.squares(500)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def squares(n):
+    return [x * x for x in range(n)]
+start = time.ticks_us()
+for _ in range(100):
+    squares(500)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "super_init x1000",
+        """
+import super_calls
+import time
+start = time.ticks_us()
+for _ in range(1000):
+    super_calls.Dog("Rex", 5)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+class Animal:
+    def __init__(self, name, sound):
+        self.name = name
+        self.sound = sound
+    def speak(self):
+        return self.sound
+    def describe(self):
+        return self.name
+class Dog(Animal):
+    def __init__(self, name, tricks):
+        super().__init__(name, "Woof")
+        self.tricks = tricks
+    def describe(self):
+        base = super().describe()
+        return base
+    def get_tricks(self):
+        return self.tricks
+start = time.ticks_us()
+for _ in range(1000):
+    Dog("Rex", 5)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "listcomp evens(1000) x100",
+        """
+import list_comprehension as lc
+import time
+start = time.ticks_us()
+for _ in range(100):
+    lc.evens(1000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def evens(n):
+    return [x for x in range(n) if x % 2 == 0]
+start = time.ticks_us()
+for _ in range(100):
+    evens(1000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "super_method x10000",
+        """
+import super_calls
+import time
+dog = super_calls.Dog("Rex", 5)
+start = time.ticks_us()
+for _ in range(10000):
+    dog.describe()
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+class Animal:
+    def __init__(self, name, sound):
+        self.name = name
+        self.sound = sound
+    def speak(self):
+        return self.sound
+    def describe(self):
+        return self.name
+class Dog(Animal):
+    def __init__(self, name, tricks):
+        super().__init__(name, "Woof")
+        self.tricks = tricks
+    def describe(self):
+        base = super().describe()
+        return base
+    def get_tricks(self):
+        return self.tricks
+start = time.ticks_us()
+for _ in range(10000):
+    dog = Dog("Rex", 5)
+    dog.describe()
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "super_3level x1000",
+        """
+import super_calls
+import time
+start = time.ticks_us()
+for _ in range(1000):
+    sd = super_calls.ShowDog("Bella", 10, 3)
+    sd.describe()
+    sd.get_total_score()
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+class Animal:
+    def __init__(self, name, sound):
+        self.name = name
+        self.sound = sound
+    def speak(self):
+        return self.sound
+    def describe(self):
+        return self.name
+class Dog(Animal):
+    def __init__(self, name, tricks):
+        super().__init__(name, "Woof")
+        self.tricks = tricks
+    def describe(self):
+        base = super().describe()
+        return base
+    def get_tricks(self):
+        return self.tricks
+class ShowDog(Dog):
+    def __init__(self, name, tricks, awards):
+        super().__init__(name, tricks)
+        self.awards = awards
+    def describe(self):
+        base = super().describe()
+        return base
+    def get_total_score(self):
+        return self.tricks + self.awards
+start = time.ticks_us()
+for _ in range(1000):
+    sd = ShowDog("Bella", 10, 3)
+    sd.describe()
+    sd.get_total_score()
 end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,

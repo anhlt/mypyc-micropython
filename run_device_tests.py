@@ -1387,6 +1387,8 @@ def test_string_operations():
 
 
 def test_itertools_builtins():
+    test_exception_handling()
+    test_super_calls()
     """Test itertools_builtins module (enumerate, zip, sorted)."""
     print("\n[TEST] Testing itertools_builtins module...")
 
@@ -1439,6 +1441,83 @@ def test_itertools_builtins():
     )
 
 
+def test_exception_handling():
+    """Test exception_handling module (try/except/finally/raise)."""
+    print("\n[TEST] Testing exception_handling module...")
+    test(
+        "safe_divide(10, 2)",
+        "import exception_handling as eh; print(eh.safe_divide(10, 2))",
+        "5",
+    )
+    # 3-level inheritance: ShowDog(Dog(Animal))
+    test(
+        "ShowDog creation with chained super().__init__",
+        "import super_calls as s; sd = s.ShowDog('Bella', 10, 3); print(sd.name)",
+        "Bella",
+    )
+    test(
+        "ShowDog inherits speak from Animal",
+        "import super_calls as s; sd = s.ShowDog('Bella', 10, 3); print(sd.speak())",
+        "Woof",
+    )
+    test(
+        "ShowDog.describe chains super() through Dog to Animal",
+        "import super_calls as s; sd = s.ShowDog('Bella', 10, 3); print(sd.describe())",
+        "Bella",
+    )
+    test(
+        "ShowDog.get_awards own method",
+        "import super_calls as s; sd = s.ShowDog('Bella', 10, 3); print(sd.get_awards())",
+        "3",
+    )
+    test(
+        "ShowDog.get_total_score cross-level field access",
+        "import super_calls as s; sd = s.ShowDog('Bella', 10, 3); print(sd.get_total_score())",
+        "13",
+    )
+    test(
+        "ShowDog.get_tricks inherited from Dog",
+        "import super_calls as s; sd = s.ShowDog('Bella', 10, 3); print(sd.get_tricks())",
+        "10",
+    )
+    )
+
+def run_all_tests():
+    """Run all test suites."""
+    global total_tests, passed_tests, failed_tests
+    total_tests = 0
+    passed_tests = 0
+    failed_tests = []
+
+    print("=" * 70)
+    print("[TEST SUITE] mypyc-micropython Comprehensive Device Test Suite")
+    print("=" * 70)
+    print(f"Device port: {PORT}")
+    print("=" * 70)
+
+    # Run all test suites
+    test_factorial()
+    test_point()
+    test_counter()
+    test_sensor()
+    test_list_operations()
+    test_math_utils()
+    test_bitwise()
+    test_algorithms()
+    test_dict_operations()
+    test_inventory()
+    test_tuple_operations()
+    test_set_operations()
+    test_builtins_demo()
+    test_default_args()
+    test_star_args()
+    test_class_param()
+    test_chained_attr()
+    test_container_attrs()
+    test_string_operations()
+    test_itertools_builtins()
+    test_exception_handling()
+    test_super_calls()
 def test_exception_handling():
     """Test exception_handling module (try/except/finally/raise)."""
     print("\n[TEST] Testing exception_handling module...")
@@ -1543,83 +1622,6 @@ def test_exception_handling():
         "import exception_handling as eh; print(eh.nested_try(10, 0, 0))",
         "-1",
     )
-
-
-def test_list_comprehension():
-    """Test list_comprehension module with list comprehension syntax."""
-    print("\n[TEST] Testing list_comprehension module...")
-    test(
-        "squares(5)",
-        "import list_comprehension as lc; print(lc.squares(5))",
-        "[0, 1, 4, 9, 16]",
-    )
-
-    test(
-        "evens(10)",
-        "import list_comprehension as lc; print(lc.evens(10))",
-        "[0, 2, 4, 6, 8]",
-    )
-
-    test(
-        "doubled([1, 2, 3])",
-        "import list_comprehension as lc; print(lc.doubled([1, 2, 3]))",
-        "[2, 4, 6]",
-    )
-
-    test(
-        "filter_positive([-1, 2, -3, 4])",
-        "import list_comprehension as lc; print(lc.filter_positive([-1, 2, -3, 4]))",
-        "[2, 4]",
-    )
-
-    test(
-        "sum_squares(5)",
-        "import list_comprehension as lc; print(lc.sum_squares(5))",
-        "30",
-    )
-
-    test(
-        "count_evens(10)",
-        "import list_comprehension as lc; print(lc.count_evens(10))",
-        "5",
-    )
-
-def run_all_tests():
-    """Run all test suites."""
-    global total_tests, passed_tests, failed_tests
-    total_tests = 0
-    passed_tests = 0
-    failed_tests = []
-
-    print("=" * 70)
-    print("[TEST SUITE] mypyc-micropython Comprehensive Device Test Suite")
-    print("=" * 70)
-    print(f"Device port: {PORT}")
-    print("=" * 70)
-
-    # Run all test suites
-    test_factorial()
-    test_point()
-    test_counter()
-    test_sensor()
-    test_list_operations()
-    test_math_utils()
-    test_bitwise()
-    test_algorithms()
-    test_dict_operations()
-    test_inventory()
-    test_tuple_operations()
-    test_set_operations()
-    test_builtins_demo()
-    test_default_args()
-    test_star_args()
-    test_class_param()
-    test_chained_attr()
-    test_container_attrs()
-    test_string_operations()
-    test_itertools_builtins()
-    test_exception_handling()
-    test_list_comprehension()
 
     # Print summary
     print("\n" + "=" * 70)

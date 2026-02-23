@@ -2111,6 +2111,91 @@ class Dog(Animal):
         assert "MP_QSTR_Dog" in result
 
 
+class TestSuperCalls:
+    def test_super_init_basic(self):
+        source = """
+class Animal:
+    name: str
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+class Dog(Animal):
+    breed: str
+
+    def __init__(self, name: str, breed: str) -> None:
+        super().__init__(name)
+        self.breed = breed
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "test_Animal___init___mp" in result
+        assert "MP_OBJ_FROM_PTR(self)" in result
+
+    def test_super_virtual_method(self):
+        source = """
+class Base:
+    value: int
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def compute(self) -> int:
+        return self.value * 2
+
+class Child(Base):
+    extra: int
+
+    def __init__(self, value: int, extra: int) -> None:
+        super().__init__(value)
+        self.extra = extra
+
+    def compute(self) -> int:
+        base_result: int = super().compute()
+        return base_result + self.extra
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "test_Base_compute_native" in result
+        assert "(test_Base_obj_t *)" in result
+
+    def test_super_init_multiple_args(self):
+        source = """
+class Parent:
+    x: int
+    y: int
+
+    def __init__(self, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+
+class Child(Parent):
+    z: int
+
+    def __init__(self, x: int, y: int, z: int) -> None:
+        super().__init__(x, y)
+        self.z = z
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "test_Parent___init___mp" in result
+
+    def test_super_init_with_void_return(self):
+        source = """
+class Base:
+    val: int
+
+    def __init__(self, val: int) -> None:
+        self.val = val
+
+class Sub(Base):
+    extra: int
+
+    def __init__(self, val: int, extra: int) -> None:
+        super().__init__(val)
+        self.extra = extra
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "test_Base___init___mp" in result
+
+
 class TestMethodDispatch:
     """Tests for method body translation and field access."""
 
