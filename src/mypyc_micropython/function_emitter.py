@@ -36,6 +36,7 @@ from .ir import (
     ParamAttrIR,
     PassIR,
     PrintIR,
+    RaiseIR,
     ReturnIR,
     SelfAttrIR,
     SelfAugAssignIR,
@@ -45,6 +46,7 @@ from .ir import (
     SubscriptAssignIR,
     SubscriptIR,
     TempIR,
+    TryIR,
     TupleNewIR,
     TupleUnpackIR,
     UnaryOpIR,
@@ -107,6 +109,7 @@ class BaseEmitter:
         self._container_emitter = ContainerEmitter()
         self._temp_counter = max_temp
         self._loop_depth = 0
+        self._nlr_stack: list[str] = []  # Stack of nlr_buf variable names for try blocks
 
     def _fresh_temp(self) -> str:
         self._temp_counter += 1
@@ -115,6 +118,10 @@ class BaseEmitter:
     def _mark_uses_builtins(self) -> None:
         if hasattr(self, "func_ir"):
             self.func_ir.uses_builtins = True
+
+    def _mark_uses_checked_div(self) -> None:
+        if hasattr(self, "func_ir"):
+            self.func_ir.uses_checked_div = True
 
     def _should_unbox_self_method_args(self, call: SelfMethodCallIR, native: bool) -> bool:
         del native
@@ -131,6 +138,10 @@ class BaseEmitter:
             return self._emit_for_range(stmt, native)
         elif isinstance(stmt, ForIterIR):
             return self._emit_for_iter(stmt, native)
+        elif isinstance(stmt, TryIR):
+            return self._emit_try(stmt, native)
+        elif isinstance(stmt, RaiseIR):
+            return self._emit_raise(stmt, native)
         elif isinstance(stmt, AssignIR):
             return self._emit_assign(stmt, native)
         elif isinstance(stmt, AnnAssignIR):
@@ -265,6 +276,150 @@ class BaseEmitter:
 
         lines.append("    }")
         return lines
+
+    def _emit_try(self, stmt: TryIR, native: bool = False) -> list[str]:
+        lines: list[str] = []
+        nlr_buf = self._fresh_temp()
+        has_finally = len(stmt.finalbody) > 0
+        has_handlers = len(stmt.handlers) > 0
+
+        if has_finally:
+            exc_caught_var = self._fresh_temp()
+            lines.append(f"    bool {exc_caught_var} = false;")
+
+        lines.append(f"    nlr_buf_t {nlr_buf};")
+        lines.append(f"    if (nlr_push(&{nlr_buf}) == 0) {{")
+
+        self._nlr_stack.append(nlr_buf)
+        for s in stmt.body:
+            for line in self._emit_statement(s, native):
+                lines.append("    " + line)
+        self._nlr_stack.pop()
+
+        lines.append("        nlr_pop();")
+
+        if stmt.orelse:
+            for s in stmt.orelse:
+                for line in self._emit_statement(s, native):
+                    lines.append("    " + line)
+
+        lines.append("    } else {")
+
+        if has_handlers:
+            exc_var = self._fresh_temp()
+            lines.append(f"        mp_obj_t {exc_var} = MP_OBJ_FROM_PTR({nlr_buf}.ret_val);")
+
+            for i, handler in enumerate(stmt.handlers):
+                if handler.exc_type is None:
+                    if i == 0:
+                        lines.append("        {")
+                    else:
+                        lines.append("        } else {")
+                else:
+                    mp_type = self._get_mp_exception_type(handler.exc_type)
+                    cond = (
+                        f"mp_obj_is_subclass_fast("
+                        f"MP_OBJ_FROM_PTR(mp_obj_get_type({exc_var})), "
+                        f"MP_OBJ_FROM_PTR({mp_type}))"
+                    )
+                    if i == 0:
+                        lines.append(f"        if ({cond}) {{")
+                    else:
+                        lines.append(f"        }} else if ({cond}) {{")
+
+                if handler.exc_var and handler.c_exc_var:
+                    lines.append(f"            mp_obj_t {handler.c_exc_var} = {exc_var};")
+
+                for s in handler.body:
+                    for line in self._emit_statement(s, native):
+                        lines.append("        " + line)
+
+            has_bare_except = any(h.exc_type is None for h in stmt.handlers)
+            if not has_bare_except:
+                if has_finally:
+                    lines.append("        } else {")
+                    lines.append(f"            {exc_caught_var} = true;")
+                    lines.append("        }")
+                else:
+                    lines.append("        } else {")
+                    lines.append(f"            nlr_jump({nlr_buf}.ret_val);")
+                    lines.append("        }")
+            else:
+                lines.append("        }")
+        else:
+            if has_finally:
+                lines.append(f"        {exc_caught_var} = true;")
+            else:
+                lines.append(f"        nlr_jump({nlr_buf}.ret_val);")
+
+        lines.append("    }")
+
+        if has_finally:
+            for s in stmt.finalbody:
+                for line in self._emit_statement(s, native):
+                    lines.append(line)
+
+            lines.append(f"    if ({exc_caught_var}) {{")
+            lines.append(f"        nlr_jump({nlr_buf}.ret_val);")
+            lines.append("    }")
+
+        return lines
+
+    def _emit_raise(self, stmt: RaiseIR, native: bool = False) -> list[str]:
+        del native
+        lines = self._emit_prelude(stmt.prelude)
+
+        if stmt.is_reraise:
+            lines.append("    nlr_jump(nlr.ret_val);")
+            return lines
+
+        if stmt.exc_type is None:
+            lines.append("    mp_raise_msg(&mp_type_Exception, NULL);")
+            return lines
+
+        mp_type = self._get_mp_exception_type(stmt.exc_type)
+
+        if stmt.exc_msg is not None:
+            msg_expr, _ = self._emit_expr(stmt.exc_msg, False)
+            if isinstance(stmt.exc_msg, ConstIR) and isinstance(stmt.exc_msg.value, str):
+                msg_str = stmt.exc_msg.value.replace('"', '\\"')
+                lines.append(f'    mp_raise_msg({mp_type}, MP_ERROR_TEXT("{msg_str}"));')
+            else:
+                lines.append(
+                    f'    mp_raise_msg_varg({mp_type}, "%s", mp_obj_str_get_str({msg_expr}));'
+                )
+        else:
+            lines.append(f"    mp_raise_msg({mp_type}, NULL);")
+
+        return lines
+
+    def _get_mp_exception_type(self, exc_type: str) -> str:
+        exc_map = {
+            "Exception": "&mp_type_Exception",
+            "BaseException": "&mp_type_BaseException",
+            "TypeError": "&mp_type_TypeError",
+            "ValueError": "&mp_type_ValueError",
+            "RuntimeError": "&mp_type_RuntimeError",
+            "KeyError": "&mp_type_KeyError",
+            "IndexError": "&mp_type_IndexError",
+            "AttributeError": "&mp_type_AttributeError",
+            "StopIteration": "&mp_type_StopIteration",
+            "ZeroDivisionError": "&mp_type_ZeroDivisionError",
+            "OverflowError": "&mp_type_OverflowError",
+            "MemoryError": "&mp_type_MemoryError",
+            "OSError": "&mp_type_OSError",
+            "NotImplementedError": "&mp_type_NotImplementedError",
+            "AssertionError": "&mp_type_AssertionError",
+            "ImportError": "&mp_type_ImportError",
+            "NameError": "&mp_type_NameError",
+            "LookupError": "&mp_type_LookupError",
+            "ArithmeticError": "&mp_type_ArithmeticError",
+            "EOFError": "&mp_type_EOFError",
+            "GeneratorExit": "&mp_type_GeneratorExit",
+            "SystemExit": "&mp_type_SystemExit",
+            "KeyboardInterrupt": "&mp_type_KeyboardInterrupt",
+        }
+        return exc_map.get(exc_type, "&mp_type_Exception")
 
     def _emit_assign(self, stmt: AssignIR, native: bool = False) -> list[str]:
         lines = self._emit_prelude(stmt.prelude)
@@ -454,7 +609,15 @@ class BaseEmitter:
         left = self._unbox_if_needed(left, left_type, target_type)
         right = self._unbox_if_needed(right, right_type, target_type)
 
-        return f"({left} {op.op} {right})", target_type
+        if self._nlr_stack and op.op in ("//", "%") and target_type == "mp_int_t":
+            self._mark_uses_checked_div()
+            if op.op == "//":
+                return f"mp_int_floor_divide_checked({left}, {right})", target_type
+            else:
+                return f"mp_int_modulo_checked({left}, {right})", target_type
+
+        c_op = "/" if op.op == "//" else op.op
+        return f"({left} {c_op} {right})", target_type
 
     def _to_bool_expr(self, expr: str, expr_type: str) -> str:
         if expr_type == "bool":
@@ -1005,6 +1168,8 @@ class FunctionEmitter(BaseEmitter):
         lines = self._emit_prelude(stmt.prelude)
 
         if stmt.value is None:
+            if self._nlr_stack:
+                lines.append("        nlr_pop();")
             lines.append("    return mp_const_none;")
             return lines
 
@@ -1023,19 +1188,38 @@ class FunctionEmitter(BaseEmitter):
                         items_parts.append(f"mp_obj_new_int({expr}.f{i})")
                 items = ", ".join(items_parts)
                 lines.append(f"    mp_obj_t _ret_items[] = {{{items}}};")
+                if self._nlr_stack:
+                    lines.append("        nlr_pop();")
                 lines.append(f"    return mp_obj_new_tuple({arity}, _ret_items);")
                 return lines
 
-        if expr_type == "mp_obj_t" or self.func_ir.return_type == CType.MP_OBJ_T:
-            lines.append(f"    return {expr};")
-        elif self.func_ir.return_type == CType.MP_FLOAT_T or expr_type == "mp_float_t":
-            lines.append(f"    return mp_obj_new_float({expr});")
-        elif self.func_ir.return_type == CType.MP_INT_T or expr_type == "mp_int_t":
-            lines.append(f"    return mp_obj_new_int({expr});")
-        elif self.func_ir.return_type == CType.BOOL:
-            lines.append(f"    return {expr} ? mp_const_true : mp_const_false;")
+        if self._nlr_stack:
+            ret_tmp = self._fresh_temp()
+            if expr_type == "mp_obj_t" or self.func_ir.return_type == CType.MP_OBJ_T:
+                lines.append(f"        mp_obj_t {ret_tmp} = {expr};")
+            elif self.func_ir.return_type == CType.MP_FLOAT_T or expr_type == "mp_float_t":
+                lines.append(f"        mp_obj_t {ret_tmp} = mp_obj_new_float({expr});")
+            elif self.func_ir.return_type == CType.MP_INT_T or expr_type == "mp_int_t":
+                lines.append(f"        mp_obj_t {ret_tmp} = mp_obj_new_int({expr});")
+            elif self.func_ir.return_type == CType.BOOL:
+                lines.append(
+                    f"        mp_obj_t {ret_tmp} = {expr} ? mp_const_true : mp_const_false;"
+                )
+            else:
+                lines.append(f"        mp_obj_t {ret_tmp} = {expr};")
+            lines.append("        nlr_pop();")
+            lines.append(f"        return {ret_tmp};")
         else:
-            lines.append(f"    return {expr};")
+            if expr_type == "mp_obj_t" or self.func_ir.return_type == CType.MP_OBJ_T:
+                lines.append(f"    return {expr};")
+            elif self.func_ir.return_type == CType.MP_FLOAT_T or expr_type == "mp_float_t":
+                lines.append(f"    return mp_obj_new_float({expr});")
+            elif self.func_ir.return_type == CType.MP_INT_T or expr_type == "mp_int_t":
+                lines.append(f"    return mp_obj_new_int({expr});")
+            elif self.func_ir.return_type == CType.BOOL:
+                lines.append(f"    return {expr} ? mp_const_true : mp_const_false;")
+            else:
+                lines.append(f"    return {expr};")
         return lines
 
     def _emit_ann_assign(self, stmt: AnnAssignIR, native: bool = False) -> list[str]:
@@ -1228,6 +1412,8 @@ class MethodEmitter(BaseEmitter):
         lines = self._emit_prelude(stmt.prelude)
 
         if stmt.value is None:
+            if self._nlr_stack:
+                lines.append("        nlr_pop();")
             if native:
                 lines.append("    return;")
             else:
@@ -1236,19 +1422,39 @@ class MethodEmitter(BaseEmitter):
 
         expr, expr_type = self._emit_expr(stmt.value, native)
 
-        if native:
-            ret_type = self.method_ir.return_type.to_c_type_str()
-            expr = self._unbox_if_needed(expr, expr_type, ret_type)
-            lines.append(f"    return {expr};")
-        else:
-            if expr_type == "mp_int_t":
-                lines.append(f"    return mp_obj_new_int({expr});")
-            elif expr_type == "mp_float_t":
-                lines.append(f"    return mp_obj_new_float({expr});")
-            elif expr_type == "bool":
-                lines.append(f"    return {expr} ? mp_const_true : mp_const_false;")
+        if self._nlr_stack:
+            ret_tmp = self._fresh_temp()
+            if native:
+                ret_type = self.method_ir.return_type.to_c_type_str()
+                expr = self._unbox_if_needed(expr, expr_type, ret_type)
+                lines.append(f"        {ret_type} {ret_tmp} = {expr};")
             else:
+                if expr_type == "mp_int_t":
+                    lines.append(f"        mp_obj_t {ret_tmp} = mp_obj_new_int({expr});")
+                elif expr_type == "mp_float_t":
+                    lines.append(f"        mp_obj_t {ret_tmp} = mp_obj_new_float({expr});")
+                elif expr_type == "bool":
+                    lines.append(
+                        f"        mp_obj_t {ret_tmp} = {expr} ? mp_const_true : mp_const_false;"
+                    )
+                else:
+                    lines.append(f"        mp_obj_t {ret_tmp} = {expr};")
+            lines.append("        nlr_pop();")
+            lines.append(f"        return {ret_tmp};")
+        else:
+            if native:
+                ret_type = self.method_ir.return_type.to_c_type_str()
+                expr = self._unbox_if_needed(expr, expr_type, ret_type)
                 lines.append(f"    return {expr};")
+            else:
+                if expr_type == "mp_int_t":
+                    lines.append(f"    return mp_obj_new_int({expr});")
+                elif expr_type == "mp_float_t":
+                    lines.append(f"    return mp_obj_new_float({expr});")
+                elif expr_type == "bool":
+                    lines.append(f"    return {expr} ? mp_const_true : mp_const_false;")
+                else:
+                    lines.append(f"    return {expr};")
         return lines
 
     def _emit_ann_assign(self, stmt: AnnAssignIR, native: bool = False) -> list[str]:

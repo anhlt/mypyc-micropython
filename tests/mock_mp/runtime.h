@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #ifndef MYPYC_MICROPYTHON_FUNCTIONAL_RUNTIME_H
 #define MYPYC_MICROPYTHON_FUNCTIONAL_RUNTIME_H
 
@@ -7,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 
 typedef intptr_t mp_int_t;
 typedef uintptr_t mp_uint_t;
@@ -1034,5 +1037,143 @@ static inline size_t mp_mock_dict_len(mp_obj_t dict_obj) {
     }
     return dict->used;
 }
+
+#include <setjmp.h>
+
+typedef struct _nlr_buf_t {
+    jmp_buf buf;
+    void *ret_val;
+} nlr_buf_t;
+
+static __thread nlr_buf_t *_nlr_top = NULL;
+
+static inline int nlr_push(nlr_buf_t *nlr) {
+    nlr->ret_val = NULL;
+    nlr_buf_t *prev = _nlr_top;
+    _nlr_top = nlr;
+    int r = setjmp(nlr->buf);
+    if (r != 0) {
+        _nlr_top = prev;
+    }
+    return r;
+}
+
+static inline void nlr_pop(void) {
+    if (_nlr_top != NULL) {
+        nlr_buf_t *prev = (nlr_buf_t *)((char *)_nlr_top - sizeof(nlr_buf_t));
+        _nlr_top = (_nlr_top == prev) ? NULL : prev;
+    }
+}
+
+__attribute__((noreturn))
+static inline void nlr_jump(void *val) {
+    if (_nlr_top == NULL) {
+        mp_mock_abort("nlr_jump called with no nlr_push");
+    }
+    _nlr_top->ret_val = val;
+    longjmp(_nlr_top->buf, 1);
+}
+
+#define MP_MOCK_TAG_EXCEPTION (0xE4CE97)
+
+typedef struct {
+    int tag;
+    int exc_type;
+    char *message;
+} mp_obj_exception_struct;
+
+#define MP_EXC_TYPE_BASE_EXCEPTION 0
+#define MP_EXC_TYPE_EXCEPTION 1
+#define MP_EXC_TYPE_TYPE_ERROR 2
+#define MP_EXC_TYPE_VALUE_ERROR 3
+#define MP_EXC_TYPE_RUNTIME_ERROR 4
+#define MP_EXC_TYPE_KEY_ERROR 5
+#define MP_EXC_TYPE_INDEX_ERROR 6
+#define MP_EXC_TYPE_ATTRIBUTE_ERROR 7
+#define MP_EXC_TYPE_STOP_ITERATION 8
+#define MP_EXC_TYPE_ZERO_DIVISION_ERROR 9
+#define MP_EXC_TYPE_OVERFLOW_ERROR 10
+#define MP_EXC_TYPE_MEMORY_ERROR 11
+#define MP_EXC_TYPE_OS_ERROR 12
+#define MP_EXC_TYPE_NOT_IMPLEMENTED_ERROR 13
+#define MP_EXC_TYPE_ASSERTION_ERROR 14
+
+#ifdef __GNUC__
+#define MP_UNUSED __attribute__((unused))
+#else
+#define MP_UNUSED
+#endif
+
+static int mp_type_BaseException MP_UNUSED = MP_EXC_TYPE_BASE_EXCEPTION;
+static int mp_type_Exception MP_UNUSED = MP_EXC_TYPE_EXCEPTION;
+static int mp_type_TypeError MP_UNUSED = MP_EXC_TYPE_TYPE_ERROR;
+static int mp_type_ValueError MP_UNUSED = MP_EXC_TYPE_VALUE_ERROR;
+static int mp_type_RuntimeError MP_UNUSED = MP_EXC_TYPE_RUNTIME_ERROR;
+static int mp_type_KeyError MP_UNUSED = MP_EXC_TYPE_KEY_ERROR;
+static int mp_type_IndexError MP_UNUSED = MP_EXC_TYPE_INDEX_ERROR;
+static int mp_type_AttributeError MP_UNUSED = MP_EXC_TYPE_ATTRIBUTE_ERROR;
+static int mp_type_StopIteration MP_UNUSED = MP_EXC_TYPE_STOP_ITERATION;
+static int mp_type_ZeroDivisionError MP_UNUSED = MP_EXC_TYPE_ZERO_DIVISION_ERROR;
+static int mp_type_OverflowError MP_UNUSED = MP_EXC_TYPE_OVERFLOW_ERROR;
+static int mp_type_MemoryError MP_UNUSED = MP_EXC_TYPE_MEMORY_ERROR;
+static int mp_type_OSError MP_UNUSED = MP_EXC_TYPE_OS_ERROR;
+static int mp_type_NotImplementedError MP_UNUSED = MP_EXC_TYPE_NOT_IMPLEMENTED_ERROR;
+static int mp_type_AssertionError MP_UNUSED = MP_EXC_TYPE_ASSERTION_ERROR;
+
+static inline mp_obj_t mp_obj_new_exception_msg(int *exc_type, const char *msg) {
+    mp_obj_exception_struct *exc = (mp_obj_exception_struct *)malloc(sizeof(mp_obj_exception_struct));
+    exc->tag = MP_MOCK_TAG_EXCEPTION;
+    exc->exc_type = *exc_type;
+    exc->message = msg ? strdup(msg) : NULL;
+    return (mp_obj_t)exc;
+}
+
+static inline int *mp_obj_get_type(mp_obj_t obj) {
+    if (!mp_mock_is_special_const(obj) && !MP_OBJ_IS_SMALL_INT(obj)) {
+        mp_obj_exception_struct *exc = (mp_obj_exception_struct *)obj;
+        if (exc->tag == MP_MOCK_TAG_EXCEPTION) {
+            if (exc->exc_type == MP_EXC_TYPE_ZERO_DIVISION_ERROR) return &mp_type_ZeroDivisionError;
+            if (exc->exc_type == MP_EXC_TYPE_VALUE_ERROR) return &mp_type_ValueError;
+            if (exc->exc_type == MP_EXC_TYPE_TYPE_ERROR) return &mp_type_TypeError;
+            if (exc->exc_type == MP_EXC_TYPE_RUNTIME_ERROR) return &mp_type_RuntimeError;
+            if (exc->exc_type == MP_EXC_TYPE_KEY_ERROR) return &mp_type_KeyError;
+            if (exc->exc_type == MP_EXC_TYPE_INDEX_ERROR) return &mp_type_IndexError;
+            return &mp_type_Exception;
+        }
+    }
+    return &mp_type_Exception;
+}
+
+static inline bool mp_obj_is_subclass_fast(mp_obj_t obj_type, mp_obj_t base_type) {
+    int *exc_type = (int *)MP_OBJ_TO_PTR(obj_type);
+    int *base = (int *)MP_OBJ_TO_PTR(base_type);
+    if (exc_type == base) return true;
+    if (base == &mp_type_Exception) {
+        return *exc_type != MP_EXC_TYPE_BASE_EXCEPTION;
+    }
+    if (base == &mp_type_BaseException) return true;
+    return false;
+}
+
+#define MP_ERROR_TEXT(s) (s)
+
+__attribute__((noreturn))
+static inline void mp_raise_msg(int *exc_type, const char *msg) {
+    mp_obj_t exc = mp_obj_new_exception_msg(exc_type, msg);
+    nlr_jump(exc);
+}
+
+__attribute__((noreturn))
+static inline void mp_raise_msg_varg(int *exc_type, const char *fmt, ...) {
+    char buf[256];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    mp_raise_msg(exc_type, buf);
+}
+
+#define MP_OBJ_FROM_PTR(p) ((mp_obj_t)(p))
+#define MP_OBJ_TO_PTR(o) ((void *)(o))
 
 #endif

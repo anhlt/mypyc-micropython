@@ -669,7 +669,7 @@ Explain every C concept before using it.
 | ESP-IDF (for firmware) | v5.4.2 |
 | mypy | ≥1.0.0 |
 
-## Pre-PR Device Testing (REQUIRED)
+## Device Testing (REQUIRED)
 
 > **CRITICAL: Unit tests passing is NOT sufficient. Real device testing is MANDATORY.**
 >
@@ -684,7 +684,9 @@ Explain every C concept before using it.
 >
 > **NEVER skip device testing. NEVER assume "tests pass" means "it works".**
 
-**Before creating any PR that adds or modifies compiler features, ALWAYS run device tests on real hardware.**
+**Device testing is required at TWO stages:**
+1. **After implementing a feature** — Verify it works on real hardware before considering the feature complete
+2. **Before creating a PR** — Final validation that everything works together
 
 ### When Device Testing is Required
 
@@ -709,12 +711,21 @@ make build BOARD=ESP32_GENERIC_C6
 # 4. Flash to device
 make flash BOARD=ESP32_GENERIC_C6 PORT=/dev/cu.usbmodem2101
 
-# 5. Run device tests (REQUIRED before PR)
+# 5. Run device tests (REQUIRED after implementing feature AND before PR)
 make run-device-tests PORT=/dev/cu.usbmodem2101
 
 # 6. Run benchmarks (optional but recommended)
 make benchmark PORT=/dev/cu.usbmodem2101
 ```
+
+### Feature Implementation Checklist
+
+A feature is NOT complete until:
+- [ ] Unit tests pass (`pytest`)
+- [ ] C runtime tests pass (`pytest -m c_runtime`)
+- [ ] Example file created in `examples/`
+- [ ] Device tests added to `run_device_tests.py`
+- [ ] **Device tests pass on real hardware** (this is the final verification)
 
 ### Why Device Testing Cannot Be Skipped
 

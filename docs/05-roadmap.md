@@ -44,9 +44,10 @@ A 7-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 - **ESP32**: All 16 compiled modules verified on real ESP32-C6 hardware (161 device tests pass)
 - **Performance**: RTuple internal ops (57x speedup), list[tuple] (9.2x speedup), 22 benchmarks
   suite with 11.8x average speedup
-- **Testing**: 476 tests (unit + C runtime), comprehensive device test coverage
+- **Testing**: 518 tests (unit + C runtime), comprehensive device test coverage
 - **Strings**: Full method support (`split`, `join`, `replace`, `find`, `strip`, `upper`, `lower`, etc.)
 - **Type Checking**: Optional mypy integration via `type_check=True` parameter, extracts function/class signatures
+- **Exception Handling**: `try`/`except`/`else`/`finally`, `raise`, multiple handlers, exception variable binding
 - **Other**: Local variables (typed and inferred), string literals, `None`, `True`/`False`
 
 ### What's Next ❌
@@ -57,7 +58,7 @@ A 7-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 - Keyword-only arguments, positional-only arguments
 - `@property`, `@staticmethod`, `@classmethod`
 - `super()` calls
-- Exception handling
+- Custom exception classes
 - Closures and generators
 
 ## Phase Overview
@@ -75,8 +76,8 @@ Phase 3: Classes                ███████████████  ~
   vtable dispatch ✅ │ __eq__/__len__/__getitem__/__setitem__ ✅ │ inherited methods ✅
   @property │ @staticmethod │ @classmethod │ super()
 
-Phase 4: Exception Handling     ░░░░░░░░░░░░░░░  TODO
-  try/except │ try/finally │ raise │ custom exceptions
+Phase 4: Exception Handling     ███████████████  ~95% done
+  try/except ✅ │ try/finally ✅ │ try/except/else ✅ │ raise ✅ │ custom exceptions
 
 Phase 5: Advanced Features      ░░░░░░░░░░░░░░░  TODO
   closures │ generators │ list comprehensions │ map/filter
@@ -518,7 +519,7 @@ Tasks:
 
 **Goal:** Robust error handling.
 
-### 4.1 Try/Except
+### 4.1 Try/Except ✅ DONE
 
 ```python
 def safe_divide(a: int, b: int) -> int:
@@ -531,31 +532,42 @@ def safe_divide(a: int, b: int) -> int:
 Generated C uses `nlr_push`/`nlr_pop` pattern with `mp_obj_is_subclass_fast` for type matching.
 
 Tasks:
-- [ ] Parse try/except blocks
-- [ ] Generate `nlr_push`/`nlr_pop` pattern
-- [ ] Exception type matching
-- [ ] Multiple except clauses
-- [ ] Catch-all except
+- [x] Parse try/except blocks
+- [x] Generate `nlr_push`/`nlr_pop` pattern
+- [x] Exception type matching
+- [x] Multiple except clauses
+- [x] Catch-all except
+- [x] Exception variable binding (`except E as e:`)
+- [x] Try/except/else blocks
 
-### 4.2 Try/Finally
-
-Tasks:
-- [ ] Parse try/finally blocks
-- [ ] Ensure finally runs on all paths
-- [ ] Combine try/except/finally
-
-### 4.3 Raise
+### 4.2 Try/Finally ✅ DONE
 
 Tasks:
-- [ ] `raise ExceptionType(message)`
-- [ ] `raise` (re-raise current exception)
-- [ ] `raise ... from ...` (basic support)
+- [x] Parse try/finally blocks
+- [x] Ensure finally runs on all paths
+- [x] Combine try/except/finally
+- [x] Re-raise after finally if exception was not caught
+
+### 4.3 Raise ✅ DONE
+
+Tasks:
+- [x] `raise ExceptionType(message)`
+- [x] `raise ExceptionType` (without message)
+- [ ] `raise` (re-raise current exception) — TODO
+- [ ] `raise ... from ...` (basic support) — TODO
 
 ### 4.4 Custom Exceptions
 
 Tasks:
 - [ ] Custom exception class definition
 - [ ] Inheritance from built-in exceptions
+
+### 4.5 Supported Exception Types
+
+The following built-in exception types are supported:
+- `ZeroDivisionError`, `ValueError`, `TypeError`, `RuntimeError`
+- `KeyError`, `IndexError`, `AttributeError`, `OverflowError`
+- `MemoryError`, `OSError`, `NotImplementedError`, `AssertionError`
 
 ---
 
