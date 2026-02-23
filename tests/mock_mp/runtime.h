@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #ifndef MYPYC_MICROPYTHON_FUNCTIONAL_RUNTIME_H
 #define MYPYC_MICROPYTHON_FUNCTIONAL_RUNTIME_H
 
@@ -1096,21 +1098,27 @@ typedef struct {
 #define MP_EXC_TYPE_NOT_IMPLEMENTED_ERROR 13
 #define MP_EXC_TYPE_ASSERTION_ERROR 14
 
-static int mp_type_BaseException = MP_EXC_TYPE_BASE_EXCEPTION;
-static int mp_type_Exception = MP_EXC_TYPE_EXCEPTION;
-static int mp_type_TypeError = MP_EXC_TYPE_TYPE_ERROR;
-static int mp_type_ValueError = MP_EXC_TYPE_VALUE_ERROR;
-static int mp_type_RuntimeError = MP_EXC_TYPE_RUNTIME_ERROR;
-static int mp_type_KeyError = MP_EXC_TYPE_KEY_ERROR;
-static int mp_type_IndexError = MP_EXC_TYPE_INDEX_ERROR;
-static int mp_type_AttributeError = MP_EXC_TYPE_ATTRIBUTE_ERROR;
-static int mp_type_StopIteration = MP_EXC_TYPE_STOP_ITERATION;
-static int mp_type_ZeroDivisionError = MP_EXC_TYPE_ZERO_DIVISION_ERROR;
-static int mp_type_OverflowError = MP_EXC_TYPE_OVERFLOW_ERROR;
-static int mp_type_MemoryError = MP_EXC_TYPE_MEMORY_ERROR;
-static int mp_type_OSError = MP_EXC_TYPE_OS_ERROR;
-static int mp_type_NotImplementedError = MP_EXC_TYPE_NOT_IMPLEMENTED_ERROR;
-static int mp_type_AssertionError = MP_EXC_TYPE_ASSERTION_ERROR;
+#ifdef __GNUC__
+#define MP_UNUSED __attribute__((unused))
+#else
+#define MP_UNUSED
+#endif
+
+static int mp_type_BaseException MP_UNUSED = MP_EXC_TYPE_BASE_EXCEPTION;
+static int mp_type_Exception MP_UNUSED = MP_EXC_TYPE_EXCEPTION;
+static int mp_type_TypeError MP_UNUSED = MP_EXC_TYPE_TYPE_ERROR;
+static int mp_type_ValueError MP_UNUSED = MP_EXC_TYPE_VALUE_ERROR;
+static int mp_type_RuntimeError MP_UNUSED = MP_EXC_TYPE_RUNTIME_ERROR;
+static int mp_type_KeyError MP_UNUSED = MP_EXC_TYPE_KEY_ERROR;
+static int mp_type_IndexError MP_UNUSED = MP_EXC_TYPE_INDEX_ERROR;
+static int mp_type_AttributeError MP_UNUSED = MP_EXC_TYPE_ATTRIBUTE_ERROR;
+static int mp_type_StopIteration MP_UNUSED = MP_EXC_TYPE_STOP_ITERATION;
+static int mp_type_ZeroDivisionError MP_UNUSED = MP_EXC_TYPE_ZERO_DIVISION_ERROR;
+static int mp_type_OverflowError MP_UNUSED = MP_EXC_TYPE_OVERFLOW_ERROR;
+static int mp_type_MemoryError MP_UNUSED = MP_EXC_TYPE_MEMORY_ERROR;
+static int mp_type_OSError MP_UNUSED = MP_EXC_TYPE_OS_ERROR;
+static int mp_type_NotImplementedError MP_UNUSED = MP_EXC_TYPE_NOT_IMPLEMENTED_ERROR;
+static int mp_type_AssertionError MP_UNUSED = MP_EXC_TYPE_ASSERTION_ERROR;
 
 static inline mp_obj_t mp_obj_new_exception_msg(int *exc_type, const char *msg) {
     mp_obj_exception_struct *exc = (mp_obj_exception_struct *)malloc(sizeof(mp_obj_exception_struct));
