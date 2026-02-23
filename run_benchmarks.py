@@ -936,6 +936,125 @@ end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
+    # List comprehension benchmarks
+    (
+        "listcomp squares(500) x100",
+        """
+import list_comprehension as lc
+import time
+start = time.ticks_us()
+for _ in range(100):
+    lc.squares(500)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def squares(n):
+    return [x * x for x in range(n)]
+start = time.ticks_us()
+for _ in range(100):
+    squares(500)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "listcomp evens(1000) x100",
+        """
+import list_comprehension as lc
+import time
+start = time.ticks_us()
+for _ in range(100):
+    lc.evens(1000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def evens(n):
+    return [x for x in range(n) if x % 2 == 0]
+start = time.ticks_us()
+for _ in range(100):
+    evens(1000)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "listcomp doubled(500) x100",
+        """
+import list_comprehension as lc
+import time
+items = list(range(500))
+start = time.ticks_us()
+for _ in range(100):
+    lc.doubled(items)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def doubled(items):
+    return [x * 2 for x in items]
+items = list(range(500))
+start = time.ticks_us()
+for _ in range(100):
+    doubled(items)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "listcomp filter x100",
+        """
+import list_comprehension as lc
+import time
+items = list(range(-250, 250))
+start = time.ticks_us()
+for _ in range(100):
+    lc.filter_positive(items)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def filter_positive(items):
+    return [x for x in items if x > 0]
+items = list(range(-250, 250))
+start = time.ticks_us()
+for _ in range(100):
+    filter_positive(items)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "listcomp sum_sq(500) x100",
+        """
+import list_comprehension as lc
+import time
+start = time.ticks_us()
+for _ in range(100):
+    lc.sum_squares(500)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+def sum_squares(n):
+    result = [x * x for x in range(n)]
+    total = 0
+    for x in result:
+        total += x
+    return total
+start = time.ticks_us()
+for _ in range(100):
+    sum_squares(500)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
 ]
 
 

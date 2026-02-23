@@ -22,6 +22,7 @@ from .ir import (
     GetItemIR,
     InstrIR,
     IRType,
+    ListCompIR,
     ListNewIR,
     MethodCallIR,
     NameIR,
@@ -63,6 +64,8 @@ class ContainerEmitter:
             return self.emit_unbox(instr)
         elif isinstance(instr, AttrAccessIR):
             return self.emit_attr_access(instr)
+        elif isinstance(instr, ListCompIR):
+            return self.emit_list_comp(instr)
         return [f"    /* unsupported IR instruction: {type(instr).__name__} */"]
 
     def emit_prelude(self, prelude: list[InstrIR]) -> list[str]:
@@ -185,6 +188,145 @@ class ContainerEmitter:
         c_type = instr.result_type.to_c_type_str()
         access_expr = f"(({instr.class_c_name}_obj_t *)MP_OBJ_TO_PTR({obj_c}))->{instr.attr_name}"
         return [f"    {c_type} {result_name} = {access_expr};"]
+
+    def emit_list_comp(self, instr: ListCompIR) -> list[str]:
+        """Emit list comprehension as inline loop.
+
+        [expr for var in iterable] becomes:
+        result = mp_obj_new_list(0, NULL);
+        for (var ...) {
+            // optional: if (condition)
+            mp_obj_list_append(result, element);
+        }
+        """
+        lines: list[str] = []
+        result_name = instr.result.name
+
+        # Create empty result list
+        lines.append(f"    mp_obj_t {result_name} = mp_obj_new_list(0, NULL);")
+
+        if instr.is_range:
+            # Optimized range-based iteration
+            lines.extend(self._emit_list_comp_range(instr, result_name))
+        else:
+            # Generic iterator-based iteration
+            lines.extend(self._emit_list_comp_iter(instr, result_name))
+
+        return lines
+
+    def _emit_list_comp_range(self, instr: ListCompIR, result_name: str) -> list[str]:
+        """Emit range-based list comprehension: [expr for i in range(...)]"""
+        lines: list[str] = []
+        c_loop_var = instr.c_loop_var
+
+        # Declare loop variable
+        lines.append(f"    mp_int_t {c_loop_var};")
+
+        # Get range bounds
+        start_c = self._value_to_c(instr.range_start) if instr.range_start else "0"
+        end_c = self._value_to_c(instr.range_end) if instr.range_end else "0"
+
+        # Store end in temp to avoid re-evaluation
+        end_var = f"{result_name}_end"
+        lines.append(f"    mp_int_t {end_var} = {end_c};")
+
+        # Determine step and loop condition
+        if instr.range_step is None:
+            # Default step of 1
+            cond = f"{c_loop_var} < {end_var}"
+            inc = f"{c_loop_var}++"
+        else:
+            step_c = self._value_to_c(instr.range_step)
+            # Check if step is a constant
+            if isinstance(instr.range_step, ConstIR) and isinstance(instr.range_step.value, int):
+                step_val = instr.range_step.value
+                if step_val > 0:
+                    cond = f"{c_loop_var} < {end_var}"
+                else:
+                    cond = f"{c_loop_var} > {end_var}"
+                if step_val == 1:
+                    inc = f"{c_loop_var}++"
+                elif step_val == -1:
+                    inc = f"{c_loop_var}--"
+                else:
+                    inc = f"{c_loop_var} += {step_val}"
+            else:
+                # Dynamic step - need runtime check
+                step_var = f"{result_name}_step"
+                lines.append(f"    mp_int_t {step_var} = {step_c};")
+                cond = f"({step_var} > 0) ? ({c_loop_var} < {end_var}) : ({c_loop_var} > {end_var})"
+                inc = f"{c_loop_var} += {step_var}"
+
+        lines.append(f"    for ({c_loop_var} = {start_c}; {cond}; {inc}) {{")
+
+        # Emit element prelude inside loop
+        for pre_line in self.emit_prelude(instr.element_prelude):
+            lines.append("    " + pre_line)
+
+        # Handle condition if present
+        if instr.condition is not None:
+            # Emit condition prelude
+            for pre_line in self.emit_prelude(instr.condition_prelude):
+                lines.append("    " + pre_line)
+            cond_c = self._value_to_c(instr.condition)
+            # Convert to boolean if needed
+            if instr.condition.ir_type != IRType.BOOL:
+                cond_c = f"mp_obj_is_true({self._box_value_ir(instr.condition)})"
+            lines.append(f"        if ({cond_c}) {{")
+            element_c = self._box_value_ir(instr.element)
+            lines.append(f"            mp_obj_list_append({result_name}, {element_c});")
+            lines.append("        }")
+        else:
+            element_c = self._box_value_ir(instr.element)
+            lines.append(f"        mp_obj_list_append({result_name}, {element_c});")
+
+        lines.append("    }")
+        return lines
+
+    def _emit_list_comp_iter(self, instr: ListCompIR, result_name: str) -> list[str]:
+        """Emit iterator-based list comprehension: [expr for x in iterable]"""
+        lines: list[str] = []
+        c_loop_var = instr.c_loop_var
+
+        # Emit iter prelude (evaluate iterable)
+        lines.extend(self.emit_prelude(instr.iter_prelude))
+
+        # Get iterator
+        iter_c = self._value_to_c(instr.iterable)
+        iter_var = f"{result_name}_iter"
+        iter_buf_var = f"{result_name}_iter_buf"
+
+        # Declare loop variable
+        lines.append(f"    mp_obj_t {c_loop_var};")
+        lines.append(f"    mp_obj_iter_buf_t {iter_buf_var};")
+        lines.append(f"    mp_obj_t {iter_var} = mp_getiter({iter_c}, &{iter_buf_var});")
+        lines.append(
+            f"    while (({c_loop_var} = mp_iternext({iter_var})) != MP_OBJ_STOP_ITERATION) {{"
+        )
+
+        # Emit element prelude inside loop
+        for pre_line in self.emit_prelude(instr.element_prelude):
+            lines.append("    " + pre_line)
+
+        # Handle condition if present
+        if instr.condition is not None:
+            # Emit condition prelude
+            for pre_line in self.emit_prelude(instr.condition_prelude):
+                lines.append("    " + pre_line)
+            cond_c = self._value_to_c(instr.condition)
+            # Convert to boolean if needed
+            if instr.condition.ir_type != IRType.BOOL:
+                cond_c = f"mp_obj_is_true({self._box_value_ir(instr.condition)})"
+            lines.append(f"        if ({cond_c}) {{")
+            element_c = self._box_value_ir(instr.element)
+            lines.append(f"            mp_obj_list_append({result_name}, {element_c});")
+            lines.append("        }")
+        else:
+            element_c = self._box_value_ir(instr.element)
+            lines.append(f"        mp_obj_list_append({result_name}, {element_c});")
+
+        lines.append("    }")
+        return lines
 
     # ------------------------------------------------------------------
     # Method call handlers (table-driven)
@@ -378,12 +520,54 @@ class ContainerEmitter:
         elif isinstance(value, BinOpIR):
             left = self._value_to_c(value.left)
             right = self._value_to_c(value.right)
+            # Handle mp_obj_t operands - need mp_binary_op
+            left_is_obj = value.left.ir_type == IRType.OBJ
+            right_is_obj = value.right.ir_type == IRType.OBJ
+            if left_is_obj or right_is_obj:
+                # Box operands if needed
+                if not left_is_obj:
+                    left = self._box_expr(left, value.left.ir_type)
+                if not right_is_obj:
+                    right = self._box_expr(right, value.right.ir_type)
+                op_map = {
+                    "+": "MP_BINARY_OP_ADD",
+                    "-": "MP_BINARY_OP_SUBTRACT",
+                    "*": "MP_BINARY_OP_MULTIPLY",
+                    "/": "MP_BINARY_OP_TRUE_DIVIDE",
+                    "//": "MP_BINARY_OP_FLOOR_DIVIDE",
+                    "%": "MP_BINARY_OP_MODULO",
+                }
+                mp_op = op_map.get(value.op, "MP_BINARY_OP_ADD")
+                return f"mp_binary_op({mp_op}, {left}, {right})"
             return f"({left} {value.op} {right})"
         elif isinstance(value, UnaryOpIR):
             operand = self._value_to_c(value.operand)
             return f"({value.op}{operand})"
         elif isinstance(value, CompareIR):
             left = self._value_to_c(value.left)
+            left_is_obj = value.left.ir_type == IRType.OBJ
+            # Check if any operand is mp_obj_t
+            any_obj = left_is_obj or any(
+                comp.ir_type == IRType.OBJ for comp in value.comparators
+            )
+            if any_obj and len(value.ops) == 1:
+                # Use mp_binary_op for mp_obj_t comparisons
+                comp_c = self._value_to_c(value.comparators[0])
+                # Box operands if needed
+                if not left_is_obj:
+                    left = self._box_expr(left, value.left.ir_type)
+                if value.comparators[0].ir_type != IRType.OBJ:
+                    comp_c = self._box_expr(comp_c, value.comparators[0].ir_type)
+                op_map = {
+                    ">": "MP_BINARY_OP_MORE",
+                    "<": "MP_BINARY_OP_LESS",
+                    ">=": "MP_BINARY_OP_MORE_EQUAL",
+                    "<=": "MP_BINARY_OP_LESS_EQUAL",
+                    "==": "MP_BINARY_OP_EQUAL",
+                    "!=": "MP_BINARY_OP_NOT_EQUAL",
+                }
+                mp_op = op_map.get(value.ops[0], "MP_BINARY_OP_EQUAL")
+                return f"mp_obj_is_true(mp_binary_op({mp_op}, {left}, {comp_c}))"
             parts = [f"({left}"]
             for op, comp in zip(value.ops, value.comparators):
                 comp_c = self._value_to_c(comp)

@@ -128,6 +128,9 @@ endif
 	@echo "Don't forget to add to $(MODULES_DIR)/micropython.cmake!"
 
 compile-all:
+	@echo "Cleaning old usermod directories..."
+	@rm -rf $(MODULES_DIR)/usermod_*
+	@rm -f $(MODULES_DIR)/micropython.cmake
 	@echo "Compiling all examples..."
 	@for f in examples/*.py; do \
 		MOD_NAME=$$(basename "$$f" .py); \
@@ -250,6 +253,7 @@ clean:
 	rm -rf $(BUILD_DIR)
 	rm -rf $(MODULES_DIR)/usermod_*
 	rm -f $(MODULES_DIR)/micropython.cmake
+	rm -rf $(MP_PORT_DIR)/build-*
 
 clean-all: clean
 	@echo "Cleaning MicroPython build..."

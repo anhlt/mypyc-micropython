@@ -907,6 +907,74 @@ def get_item(obj, i: int):
         assert "mp_obj_subscr" in result
 
 
+class TestListComprehension:
+    def test_basic_list_comp_range(self):
+        source = '''
+def squares(n: int) -> list[int]:
+    return [i * i for i in range(n)]
+'''
+        result = compile_source(source, "test")
+        # Should create empty list
+        assert "mp_obj_new_list(0, NULL)" in result
+        # Should have a for loop
+        assert "for (" in result
+        # Should append to list
+        assert "mp_obj_list_append" in result
+
+    def test_list_comp_with_condition(self):
+        source = '''
+def evens(n: int) -> list[int]:
+    return [i for i in range(n) if i % 2 == 0]
+'''
+        result = compile_source(source, "test")
+        assert "mp_obj_new_list(0, NULL)" in result
+        assert "for (" in result
+        assert "if (" in result
+        assert "mp_obj_list_append" in result
+
+    def test_list_comp_expression(self):
+        source = '''
+def doubled(n: int) -> list[int]:
+    return [i * 2 for i in range(n)]
+'''
+        result = compile_source(source, "test")
+        assert "mp_obj_new_list(0, NULL)" in result
+        assert "mp_obj_list_append" in result
+
+    def test_list_comp_range_with_start_end(self):
+        source = '''
+def range_squares(start: int, end: int) -> list[int]:
+    return [i * i for i in range(start, end)]
+'''
+        result = compile_source(source, "test")
+        assert "mp_obj_new_list(0, NULL)" in result
+        assert "for (" in result
+        assert "mp_obj_list_append" in result
+
+    def test_list_comp_iterator(self):
+        source = '''
+def double_items(items: list[int]) -> list[int]:
+    return [x * 2 for x in items]
+'''
+        result = compile_source(source, "test")
+        assert "mp_obj_new_list(0, NULL)" in result
+        # Should use iterator pattern
+        assert "mp_getiter" in result
+        assert "mp_iternext" in result
+        assert "MP_OBJ_STOP_ITERATION" in result
+        assert "mp_obj_list_append" in result
+
+    def test_list_comp_iterator_with_condition(self):
+        source = '''
+def filter_positive(items: list[int]) -> list[int]:
+    return [x for x in items if x > 0]
+'''
+        result = compile_source(source, "test")
+        assert "mp_obj_new_list(0, NULL)" in result
+        assert "mp_getiter" in result
+        assert "if (" in result
+        assert "mp_obj_list_append" in result
+
 class TestForLoop:
     def test_for_range_single_arg(self):
         source = """
