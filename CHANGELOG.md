@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
+### Added
+- `.pyi` stub-based C bindings system (`src/mypyc_micropython/c_bindings/`)
+  - `StubParser`: parses `.pyi` files into `CLibraryDef` IR
+  - `CEmitter`: generates MicroPython C wrapper code with proper `mp_c_ptr_t` pointer wrapping
+  - `CMakeEmitter`: generates `micropython.cmake` build files
+  - `CBindingCompiler`: top-level orchestration
+  - `mpy-compile-c` CLI entry point
+- LVGL v9.6 integration for ESP32-C6 with Waveshare ESP32-C6-LCD-1.47 display
+  - 55+ wrapped LVGL functions (label, button, slider, switch, checkbox, bar, arc)
+  - ST7789 display driver with SPI/DMA double-buffered rendering
+  - `lv_conf.h` configuration (48KB RAM, RGB565, 7 widgets)
+  - Custom partition table (2.56MB app) for LVGL firmware
+- Automated LVGL build pipeline (`make deploy-lvgl`)
+  - `compile-lvgl`: generates C from `.pyi` stub, copies driver, patches `lvgl.c`
+  - `build-lvgl`: compiles all modules + LVGL with custom partition table
+  - `flash-lvgl`: flashes firmware with LVGL partition table
+  - `deploy-lvgl`: one-command compile + build + flash
+  - `test-lvgl`: quick smoke test on device
+- `scripts/patch_lvgl_c.py` for auto-patching generated C with driver entries
+- `docs/lvgl-build-guide.md` with complete build workflow documentation
+- `docs/ideas/pyi/05-roadmap.md` for C bindings roadmap
+- Blog posts: 21 (pyi stub system), 22 (display driver), 23 (emitter rewrite)
+
+### Fixed
+- C emitter pointer wrapping: replaced `MP_OBJ_FROM_PTR` with `mp_c_ptr_t` struct wrapper
+- C emitter GC safety: module-prefixed callback registry with `MP_REGISTER_ROOT_POINTER`
+- C emitter callback trampolines: generic user_data extraction instead of hardcoded LVGL
+- C emitter callback dispatch: match by callback name, not just first callback
+- C emitter argument conversion: unified `CType.to_c_decl()`/`to_mp_unbox()` path
+
 ### Added
  **Exception handling support**: `try`/`except`/`else`/`finally`/`raise` statements
   - `try`/`except ExceptionType:` - catch specific exception types

@@ -36,6 +36,7 @@ dev = [
 
 [project.scripts]
 mpy-compile = "mypyc_micropython.cli:main"
+mpy-compile-c = "mypyc_micropython.c_bindings.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mypyc_micropython"]

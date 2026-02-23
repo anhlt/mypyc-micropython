@@ -14,6 +14,10 @@ ESP_IDF_DIR ?= $(HOME)/esp/esp-idf
 MODULES_DIR := $(ROOT_DIR)/modules
 BUILD_DIR := $(ROOT_DIR)/build
 
+# LVGL paths
+LVGL_STUB_DIR := $(ROOT_DIR)/src/mypyc_micropython/c_bindings/stubs/lvgl
+LVGL_MODULE_DIR := $(MODULES_DIR)/usermod_lvgl
+
 # MicroPython port
 MP_PORT_DIR := $(MICROPYTHON_DIR)/ports/esp32
 
@@ -23,7 +27,7 @@ USER_C_MODULES := $(MODULES_DIR)/micropython.cmake
 .PHONY: help setup setup-idf setup-mpy compile build flash monitor clean \
         test test-device test-device-only run-device-tests \
         test-factorial test-point test-counter test-sensor test-list test-dict test-all-modules \
-        repl compile-all check-env
+        repl compile-all check-env compile-lvgl build-lvgl flash-lvgl deploy-lvgl test-lvgl
 
 # Default target
 help:
@@ -39,12 +43,19 @@ help:
 	@echo "  make compile SRC=examples/factorial.py"
 	@echo "                      - Compile Python file to C module"
 	@echo "  make compile-all    - Compile all examples"
+	@echo "  make compile-lvgl   - Generate LVGL C bindings from .pyi stub"
 	@echo ""
 	@echo "BUILD & FLASH:"
 	@echo "  make build          - Build MicroPython firmware with modules"
 	@echo "  make flash          - Flash firmware to device"
 	@echo "  make monitor        - Open serial monitor"
 	@echo "  make deploy         - Build + Flash + Monitor"
+	@echo ""
+	@echo "LVGL (display):"
+	@echo "  make deploy-lvgl    - One command: compile + build + flash LVGL firmware"
+	@echo "  make build-lvgl     - Build firmware with LVGL (larger partition)"
+	@echo "  make flash-lvgl     - Flash LVGL firmware to device"
+	@echo "  make test-lvgl      - Quick display test on device"
 	@echo ""
 	@echo "TESTING:"
 	@echo "  make test           - Run Python tests locally (pytest)"
@@ -144,7 +155,23 @@ compile-all:
 		MOD_NAME=$$(basename "$$f" .py); \
 		echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_$$MOD_NAME/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
 	done
+	@if [ -d "$(LVGL_MODULE_DIR)" ]; then \
+		echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_lvgl/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
+	fi
 	@echo "Done! Ready to build."
+
+compile-lvgl:
+	@echo "Compiling LVGL bindings from .pyi stub..."
+	@mkdir -p $(LVGL_MODULE_DIR)
+	mpy-compile-c $(LVGL_STUB_DIR)/lvgl.pyi -o $(LVGL_MODULE_DIR) -v
+	@echo "Copying display driver, config, and cmake..."
+	@cp $(LVGL_STUB_DIR)/st7789_driver.c $(LVGL_MODULE_DIR)/
+	@cp $(LVGL_STUB_DIR)/st7789_driver.h $(LVGL_MODULE_DIR)/
+	@cp $(LVGL_STUB_DIR)/lv_conf.h $(LVGL_MODULE_DIR)/
+	@cp $(LVGL_STUB_DIR)/micropython.cmake $(LVGL_MODULE_DIR)/
+	@echo "Patching lvgl.c with display driver entries..."
+	@python3 scripts/patch_lvgl_c.py $(LVGL_MODULE_DIR)/lvgl.c
+	@echo "LVGL module compiled successfully."
 
 # ============================================================================
 # BUILD TARGETS
@@ -162,10 +189,33 @@ build: check-env
 		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) USER_C_MODULES=$(USER_C_MODULES) \
 	'
 
+build-lvgl: check-env compile-all compile-lvgl
+	@echo "Adding LVGL to module list..."
+	@if ! grep -q "usermod_lvgl" $(MODULES_DIR)/micropython.cmake 2>/dev/null; then \
+		echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_lvgl/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
+	fi
+	@echo "Building MicroPython + LVGL firmware for $(BOARD)..."
+	@echo "Using custom partition table (2.56MB app) for LVGL"
+	@cp $(ROOT_DIR)/partitions-lvgl.csv $(MP_PORT_DIR)/partitions-4MiB.csv
+	@bash -c '\
+		source $(ESP_IDF_DIR)/export.sh && \
+		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) USER_C_MODULES=$(USER_C_MODULES) \
+	'
+	@echo "Restoring original partition table..."
+	@cd $(MICROPYTHON_DIR) && git checkout ports/esp32/partitions-4MiB.csv
+
 flash: check-env
 	@echo "Flashing firmware to $(PORT)..."
 	PATH="/usr/bin:$$PATH" bash -c '. $(ESP_IDF_DIR)/export.sh && \
 		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) PORT=$(PORT) deploy'
+
+flash-lvgl: check-env
+	@echo "Flashing LVGL firmware to $(PORT)..."
+	@cp $(ROOT_DIR)/partitions-lvgl.csv $(MP_PORT_DIR)/partitions-4MiB.csv
+	PATH="/usr/bin:$$PATH" bash -c '. $(ESP_IDF_DIR)/export.sh && \
+		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) PORT=$(PORT) deploy'
+	@echo "Restoring original partition table..."
+	@cd $(MICROPYTHON_DIR) && git checkout ports/esp32/partitions-4MiB.csv
 
 erase: check-env
 	@echo "Erasing flash..."
@@ -181,6 +231,10 @@ monitor: check-env
 deploy: build flash
 	@sleep 2
 	@$(MAKE) monitor
+
+deploy-lvgl: build-lvgl flash-lvgl
+	@echo "LVGL firmware deployed successfully!"
+	@echo "Test with: make test-lvgl PORT=$(PORT)"
 
 # ============================================================================
 # TESTING TARGETS
@@ -228,6 +282,10 @@ test-list:
 test-dict:
 	@echo "Testing dict_operations module on device..."
 	@python3 run_device_tests.py --port $(PORT)
+
+test-lvgl:
+	@echo "Testing LVGL on device..."
+	@mpremote connect $(PORT) exec "import lvgl, time; lvgl.init_display(); scr = lvgl.lv_screen_active(); lvgl.lv_obj_clean(scr); label = lvgl.lv_label_create(scr); lvgl.lv_obj_center(label); lvgl.lv_label_set_text(label, 'LVGL Test OK'); [lvgl.timer_handler() or time.sleep_ms(10) for _ in range(100)]; print('LVGL test passed')"
 
 test-all-modules: test-factorial test-point test-counter test-sensor test-list
 	@echo "All module tests complete!"
