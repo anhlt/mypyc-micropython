@@ -1691,6 +1691,56 @@ end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
+    (
+        "super_3level x1000",
+        """
+import super_calls
+import time
+start = time.ticks_us()
+for _ in range(1000):
+    sd = super_calls.ShowDog("Bella", 10, 3)
+    sd.describe()
+    sd.get_total_score()
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+class Animal:
+    def __init__(self, name, sound):
+        self.name = name
+        self.sound = sound
+    def speak(self):
+        return self.sound
+    def describe(self):
+        return self.name
+class Dog(Animal):
+    def __init__(self, name, tricks):
+        super().__init__(name, "Woof")
+        self.tricks = tricks
+    def describe(self):
+        base = super().describe()
+        return base
+    def get_tricks(self):
+        return self.tricks
+class ShowDog(Dog):
+    def __init__(self, name, tricks, awards):
+        super().__init__(name, tricks)
+        self.awards = awards
+    def describe(self):
+        base = super().describe()
+        return base
+    def get_total_score(self):
+        return self.tricks + self.awards
+start = time.ticks_us()
+for _ in range(1000):
+    sd = ShowDog("Bella", 10, 3)
+    sd.describe()
+    sd.get_total_score()
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
 ]
 
 

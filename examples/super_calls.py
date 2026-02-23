@@ -26,3 +26,21 @@ class Dog(Animal):
 
     def get_tricks(self) -> int:
         return self.tricks
+
+
+class ShowDog(Dog):
+    awards: int
+
+    def __init__(self, name: str, tricks: int, awards: int) -> None:
+        super().__init__(name, tricks)
+        self.awards = awards
+
+    def describe(self) -> str:
+        base: str = super().describe()
+        return base
+
+    def get_awards(self) -> int:
+        return self.awards
+
+    def get_total_score(self) -> int:
+        return self.tricks + self.awards
