@@ -31,6 +31,11 @@ passed_tests = 0
 failed_tests: list[tuple[str, str]] = []
 
 
+
+# Waveshare ESP32-C6-LCD-1.47 board: RGB LED (WS2812) on GPIO8
+RGB_LED_GPIO = 8
+
+
 def run_on_device(code: str, port: str = "", timeout: int = 30) -> tuple[bool, str]:
     """Execute Python code on device via mpremote."""
     device_port = port if port else PORT
@@ -49,6 +54,44 @@ def run_on_device(code: str, port: str = "", timeout: int = 30) -> tuple[bool, s
         return False, "Timeout"
     except Exception as e:
         return False, str(e)
+
+
+
+
+def led_rgb(r: int, g: int, b: int) -> None:
+    """Set the onboard WS2812 RGB LED to a specific color."""
+    code = (
+        f"from machine import Pin; from neopixel import NeoPixel; "
+        f"np = NeoPixel(Pin({RGB_LED_GPIO}, Pin.OUT), 1); "
+        f"np[0] = ({r}, {g}, {b}); np.write()"
+    )
+    run_on_device(code)
+
+
+def led_off() -> None:
+    """Turn off the onboard RGB LED."""
+    led_rgb(0, 0, 0)
+
+
+def led_cycle_colors() -> None:
+    """Cycle RGB LED through R, G, B, White -- visual proof the board responds."""
+    import time
+
+    colors = [
+        ("Red", 255, 0, 0),
+        ("Green", 0, 255, 0),
+        ("Blue", 0, 0, 255),
+        ("White", 255, 255, 255),
+    ]
+    print("[LED] Cycling RGB LED on GPIO8 (visual board check)...")
+    for name, r, g, b in colors:
+        sys.stdout.write(f"  LED -> {name}... ")
+        sys.stdout.flush()
+        led_rgb(r, g, b)
+        print("OK")
+        time.sleep(0.4)
+    led_off()
+    print("[LED] LED cycle complete -- board is responding!\n")
 
 
 def test(name: str, code: str, expected: str | Callable[[str], bool]) -> None:
@@ -1387,8 +1430,6 @@ def test_string_operations():
 
 
 def test_itertools_builtins():
-    test_exception_handling()
-    test_super_calls()
     """Test itertools_builtins module (enumerate, zip, sorted)."""
     print("\n[TEST] Testing itertools_builtins module...")
 
@@ -1444,83 +1485,7 @@ def test_itertools_builtins():
 def test_exception_handling():
     """Test exception_handling module (try/except/finally/raise)."""
     print("\n[TEST] Testing exception_handling module...")
-    test(
-        "safe_divide(10, 2)",
-        "import exception_handling as eh; print(eh.safe_divide(10, 2))",
-        "5",
-    )
-    # 3-level inheritance: ShowDog(Dog(Animal))
-    test(
-        "ShowDog creation with chained super().__init__",
-        "import super_calls as s; sd = s.ShowDog('Bella', 10, 3); print(sd.name)",
-        "Bella",
-    )
-    test(
-        "ShowDog inherits speak from Animal",
-        "import super_calls as s; sd = s.ShowDog('Bella', 10, 3); print(sd.speak())",
-        "Woof",
-    )
-    test(
-        "ShowDog.describe chains super() through Dog to Animal",
-        "import super_calls as s; sd = s.ShowDog('Bella', 10, 3); print(sd.describe())",
-        "Bella",
-    )
-    test(
-        "ShowDog.get_awards own method",
-        "import super_calls as s; sd = s.ShowDog('Bella', 10, 3); print(sd.get_awards())",
-        "3",
-    )
-    test(
-        "ShowDog.get_total_score cross-level field access",
-        "import super_calls as s; sd = s.ShowDog('Bella', 10, 3); print(sd.get_total_score())",
-        "13",
-    )
-    test(
-        "ShowDog.get_tricks inherited from Dog",
-        "import super_calls as s; sd = s.ShowDog('Bella', 10, 3); print(sd.get_tricks())",
-        "10",
-    )
-    )
 
-def run_all_tests():
-    """Run all test suites."""
-    global total_tests, passed_tests, failed_tests
-    total_tests = 0
-    passed_tests = 0
-    failed_tests = []
-
-    print("=" * 70)
-    print("[TEST SUITE] mypyc-micropython Comprehensive Device Test Suite")
-    print("=" * 70)
-    print(f"Device port: {PORT}")
-    print("=" * 70)
-
-    # Run all test suites
-    test_factorial()
-    test_point()
-    test_counter()
-    test_sensor()
-    test_list_operations()
-    test_math_utils()
-    test_bitwise()
-    test_algorithms()
-    test_dict_operations()
-    test_inventory()
-    test_tuple_operations()
-    test_set_operations()
-    test_builtins_demo()
-    test_default_args()
-    test_star_args()
-    test_class_param()
-    test_chained_attr()
-    test_container_attrs()
-    test_string_operations()
-    test_itertools_builtins()
-    test_exception_handling()
-    test_super_calls()
-def test_exception_handling():
-    """Test exception_handling module (try/except/finally/raise)."""
-    print("\n[TEST] Testing exception_handling module...")
     test(
         "safe_divide(10, 2)",
         "import exception_handling as eh; print(eh.safe_divide(10, 2))",
@@ -1623,6 +1588,82 @@ def test_exception_handling():
         "-1",
     )
 
+
+def test_super_calls():
+    """Test super_calls module (3-level inheritance with super().__init__)."""
+    print("\n[TEST] Testing super_calls module...")
+
+    test(
+        "ShowDog creation with chained super().__init__",
+        "import super_calls as s; sd = s.ShowDog('Bella', 10, 3); print(sd.name)",
+        "Bella",
+    )
+
+    test(
+        "ShowDog inherits speak from Animal",
+        "import super_calls as s; sd = s.ShowDog('Bella', 10, 3); print(sd.speak())",
+        "Woof",
+    )
+
+    test(
+        "ShowDog.describe chains super() through Dog to Animal",
+        "import super_calls as s; sd = s.ShowDog('Bella', 10, 3); print(sd.describe())",
+        "Bella",
+    )
+
+    test(
+        "ShowDog.get_awards own method",
+        "import super_calls as s; sd = s.ShowDog('Bella', 10, 3); print(sd.get_awards())",
+        "3",
+    )
+
+    test(
+        "ShowDog.get_total_score cross-level field access",
+        "import super_calls as s; sd = s.ShowDog('Bella', 10, 3); print(sd.get_total_score())",
+        "13",
+    )
+
+    test(
+        "ShowDog.get_tricks inherited from Dog",
+        "import super_calls as s; sd = s.ShowDog('Bella', 10, 3); print(sd.get_tricks())",
+        "10",
+    )
+
+
+def run_all_tests():
+    """Run all test suites."""
+    global total_tests, passed_tests, failed_tests
+    total_tests = 0
+    passed_tests = 0
+    failed_tests = []
+    print("=" * 70)
+    print("[TEST SUITE] mypyc-micropython Comprehensive Device Test Suite")
+    print("=" * 70)
+    print(f"Device port: {PORT}")
+    print("=" * 70)
+    # Run all test suites
+    test_factorial()
+    test_point()
+    test_counter()
+    test_sensor()
+    test_list_operations()
+    test_math_utils()
+    test_bitwise()
+    test_algorithms()
+    test_dict_operations()
+    test_inventory()
+    test_tuple_operations()
+    test_set_operations()
+    test_builtins_demo()
+    test_default_args()
+    test_star_args()
+    test_class_param()
+    test_chained_attr()
+    test_container_attrs()
+    test_string_operations()
+    test_itertools_builtins()
+    test_exception_handling()
+    test_super_calls()
     # Print summary
     print("\n" + "=" * 70)
     print("[SUMMARY] TEST SUMMARY")
@@ -1630,11 +1671,9 @@ def test_exception_handling():
     print(f"Total tests run: {total_tests}")
     print(f"Passed: {passed_tests} PASS")
     print(f"Failed: {len(failed_tests)} FAIL")
-
     if total_tests > 0:
         success_rate = (passed_tests / total_tests) * 100
         print(f"Success rate: {success_rate:.1f}%")
-
         if success_rate == 100:
             print("SUCCESS ALL TESTS PASSED! SUCCESS")
         elif success_rate >= 80:
@@ -1643,22 +1682,18 @@ def test_exception_handling():
             print("[WARNING]  Mixed results - some issues to address")
         else:
             print("FAIL Poor results - significant issues found")
-
     if failed_tests:
         print("\nFAIL Failed tests:")
         for name, reason in failed_tests:
             print(f"  - {name}")
             print(f"    {reason[:100]}{'...' if len(reason) > 100 else ''}")
-
     print("=" * 70)
-
     return len(failed_tests) == 0
 
 
 def main():
     """Main entry point with argument parsing."""
     global PORT
-
     parser = argparse.ArgumentParser(
         description="Comprehensive device test runner for mypyc-micropython"
     )
@@ -1668,9 +1703,7 @@ def main():
         help=f"Serial port for ESP32 device (default: {DEFAULT_PORT})",
     )
     args = parser.parse_args()
-
     PORT = args.port
-
     print("[CHECK] Checking device connection...")
     success, output = run_on_device("print('Device ready')")
     if not success:
@@ -1681,10 +1714,15 @@ def main():
         print(f"  2. Device port is correct (current: {PORT})")
         print("  3. Firmware has been flashed with 'make deploy'")
         sys.exit(1)
-
     print("PASS Device connected and responding\n")
-
+    # Cycle RGB LED to visually confirm the board is responding
+    led_cycle_colors()
     success = run_all_tests()
+    # Final LED status: green = all pass, red = failures
+    if success:
+        led_rgb(0, 255, 0)  # Green = all tests passed
+    else:
+        led_rgb(255, 0, 0)  # Red = some tests failed
     sys.exit(0 if success else 1)
 
 
