@@ -131,6 +131,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `examples/set_operations.py` - comprehensive set examples (17 functions)
 - C runtime tests for tuple operations (7 tests)
 - C runtime tests for set operations (5 tests)
+- `super()` call support in child class methods (`super().__init__()`, `super().method()`)
 
 ### Changed
 - `make compile-all` now cleans old usermod directories and deps/ build folder before compiling

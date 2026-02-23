@@ -63,6 +63,7 @@ from .ir import (
     StmtIR,
     SubscriptAssignIR,
     SubscriptIR,
+    SuperCallIR,
     TempIR,
     TryIR,
     TupleNewIR,
@@ -2042,6 +2043,43 @@ class IRBuilder:
                         class_c_name=param_class_ir.c_name,
                         result_type=IRType.OBJ,
                     ), []
+
+        if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute):
+            if (
+                isinstance(expr.func.value, ast.Call)
+                and isinstance(expr.func.value.func, ast.Name)
+                and expr.func.value.func.id == "super"
+                and len(expr.func.value.args) == 0
+                and len(expr.func.value.keywords) == 0
+            ):
+                method_name = expr.func.attr
+
+                parent_class = class_ir.base
+                while parent_class is not None and method_name not in parent_class.methods:
+                    parent_class = parent_class.base
+
+                if parent_class is not None:
+                    parent_method = parent_class.methods[method_name]
+
+                    args: list[ValueIR] = []
+                    arg_preludes: list[list] = []
+                    for arg in expr.args:
+                        val, prelude = self._build_method_expr(arg, locals_, class_ir, native)
+                        args.append(val)
+                        arg_preludes.append(prelude)
+
+                    return_type = IRType.from_c_type_str(parent_method.return_type.to_c_type_str())
+                    all_preludes = [p for pl in arg_preludes for p in pl]
+                    return SuperCallIR(
+                        ir_type=return_type,
+                        method_name=method_name,
+                        parent_c_name=parent_class.c_name,
+                        parent_method_c_name=parent_method.c_name,
+                        args=args,
+                        return_type=return_type,
+                        is_init=method_name == "__init__",
+                        arg_preludes=arg_preludes,
+                    ), all_preludes
 
         # Handle self.method()
         if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute):

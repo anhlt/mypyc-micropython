@@ -1005,6 +1005,24 @@ class SelfMethodCallIR(ExprIR):
 
 
 @dataclass
+class SuperCallIR(ExprIR):
+    """super().method(args) call -- compile-time resolved to parent class method.
+
+    Resolves at compile time to a direct call to the parent class's method,
+    bypassing vtable dispatch. The parent class is determined from class_ir.base
+    during IR building.
+    """
+
+    method_name: str
+    parent_c_name: str  # Parent class C name (e.g., 'module_Parent')
+    parent_method_c_name: str  # Parent method C name (e.g., 'module_Parent___init__')
+    args: list[ValueIR]
+    return_type: IRType
+    is_init: bool = False  # True if calling super().__init__()
+    # Preludes for args
+    arg_preludes: list[list[InstrIR]] = field(default_factory=list)
+
+@dataclass
 class SelfAugAssignIR(StmtIR):
     """Augmented assignment on self attribute: self.attr op= value."""
 

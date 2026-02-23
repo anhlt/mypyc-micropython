@@ -20,6 +20,10 @@ typedef struct {
     mp_obj_t type;
 } mp_obj_base_t;
 
+typedef struct _mp_obj_type_t {
+    int unused;
+} mp_obj_type_t;
+
 typedef struct {
     mp_obj_t key;
     mp_obj_t value;
@@ -228,6 +232,10 @@ static inline mp_float_t mp_obj_float_get(mp_obj_t obj) {
     }
     mp_mock_abort("cannot convert object to float");
     return 0.0;
+}
+
+static inline mp_float_t mp_obj_get_float(mp_obj_t obj) {
+    return mp_obj_float_get(obj);
 }
 
 static inline mp_float_t mp_get_float_checked(mp_obj_t obj) {
@@ -544,6 +552,7 @@ static inline mp_obj_t mp_binary_op(mp_binary_op_t op, mp_obj_t lhs, mp_obj_t rh
     return mp_const_none;
 }
 
+#define MP_QSTR_NULL ((qstr)0)
 #define MP_QSTR_pop   ((qstr)0x1001)
 #define MP_QSTR_append ((qstr)0x1002)
 
@@ -705,6 +714,21 @@ static inline mp_obj_t mp_call_method_n_kw(size_t n_args, size_t n_kw, const mp_
 
 #define MP_OBJ_FROM_PTR(p) ((mp_obj_t)(p))
 #define MP_OBJ_TO_PTR(o) ((void *)(o))
+#define mp_obj_malloc(type_name, type_ptr) ((type_name *)calloc(1, sizeof(type_name)))
+
+static inline void mp_arg_check_num(
+    size_t n_args,
+    size_t n_kw,
+    size_t n_args_min,
+    size_t n_args_max,
+    bool takes_kw
+) {
+    (void)n_args;
+    (void)n_kw;
+    (void)n_args_min;
+    (void)n_args_max;
+    (void)takes_kw;
+}
 
 #define MP_MOCK_BUILTIN_TAG_MIN 1001
 #define MP_MOCK_BUILTIN_TAG_MAX 1002
@@ -969,7 +993,9 @@ static inline mp_obj_t mp_call_function_n_kw(mp_obj_t fun, size_t n_args, size_t
 #define MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(obj_name, min, max, fun_name) \
     static const int obj_name = 0
 #define MP_DEFINE_CONST_FUN_OBJ_KW(obj_name, min, fun_name) static const int obj_name = 0
-#define MP_DEFINE_CONST_DICT(dict_name, table_name) static const int dict_name = 0
+#define MP_DEFINE_CONST_DICT(dict_name, table_name) const int dict_name = 0
+#define MP_TYPE_FLAG_NONE (0)
+#define MP_DEFINE_CONST_OBJ_TYPE(obj_name, qstr, flags, ...) const mp_obj_type_t obj_name = {0}
 #define MP_REGISTER_MODULE(qstr, mod)
 
 static inline bool mp_map_slot_is_filled(mp_map_t *map, size_t slot) {
