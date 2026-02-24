@@ -4029,3 +4029,303 @@ def nested_try(a: int, b: int) -> int:
         result = compile_source(source, "test", type_check=False)
         assert result.count("nlr_buf_t") == 2
         assert result.count("nlr_push") == 2
+
+
+
+class TestExternalLibCalls:
+    """Tests for external C library function calls via .pyi stubs."""
+
+    @staticmethod
+    def _make_test_lib():
+        """Create a minimal CLibraryDef for testing."""
+        from mypyc_micropython.c_bindings.c_ir import (
+            CEnumDef,
+            CFuncDef,
+            CLibraryDef,
+            CParamDef,
+            CStructDef,
+            CType,
+            CTypeDef,
+        )
+
+        return CLibraryDef(
+            name="testlib",
+            header="testlib.h",
+            structs={
+                "TestObj": CStructDef(py_name="TestObj", c_name="test_obj_t"),
+            },
+            enums={
+                "TestAlign": CEnumDef(
+                    py_name="TestAlign",
+                    c_name="test_align_t",
+                    values={"CENTER": 9, "TOP_LEFT": 1, "BOTTOM_RIGHT": 6},
+                ),
+            },
+            functions={
+                "create_label": CFuncDef(
+                    py_name="create_label",
+                    c_name="test_create_label",
+                    params=[
+                        CParamDef(
+                            name="parent",
+                            type_def=CTypeDef(
+                                CType.STRUCT_PTR, struct_name="test_obj_t"
+                            ),
+                        )
+                    ],
+                    return_type=CTypeDef(CType.STRUCT_PTR, struct_name="test_obj_t"),
+                ),
+                "set_text": CFuncDef(
+                    py_name="set_text",
+                    c_name="test_set_text",
+                    params=[
+                        CParamDef(
+                            name="obj",
+                            type_def=CTypeDef(
+                                CType.STRUCT_PTR, struct_name="test_obj_t"
+                            ),
+                        ),
+                        CParamDef(
+                            name="text",
+                            type_def=CTypeDef(CType.STR),
+                        ),
+                    ],
+                    return_type=CTypeDef(CType.VOID),
+                ),
+                "get_value": CFuncDef(
+                    py_name="get_value",
+                    c_name="test_get_value",
+                    params=[
+                        CParamDef(
+                            name="obj",
+                            type_def=CTypeDef(
+                                CType.STRUCT_PTR, struct_name="test_obj_t"
+                            ),
+                        )
+                    ],
+                    return_type=CTypeDef(CType.INT),
+                ),
+                "no_args": CFuncDef(
+                    py_name="no_args",
+                    c_name="test_no_args",
+                    params=[],
+                    return_type=CTypeDef(CType.STRUCT_PTR, struct_name="test_obj_t"),
+                ),
+            },
+        )
+
+    def test_basic_clib_call(self):
+        """Test that import + function call generates direct wrapper call."""
+        lib = self._make_test_lib()
+        source = '''
+import testlib as tl
+
+def make_label() -> int:
+    screen = tl.no_args()
+    label = tl.create_label(screen)
+    return 0
+'''
+        result = compile_source(
+            source, "test", type_check=False, external_libs={"testlib": lib}
+        )
+        assert "test_no_args_wrapper" in result
+        assert "test_create_label_wrapper" in result
+
+    def test_void_clib_call(self):
+        """Test that void-returning calls generate correct code."""
+        lib = self._make_test_lib()
+        source = '''
+import testlib as tl
+
+def set_label_text() -> int:
+    screen = tl.no_args()
+    tl.set_text(screen, "hello")
+    return 0
+'''
+        result = compile_source(
+            source, "test", type_check=False, external_libs={"testlib": lib}
+        )
+        assert "test_set_text_wrapper" in result
+        assert "mp_const_none" in result
+
+    def test_clib_enum_access(self):
+        """Test that enum access generates integer constant."""
+        lib = self._make_test_lib()
+        source = '''
+import testlib as tl
+
+def get_align() -> int:
+    return tl.TestAlign.CENTER
+'''
+        result = compile_source(
+            source, "test", type_check=False, external_libs={"testlib": lib}
+        )
+        # CENTER = 9
+        assert "9" in result
+
+    def test_clib_enum_multiple_values(self):
+        """Test different enum values."""
+        lib = self._make_test_lib()
+        source = '''
+import testlib as tl
+
+def use_enums() -> int:
+    a: int = tl.TestAlign.TOP_LEFT
+    b: int = tl.TestAlign.BOTTOM_RIGHT
+    return a + b
+'''
+        result = compile_source(
+            source, "test", type_check=False, external_libs={"testlib": lib}
+        )
+        # TOP_LEFT = 1, BOTTOM_RIGHT = 6
+        assert "1" in result
+        assert "6" in result
+
+    def test_extern_declarations_generated(self):
+        """Test that extern declarations are generated for used libs."""
+        lib = self._make_test_lib()
+        source = '''
+import testlib as tl
+
+def make_label() -> int:
+    screen = tl.no_args()
+    return 0
+'''
+        result = compile_source(
+            source, "test", type_check=False, external_libs={"testlib": lib}
+        )
+        assert "extern mp_obj_t" in result
+        assert "test_no_args_wrapper" in result
+
+    def test_no_extern_when_lib_unused(self):
+        """Test that no extern declarations are generated for unused libs."""
+        lib = self._make_test_lib()
+        source = '''
+def simple_add(a: int, b: int) -> int:
+    return a + b
+'''
+        result = compile_source(
+            source, "test", type_check=False, external_libs={"testlib": lib}
+        )
+        # Library not imported, so no extern declarations
+        assert "extern mp_obj_t" not in result
+
+    def test_import_without_alias(self):
+        """Test that import without alias works."""
+        lib = self._make_test_lib()
+        source = '''
+import testlib
+
+def make_label() -> int:
+    screen = testlib.no_args()
+    return 0
+'''
+        result = compile_source(
+            source, "test", type_check=False, external_libs={"testlib": lib}
+        )
+        assert "test_no_args_wrapper" in result
+
+    def test_clib_call_with_multiple_args(self):
+        """Test calling external function with multiple arguments."""
+        lib = self._make_test_lib()
+        source = '''
+import testlib as tl
+
+def set_label() -> int:
+    screen = tl.no_args()
+    tl.set_text(screen, "world")
+    return 0
+'''
+        result = compile_source(
+            source, "test", type_check=False, external_libs={"testlib": lib}
+        )
+        assert "test_set_text_wrapper" in result
+
+    def test_clib_call_return_used_as_arg(self):
+        """Test chaining: return value of one call used as arg to another."""
+        lib = self._make_test_lib()
+        source = '''
+import testlib as tl
+
+def chain_calls() -> int:
+    parent = tl.no_args()
+    label = tl.create_label(parent)
+    tl.set_text(label, "chained")
+    return 0
+'''
+        result = compile_source(
+            source, "test", type_check=False, external_libs={"testlib": lib}
+        )
+        assert "test_no_args_wrapper" in result
+        assert "test_create_label_wrapper" in result
+        assert "test_set_text_wrapper" in result
+
+    def test_clib_enum_in_function_call(self):
+        """Test passing enum value as function argument."""
+        lib = self._make_test_lib()
+        # Add a function that takes an int param for alignment
+        from mypyc_micropython.c_bindings.c_ir import (
+            CFuncDef,
+            CParamDef,
+            CType,
+            CTypeDef,
+        )
+        lib.functions["set_align"] = CFuncDef(
+            py_name="set_align",
+            c_name="test_set_align",
+            params=[
+                CParamDef(
+                    name="obj",
+                    type_def=CTypeDef(CType.STRUCT_PTR, struct_name="test_obj_t"),
+                ),
+                CParamDef(name="align", type_def=CTypeDef(CType.INT)),
+            ],
+            return_type=CTypeDef(CType.VOID),
+        )
+        source = '''
+import testlib as tl
+
+def align_center() -> int:
+    screen = tl.no_args()
+    tl.set_align(screen, tl.TestAlign.CENTER)
+    return 0
+'''
+        result = compile_source(
+            source, "test", type_check=False, external_libs={"testlib": lib}
+        )
+        assert "test_set_align_wrapper" in result
+        # CENTER = 9, should be boxed as mp_obj_new_int(9)
+        assert "9" in result
+
+    def test_header_file_generation(self):
+        """Test that CEmitter can generate a header file."""
+        from mypyc_micropython.c_bindings.c_emitter import CEmitter
+
+        lib = self._make_test_lib()
+        emitter = CEmitter(lib, emit_public=True)
+        header = emitter.emit_header_file()
+        assert "#ifndef" in header
+        assert "extern mp_obj_t test_create_label_wrapper" in header
+        assert "extern mp_obj_t test_set_text_wrapper" in header
+        assert "extern mp_obj_t test_no_args_wrapper" in header
+        assert "#endif" in header
+
+    def test_public_wrappers_not_static(self):
+        """Test that emit_public=True removes static from wrappers."""
+        from mypyc_micropython.c_bindings.c_emitter import CEmitter
+
+        lib = self._make_test_lib()
+        emitter = CEmitter(lib, emit_public=True)
+        code = emitter.emit()
+        # Wrappers should NOT have 'static' prefix
+        assert "static mp_obj_t test_create_label_wrapper" not in code
+        assert "mp_obj_t test_create_label_wrapper" in code
+
+    def test_private_wrappers_are_static(self):
+        """Test that emit_public=False (default) keeps static wrappers."""
+        from mypyc_micropython.c_bindings.c_emitter import CEmitter
+
+        lib = self._make_test_lib()
+        emitter = CEmitter(lib)  # default: emit_public=False
+        code = emitter.emit()
+        assert "static mp_obj_t test_create_label_wrapper" in code

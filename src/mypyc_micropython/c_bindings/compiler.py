@@ -26,6 +26,8 @@ class CBindingCompiler:
         self,
         stub_path: Path,
         output_dir: Path | None = None,
+        *,
+        emit_public: bool = False,
     ) -> CompilationResult:
         try:
             library = self.parser.parse_file(stub_path)
@@ -42,7 +44,7 @@ class CBindingCompiler:
                 errors=["Missing __c_header__ in stub file"],
             )
 
-        emitter = CEmitter(library)
+        emitter = CEmitter(library, emit_public=emit_public)
         c_code = emitter.emit()
 
         cmake = CMakeEmitter(library)

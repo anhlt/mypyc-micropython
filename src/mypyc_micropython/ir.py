@@ -1023,6 +1023,43 @@ class SuperCallIR(ExprIR):
     arg_preludes: list[list[InstrIR]] = field(default_factory=list)
 
 @dataclass
+class CLibCallIR(ExprIR):
+    """Call to an external C library wrapper function.
+
+    Generated when the compiler detects a call like `lv.label_create(parent)`
+    where `lv` is an imported external C library module (defined by a .pyi stub).
+
+    The wrapper function takes mp_obj_t args and returns mp_obj_t,
+    so from the emitter's perspective this is a direct C function call.
+
+    Generated C: lv_label_create_wrapper(parent_obj)
+    """
+
+    lib_name: str  # Library name (e.g., "lvgl")
+    func_name: str  # Python function name (e.g., "label_create")
+    c_wrapper_name: str  # C wrapper function name (e.g., "lv_label_create_wrapper")
+    args: list[ValueIR]
+    arg_preludes: list[list[InstrIR]] = field(default_factory=list)
+    is_void: bool = False
+    uses_var_args: bool = False
+
+
+@dataclass
+class CLibEnumIR(ExprIR):
+    """Reference to an external C library enum value.
+
+    Generated when the compiler detects `lv.LvAlign.CENTER` where `lv` is
+    an imported external C library module. Enum values are integer constants.
+
+    Generated C: 9  (the integer value of LV_ALIGN_CENTER)
+    """
+
+    lib_name: str  # Library name (e.g., "lvgl")
+    enum_class: str  # Python enum class name (e.g., "LvAlign")
+    member_name: str  # Member name (e.g., "CENTER")
+    c_enum_value: int  # Resolved integer value
+
+@dataclass
 class SelfAugAssignIR(StmtIR):
     """Augmented assignment on self attribute: self.attr op= value."""
 

@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from mypyc_micropython.c_bindings.c_ir import CLibraryDef
+
     from .type_checker import ClassTypeInfo, FunctionTypeInfo
 
 from .ir import (
@@ -144,6 +146,7 @@ class IRBuilder:
         module_name: str,
         known_classes: dict[str, ClassIR] | None = None,
         mypy_types: "MypyTypeInfo | None" = None,
+        external_libs: dict[str, CLibraryDef] | None = None,
     ):
         self.module_name = module_name
         self.c_name = sanitize_name(module_name)
@@ -160,6 +163,20 @@ class IRBuilder:
         self._loop_depth = 0
         self._class_typed_params: dict[str, str] = {}
         self._mypy_local_types: dict[str, str] = {}
+        self._external_libs: dict[str, CLibraryDef] = external_libs or {}
+        self._import_aliases: dict[str, str] = {}
+        self._uses_external_libs: set[str] = set()
+
+    def register_import(self, node: ast.Import | ast.ImportFrom) -> None:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                module_name = alias.name
+                local_name = alias.asname or alias.name
+                if module_name in self._external_libs:
+                    self._import_aliases[local_name] = module_name
+        elif isinstance(node, ast.ImportFrom):
+            if node.module and node.module in self._external_libs:
+                self._import_aliases[node.module] = node.module
 
     def _fresh_temp(self) -> str:
         self._temp_counter += 1
@@ -931,6 +948,11 @@ class IRBuilder:
         if not isinstance(expr.func, ast.Attribute):
             return ConstIR(ir_type=IRType.OBJ, value=None), []
 
+        if isinstance(expr.func.value, ast.Name):
+            var_name = expr.func.value.id
+            if var_name in self._import_aliases:
+                return self._build_clib_call(expr, var_name, locals_)
+
         receiver, recv_prelude = self._build_expr(expr.func.value, locals_)
         method_name = expr.func.attr
 
@@ -946,6 +968,53 @@ class IRBuilder:
         method_call = MethodCallIR(result=result, receiver=receiver, method=method_name, args=args)
 
         return result, all_preludes + [method_call]
+
+    def _build_clib_call(
+        self, expr: ast.Call, alias: str, locals_: list[str]
+    ) -> tuple[ValueIR, list]:
+        from .c_bindings.c_ir import CType as CBindingsCType
+        from .ir import CLibCallIR
+
+        if not isinstance(expr.func, ast.Attribute):
+            return ConstIR(ir_type=IRType.OBJ, value=None), []
+
+        lib_name = self._import_aliases[alias]
+        lib_def = self._external_libs[lib_name]
+        func_name = expr.func.attr
+        self._uses_external_libs.add(lib_name)
+
+        func_def = lib_def.functions.get(func_name)
+
+        args: list[ValueIR] = []
+        arg_preludes: list[list] = []
+        for arg in expr.args:
+            val, prelude = self._build_expr(arg, locals_)
+            args.append(val)
+            arg_preludes.append(prelude)
+        all_preludes = [p for pl in arg_preludes for p in pl]
+
+        has_callback = False
+        if func_def:
+            c_wrapper_name = f"{func_def.c_name}_wrapper"
+            is_void = func_def.return_type.base_type == CBindingsCType.VOID
+            has_callback = any(
+                p.type_def.base_type == CBindingsCType.CALLBACK for p in func_def.params
+            )
+        else:
+            c_wrapper_name = f"{func_name}_wrapper"
+            is_void = False
+
+        uses_var_args = len(args) > 3 or has_callback
+        return CLibCallIR(
+            ir_type=IRType.OBJ,
+            lib_name=lib_name,
+            func_name=func_name,
+            c_wrapper_name=c_wrapper_name,
+            args=args,
+            arg_preludes=arg_preludes,
+            is_void=is_void,
+            uses_var_args=uses_var_args,
+        ), all_preludes
 
     def _build_class_instantiation(
         self, expr: ast.Call, class_name: str, locals_: list[str]
@@ -1088,6 +1157,19 @@ class IRBuilder:
         ), value_prelude + slice_prelude
 
     def _build_attribute(self, expr: ast.Attribute, locals_: list[str]) -> tuple[ValueIR, list]:
+        if isinstance(expr.value, ast.Attribute) and isinstance(expr.value.value, ast.Name):
+            module_alias = expr.value.value.id
+            if module_alias in self._import_aliases:
+                return self._build_clib_enum(expr, module_alias, locals_)
+
+        if isinstance(expr.value, ast.Name):
+            var_name = expr.value.id
+            if var_name in self._import_aliases:
+                lib_name = self._import_aliases[var_name]
+                lib_def = self._external_libs[lib_name]
+                if expr.attr in lib_def.enums:
+                    pass
+
         attr_name = expr.attr
 
         if isinstance(expr.value, ast.Name):
@@ -1142,9 +1224,36 @@ class IRBuilder:
 
         return ConstIR(ir_type=IRType.OBJ, value=None), []
 
-    def _build_list_comp(
-        self, expr: ast.ListComp, locals_: list[str]
+    def _build_clib_enum(
+        self, expr: ast.Attribute, module_alias: str, locals_: list[str]
     ) -> tuple[ValueIR, list]:
+        del locals_
+        from .ir import CLibEnumIR
+
+        if not isinstance(expr.value, ast.Attribute):
+            return ConstIR(ir_type=IRType.INT, value=0), []
+
+        lib_name = self._import_aliases[module_alias]
+        lib_def = self._external_libs[lib_name]
+        self._uses_external_libs.add(lib_name)
+
+        enum_class_name = expr.value.attr
+        member_name = expr.attr
+
+        enum_def = lib_def.enums.get(enum_class_name)
+        if enum_def and member_name in enum_def.values:
+            c_value = enum_def.values[member_name]
+            return CLibEnumIR(
+                ir_type=IRType.INT,
+                lib_name=lib_name,
+                enum_class=enum_class_name,
+                member_name=member_name,
+                c_enum_value=c_value,
+            ), []
+
+        return ConstIR(ir_type=IRType.INT, value=0), []
+
+    def _build_list_comp(self, expr: ast.ListComp, locals_: list[str]) -> tuple[ValueIR, list]:
         """Build IR for list comprehension: [expr for var in iterable] or [expr for var in iterable if cond]."""
         if not expr.generators:
             return ConstIR(ir_type=IRType.OBJ, value=[]), []
@@ -1423,6 +1532,10 @@ class IRBuilder:
             )
 
         return star_args, star_kwargs
+
+    @property
+    def used_external_libs(self) -> set[str]:
+        return self._uses_external_libs
 
     def _eval_default_value(self, node: ast.expr) -> tuple[object, str | None]:
         """Evaluate a default argument value at compile time.

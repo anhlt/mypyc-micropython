@@ -145,6 +145,7 @@ compile-all:
 	@echo "Compiling all examples..."
 	@for f in examples/*.py; do \
 		MOD_NAME=$$(basename "$$f" .py); \
+		if [ "$$MOD_NAME" = "lvgl_app" ]; then continue; fi; \
 		echo "Compiling $$f -> modules/usermod_$$MOD_NAME/"; \
 		mpy-compile "$$f" -o $(MODULES_DIR)/usermod_$$MOD_NAME -v || exit 1; \
 	done
@@ -153,6 +154,7 @@ compile-all:
 	@echo "# Auto-generated - include all compiled modules" > $(MODULES_DIR)/micropython.cmake
 	@for f in examples/*.py; do \
 		MOD_NAME=$$(basename "$$f" .py); \
+		if [ "$$MOD_NAME" = "lvgl_app" ]; then continue; fi; \
 		echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_$$MOD_NAME/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
 	done
 	@if [ -d "$(LVGL_MODULE_DIR)" ]; then \
@@ -163,7 +165,7 @@ compile-all:
 compile-lvgl:
 	@echo "Compiling LVGL bindings from .pyi stub..."
 	@mkdir -p $(LVGL_MODULE_DIR)
-	mpy-compile-c $(LVGL_STUB_DIR)/lvgl.pyi -o $(LVGL_MODULE_DIR) -v
+	mpy-compile-c $(LVGL_STUB_DIR)/lvgl.pyi -o $(LVGL_MODULE_DIR) --public -v
 	@echo "Copying display driver, config, and cmake..."
 	@cp $(LVGL_STUB_DIR)/st7789_driver.c $(LVGL_MODULE_DIR)/
 	@cp $(LVGL_STUB_DIR)/st7789_driver.h $(LVGL_MODULE_DIR)/
@@ -172,6 +174,12 @@ compile-lvgl:
 	@echo "Patching lvgl.c with display driver entries..."
 	@python3 scripts/patch_lvgl_c.py $(LVGL_MODULE_DIR)/lvgl.c
 	@echo "LVGL module compiled successfully."
+
+
+compile-lvgl-app: compile-lvgl
+	@echo "Compiling lvgl_app.py with cross-module LVGL calls..."
+	@python3 scripts/compile_lvgl_app.py examples/lvgl_app.py -o $(MODULES_DIR)/usermod_lvgl_app -v
+	@echo "lvgl_app module compiled successfully."
 
 # ============================================================================
 # BUILD TARGETS
@@ -189,10 +197,13 @@ build: check-env
 		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) USER_C_MODULES=$(USER_C_MODULES) \
 	'
 
-build-lvgl: check-env compile-all compile-lvgl
+build-lvgl: check-env compile-all compile-lvgl-app
 	@echo "Adding LVGL to module list..."
 	@if ! grep -q "usermod_lvgl" $(MODULES_DIR)/micropython.cmake 2>/dev/null; then \
 		echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_lvgl/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
+	fi
+	@if ! grep -q "usermod_lvgl_app" $(MODULES_DIR)/micropython.cmake 2>/dev/null; then \
+		echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_lvgl_app/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
 	fi
 	@echo "Building MicroPython + LVGL firmware for $(BOARD)..."
 	@echo "Using custom partition table (2.56MB app) for LVGL"

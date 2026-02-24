@@ -8,6 +8,7 @@ function code, class code, and module registration.
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from .ir import FuncIR, ModuleIR, RTuple
 
@@ -72,6 +73,7 @@ class ModuleEmitter:
         uses_builtins: bool = False,
         uses_checked_div: bool = False,
         used_rtuples: set[RTuple] | None = None,
+        external_libs: dict[str, Any] | None = None,
     ):
         self.module_ir = module_ir
         self.c_name = module_ir.c_name
@@ -80,6 +82,7 @@ class ModuleEmitter:
         self._uses_builtins = uses_builtins
         self._uses_checked_div = uses_checked_div
         self._used_rtuples = used_rtuples or set()
+        self.external_libs = external_libs or {}
 
     def emit(
         self,
@@ -93,6 +96,10 @@ class ModuleEmitter:
 
         lines.extend(self._emit_includes())
         lines.append("")
+
+        if self.external_libs:
+            lines.extend(self._emit_external_wrapper_declarations())
+            lines.append("")
 
         if forward_decls:
             lines.extend(forward_decls)
@@ -128,6 +135,25 @@ class ModuleEmitter:
         lines.extend(self._emit_module_registration())
 
         return "\n".join(lines)
+
+    def _emit_external_wrapper_declarations(self) -> list[str]:
+        parts: list[str] = []
+        for lib_name, lib_def in self.external_libs.items():
+            parts.append(f"/* External library: {lib_name} */")
+            for func_def in lib_def.functions.values():
+                if func_def.has_var_args:
+                    continue
+                n_args = len(func_def.params)
+                wrapper_name = f"{func_def.c_name}_wrapper"
+                if n_args == 0:
+                    parts.append(f"extern mp_obj_t {wrapper_name}(void);")
+                elif n_args <= 3:
+                    args = ", ".join("mp_obj_t" for _ in range(n_args))
+                    parts.append(f"extern mp_obj_t {wrapper_name}({args});")
+                else:
+                    parts.append(f"extern mp_obj_t {wrapper_name}(size_t, const mp_obj_t *);")
+            parts.append("")
+        return parts
 
     def _emit_includes(self) -> list[str]:
         lines = [

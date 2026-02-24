@@ -14,6 +14,7 @@ import ast
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from .ir import FuncIR, ModuleIR, RTuple
 from .type_checker import TypeCheckResult, type_check_file, type_check_source
@@ -87,6 +88,7 @@ def compile_to_micropython(
     *,
     type_check: bool = True,
     strict_type_check: bool = True,
+    external_libs: dict[str, Any] | None = None,
 ) -> CompilationResult:
     """Compile typed Python file to MicroPython usermod folder.
 
@@ -136,7 +138,11 @@ def compile_to_micropython(
     try:
         source_code = source_path.read_text()
         c_code = compile_source(
-            source_code, module_name, type_check=type_check, strict=strict_type_check
+            source_code,
+            module_name,
+            type_check=type_check,
+            strict=strict_type_check,
+            external_libs=external_libs,
         )
         mk_code = generate_micropython_mk(module_name)
         cmake_code = generate_micropython_cmake(module_name)
@@ -204,6 +210,7 @@ def compile_source(
     *,
     type_check: bool = True,
     strict: bool = True,
+    external_libs: dict[str, Any] | None = None,
 ) -> str:
     """Compile typed Python source to MicroPython C code.
 
@@ -240,7 +247,7 @@ def compile_source(
     c_name = sanitize_name(module_name)
     module_ir = ModuleIR(name=module_name, c_name=c_name)
 
-    ir_builder = IRBuilder(module_name, mypy_types=mypy_types)
+    ir_builder = IRBuilder(module_name, mypy_types=mypy_types, external_libs=external_libs)
     function_irs: list[FuncIR] = []
     function_code: list[str] = []
     forward_decls: list[str] = []
@@ -252,6 +259,10 @@ def compile_source(
     uses_builtins = False
     uses_checked_div = False
     used_rtuples: set[RTuple] = set()
+
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            ir_builder.register_import(node)
 
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, ast.ClassDef):
@@ -305,6 +316,12 @@ def compile_source(
 
         class_code.append(class_emitter.emit_all_except_struct())
 
+    used_libs = {
+        key: value
+        for key, value in (external_libs or {}).items()
+        if key in ir_builder.used_external_libs
+    }
+
     module_emitter = ModuleEmitter(
         module_ir,
         uses_print=uses_print,
@@ -312,6 +329,7 @@ def compile_source(
         uses_builtins=uses_builtins,
         uses_checked_div=uses_checked_div,
         used_rtuples=used_rtuples,
+        external_libs=used_libs,
     )
 
     return module_emitter.emit(

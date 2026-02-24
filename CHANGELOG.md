@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ### Added
+- Cross-module external C library call support (`CLibCallIR`, `CLibEnumIR`)
+  - Compile-time resolution of `import lvgl as lv; lv.func()` to direct C wrapper calls
+  - `CLibCallIR`: direct C wrapper function calls with var_args support (>3 params)
+  - `CLibEnumIR`: compile-time enum constant resolution (e.g., `LvAlign.CENTER` -> `9`)
+  - Import alias tracking in `IRBuilder` for external library detection
+  - Extern declarations in generated module C code
+  - `--public` flag for `mpy-compile-c` to emit non-static wrapper functions
+  - `emit_header_file()` for generating C header files
+- LVGL application example (`examples/lvgl_app.py`)
+  - Cross-module calls from compiled Python to LVGL wrappers
+  - `scripts/compile_lvgl_app.py` compilation script
+  - Device-verified on ESP32-C6: label, slider, alignment all working
+- `compile-lvgl-app` Makefile target for cross-module compilation
+- Blog 24: cross-module C library calls architecture documentation
+- 13 new unit tests for external library call compilation (563 total)
+
+### Added
 - `.pyi` stub-based C bindings system (`src/mypyc_micropython/c_bindings/`)
   - `StubParser`: parses `.pyi` files into `CLibraryDef` IR
   - `CEmitter`: generates MicroPython C wrapper code with proper `mp_c_ptr_t` pointer wrapping

@@ -19,6 +19,8 @@ from .ir import (
     CallIR,
     ClassInstantiationIR,
     ClassIR,
+    CLibCallIR,
+    CLibEnumIR,
     CompareIR,
     ConstIR,
     ContinueIR,
@@ -556,6 +558,10 @@ class BaseEmitter:
             return self._emit_self_method_call(value, native)
         elif isinstance(value, SuperCallIR):
             return self._emit_super_call(value, native)
+        elif isinstance(value, CLibCallIR):
+            return self._emit_clib_call(value, native)
+        elif isinstance(value, CLibEnumIR):
+            return str(value.c_enum_value), "mp_int_t"
         return "/* unsupported */", "mp_obj_t"
 
     def _emit_const(self, const: ConstIR) -> tuple[str, str]:
@@ -683,6 +689,24 @@ class BaseEmitter:
         args_str = ", ".join(args)
 
         return f"mp_obj_get_int({call.c_func_name}({args_str}))", "mp_int_t"
+
+    def _emit_clib_call(self, call: CLibCallIR, native: bool = False) -> tuple[str, str]:
+        args = []
+        for arg in call.args:
+            arg_expr, arg_type = self._emit_expr(arg, native)
+            args.append(self._box_value(arg_expr, arg_type))
+        args_str = ", ".join(args)
+        if call.uses_var_args:
+            n = len(args)
+            call_expr = (
+                f"{call.c_wrapper_name}({n}, (const mp_obj_t[]){{{args_str}}})"
+            )
+        else:
+            call_expr = f"{call.c_wrapper_name}({args_str})"
+        if call.is_void:
+            return f"({call_expr}, mp_const_none)", "mp_obj_t"
+
+        return call_expr, "mp_obj_t"
 
     def _emit_builtin_call(self, call: CallIR, native: bool = False) -> tuple[str, str]:
         del native

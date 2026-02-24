@@ -15,6 +15,10 @@ def main() -> int:
     parser.add_argument("stub", type=Path, help="Path to .pyi stub file")
     parser.add_argument("-o", "--output", type=Path, help="Output directory")
     parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument(
+        "--public", action="store_true",
+        help="Make wrapper functions non-static (for cross-module calls)",
+    )
 
     args = parser.parse_args()
 
@@ -26,7 +30,7 @@ def main() -> int:
         print(f"Warning: {args.stub} does not have .pyi extension", file=sys.stderr)
 
     compiler = CBindingCompiler()
-    result = compiler.compile_stub(args.stub, args.output)
+    result = compiler.compile_stub(args.stub, args.output, emit_public=args.public)
 
     if not result.success:
         for error in result.errors:

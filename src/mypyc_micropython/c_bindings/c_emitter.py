@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from mypyc_micropython.c_bindings.c_ir import (
     CCallbackDef,
     CEnumDef,
@@ -14,8 +16,9 @@ from mypyc_micropython.c_bindings.c_ir import (
 
 
 class CEmitter:
-    def __init__(self, library: CLibraryDef) -> None:
+    def __init__(self, library: CLibraryDef, emit_public: bool = False) -> None:
         self.lib = library
+        self.emit_public = emit_public
         self.lines: list[str] = []
 
     def emit(self) -> str:
@@ -26,6 +29,22 @@ class CEmitter:
         self._emit_wrappers()
         self._emit_module_def()
         return "\n".join(self.lines)
+
+    def emit_header_file(self) -> str:
+        guard = self._header_guard_name()
+        lines = [
+            f"#ifndef {guard}",
+            f"#define {guard}",
+            '#include "py/obj.h"',
+        ]
+
+        for func in self.lib.functions.values():
+            if func.has_var_args:
+                continue
+            lines.append(self._make_wrapper_extern_decl(func))
+
+        lines.append("#endif")
+        return "\n".join(lines)
 
     def _emit_header(self) -> None:
         if self.lib.docstring:
@@ -217,8 +236,9 @@ class CEmitter:
         self.lines.append("")
 
         n_args = len(func.params)
+        linkage = self._wrapper_linkage_prefix()
         self.lines.append(
-            f"static mp_obj_t {func.c_name}_wrapper(size_t n_args, const mp_obj_t *args) {{"
+            f"{linkage}mp_obj_t {func.c_name}_wrapper(size_t n_args, const mp_obj_t *args) {{"
         )
 
         for i, param in enumerate(func.params):
@@ -371,12 +391,30 @@ class CEmitter:
 
     def _make_wrapper_signature(self, func: CFuncDef) -> str:
         n_args = len(func.params)
+        linkage = self._wrapper_linkage_prefix()
         if n_args == 0:
-            return f"static mp_obj_t {func.c_name}_wrapper(void)"
+            return f"{linkage}mp_obj_t {func.c_name}_wrapper(void)"
         if n_args <= 3:
             args = ", ".join(f"mp_obj_t arg{i}" for i in range(n_args))
-            return f"static mp_obj_t {func.c_name}_wrapper({args})"
-        return f"static mp_obj_t {func.c_name}_wrapper(size_t n_args, const mp_obj_t *args)"
+            return f"{linkage}mp_obj_t {func.c_name}_wrapper({args})"
+        return f"{linkage}mp_obj_t {func.c_name}_wrapper(size_t n_args, const mp_obj_t *args)"
+
+    def _wrapper_linkage_prefix(self) -> str:
+        return "" if self.emit_public else "static "
+
+    def _header_guard_name(self) -> str:
+        upper = re.sub(r"[^A-Za-z0-9]", "_", self.lib.name).upper()
+        return f"{upper}_WRAPPERS_H"
+
+    def _make_wrapper_extern_decl(self, func: CFuncDef) -> str:
+        n_args = len(func.params)
+        wrapper_name = f"{func.c_name}_wrapper"
+        if any(p.type_def.base_type == CType.CALLBACK for p in func.params) or n_args > 3:
+            return f"extern mp_obj_t {wrapper_name}(size_t n_args, const mp_obj_t *args);"
+        if n_args == 0:
+            return f"extern mp_obj_t {wrapper_name}(void);"
+        args = ", ".join(f"mp_obj_t arg{i}" for i in range(n_args))
+        return f"extern mp_obj_t {wrapper_name}({args});"
 
     def _make_define_macro(self, func: CFuncDef) -> str:
         n_args = len(func.params)
