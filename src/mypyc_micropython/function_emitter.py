@@ -950,7 +950,7 @@ class BaseEmitter:
 
     def _emit_param_attr(self, attr: ParamAttrIR) -> tuple[str, str]:
         expr = (
-            f"(({attr.class_c_name}_obj_t *)MP_OBJ_TO_PTR({attr.c_param_name}))->{attr.attr_name}"
+            f"(({attr.class_c_name}_obj_t *)MP_OBJ_TO_PTR({attr.c_param_name}))->{attr.attr_path}"
         )
         return expr, attr.result_type.to_c_type_str()
 
@@ -1356,10 +1356,12 @@ class MethodEmitter(BaseEmitter):
         method_ir = self.method_ir
         class_ir = self.class_ir
 
-        params = [f"{class_ir.c_name}_obj_t *self"]
+        params: list[str] = []
+        if not method_ir.is_static and not method_ir.is_classmethod:
+            params.append(f"{class_ir.c_name}_obj_t *self")
         for param_name, param_type in method_ir.params:
             params.append(f"{param_type.to_c_type_str()} {param_name}")
-        params_str = ", ".join(params)
+        params_str = ", ".join(params) if params else "void"
 
         ret_type = method_ir.return_type.to_c_type_str()
         lines = [f"static {ret_type} {method_ir.c_name}_native({params_str}) {{"]
@@ -1378,30 +1380,61 @@ class MethodEmitter(BaseEmitter):
         method_ir = self.method_ir
         class_ir = self.class_ir
 
-        num_args = len(method_ir.params) + 1
+        num_args = len(method_ir.params) + (
+            0 if (method_ir.is_static or method_ir.is_classmethod) else 1
+        )
+        obj_name = (
+            f"{method_ir.c_name}_fun_obj"
+            if (method_ir.is_static or method_ir.is_classmethod)
+            else f"{method_ir.c_name}_obj"
+        )
 
-        if num_args == 1:
-            sig = f"static mp_obj_t {method_ir.c_name}_mp(mp_obj_t self_in)"
-            obj_def = f"MP_DEFINE_CONST_FUN_OBJ_1({method_ir.c_name}_obj, {method_ir.c_name}_mp);"
+        if num_args == 0:
+            sig = f"static mp_obj_t {method_ir.c_name}_mp(void)"
+            obj_def = f"MP_DEFINE_CONST_FUN_OBJ_0({obj_name}, {method_ir.c_name}_mp);"
+        elif num_args == 1:
+            arg0 = "arg0_obj" if (method_ir.is_static or method_ir.is_classmethod) else "self_in"
+            sig = f"static mp_obj_t {method_ir.c_name}_mp(mp_obj_t {arg0})"
+            obj_def = f"MP_DEFINE_CONST_FUN_OBJ_1({obj_name}, {method_ir.c_name}_mp);"
         elif num_args == 2:
-            sig = f"static mp_obj_t {method_ir.c_name}_mp(mp_obj_t self_in, mp_obj_t arg0_obj)"
-            obj_def = f"MP_DEFINE_CONST_FUN_OBJ_2({method_ir.c_name}_obj, {method_ir.c_name}_mp);"
+            if method_ir.is_static or method_ir.is_classmethod:
+                sig = f"static mp_obj_t {method_ir.c_name}_mp(mp_obj_t arg0_obj, mp_obj_t arg1_obj)"
+            else:
+                sig = f"static mp_obj_t {method_ir.c_name}_mp(mp_obj_t self_in, mp_obj_t arg0_obj)"
+            obj_def = f"MP_DEFINE_CONST_FUN_OBJ_2({obj_name}, {method_ir.c_name}_mp);"
         elif num_args == 3:
-            sig = f"static mp_obj_t {method_ir.c_name}_mp(mp_obj_t self_in, mp_obj_t arg0_obj, mp_obj_t arg1_obj)"
-            obj_def = f"MP_DEFINE_CONST_FUN_OBJ_3({method_ir.c_name}_obj, {method_ir.c_name}_mp);"
+            if method_ir.is_static or method_ir.is_classmethod:
+                sig = (
+                    f"static mp_obj_t {method_ir.c_name}_mp(mp_obj_t arg0_obj, mp_obj_t arg1_obj, "
+                    "mp_obj_t arg2_obj)"
+                )
+            else:
+                sig = (
+                    f"static mp_obj_t {method_ir.c_name}_mp(mp_obj_t self_in, mp_obj_t arg0_obj, "
+                    "mp_obj_t arg1_obj)"
+                )
+            obj_def = f"MP_DEFINE_CONST_FUN_OBJ_3({obj_name}, {method_ir.c_name}_mp);"
         else:
             sig = f"static mp_obj_t {method_ir.c_name}_mp(size_t n_args, const mp_obj_t *args)"
-            obj_def = f"MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN({method_ir.c_name}_obj, {num_args}, {num_args}, {method_ir.c_name}_mp);"
+            obj_def = (
+                f"MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN({obj_name}, {num_args}, {num_args}, "
+                f"{method_ir.c_name}_mp);"
+            )
 
         lines = [sig + " {"]
 
-        if num_args <= 3:
-            lines.append(f"    {class_ir.c_name}_obj_t *self = MP_OBJ_TO_PTR(self_in);")
-        else:
-            lines.append(f"    {class_ir.c_name}_obj_t *self = MP_OBJ_TO_PTR(args[0]);")
+        if not method_ir.is_static and not method_ir.is_classmethod:
+            if num_args <= 3:
+                lines.append(f"    {class_ir.c_name}_obj_t *self = MP_OBJ_TO_PTR(self_in);")
+            else:
+                lines.append(f"    {class_ir.c_name}_obj_t *self = MP_OBJ_TO_PTR(args[0]);")
 
         for i, (param_name, param_type) in enumerate(method_ir.params):
-            src = f"arg{i}_obj" if num_args <= 3 else f"args[{i + 1}]"
+            if num_args <= 3:
+                src = f"arg{i}_obj"
+            else:
+                src_index = i if (method_ir.is_static or method_ir.is_classmethod) else i + 1
+                src = f"args[{src_index}]"
 
             if param_type == CType.MP_INT_T:
                 lines.append(f"    mp_int_t {param_name} = mp_obj_get_int({src});")
@@ -1412,8 +1445,15 @@ class MethodEmitter(BaseEmitter):
             else:
                 lines.append(f"    mp_obj_t {param_name} = {src};")
 
-        if method_ir.is_virtual and not method_ir.is_special:
-            args_list = ["self"] + [p[0] for p in method_ir.params]
+        if (
+            method_ir.is_static
+            or method_ir.is_classmethod
+            or method_ir.is_property
+            or (method_ir.is_virtual and not method_ir.is_special)
+        ):
+            args_list = [p[0] for p in method_ir.params]
+            if not method_ir.is_static and not method_ir.is_classmethod:
+                args_list.insert(0, "self")
             args_str = ", ".join(args_list)
 
             if method_ir.return_type == CType.VOID:

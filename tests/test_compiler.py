@@ -909,10 +909,10 @@ def get_item(obj, i: int):
 
 class TestListComprehension:
     def test_basic_list_comp_range(self):
-        source = '''
+        source = """
 def squares(n: int) -> list[int]:
     return [i * i for i in range(n)]
-'''
+"""
         result = compile_source(source, "test")
         # Should create empty list
         assert "mp_obj_new_list(0, NULL)" in result
@@ -922,10 +922,10 @@ def squares(n: int) -> list[int]:
         assert "mp_obj_list_append" in result
 
     def test_list_comp_with_condition(self):
-        source = '''
+        source = """
 def evens(n: int) -> list[int]:
     return [i for i in range(n) if i % 2 == 0]
-'''
+"""
         result = compile_source(source, "test")
         assert "mp_obj_new_list(0, NULL)" in result
         assert "for (" in result
@@ -933,29 +933,29 @@ def evens(n: int) -> list[int]:
         assert "mp_obj_list_append" in result
 
     def test_list_comp_expression(self):
-        source = '''
+        source = """
 def doubled(n: int) -> list[int]:
     return [i * 2 for i in range(n)]
-'''
+"""
         result = compile_source(source, "test")
         assert "mp_obj_new_list(0, NULL)" in result
         assert "mp_obj_list_append" in result
 
     def test_list_comp_range_with_start_end(self):
-        source = '''
+        source = """
 def range_squares(start: int, end: int) -> list[int]:
     return [i * i for i in range(start, end)]
-'''
+"""
         result = compile_source(source, "test")
         assert "mp_obj_new_list(0, NULL)" in result
         assert "for (" in result
         assert "mp_obj_list_append" in result
 
     def test_list_comp_iterator(self):
-        source = '''
+        source = """
 def double_items(items: list[int]) -> list[int]:
     return [x * 2 for x in items]
-'''
+"""
         result = compile_source(source, "test")
         assert "mp_obj_new_list(0, NULL)" in result
         # Should use iterator pattern
@@ -965,15 +965,16 @@ def double_items(items: list[int]) -> list[int]:
         assert "mp_obj_list_append" in result
 
     def test_list_comp_iterator_with_condition(self):
-        source = '''
+        source = """
 def filter_positive(items: list[int]) -> list[int]:
     return [x for x in items if x > 0]
-'''
+"""
         result = compile_source(source, "test")
         assert "mp_obj_new_list(0, NULL)" in result
         assert "mp_getiter" in result
         assert "if (" in result
         assert "mp_obj_list_append" in result
+
 
 class TestForLoop:
     def test_for_range_single_arg(self):
@@ -2026,6 +2027,246 @@ class Calculator:
         assert "test_Calculator_add_mp" in result
         # Should have arg0_obj, arg1_obj
         assert "arg0_obj" in result or "args[" in result
+
+
+class TestStaticMethod:
+    def test_basic_static_method(self):
+        source = """
+class Calculator:
+    value: int
+
+    def __init__(self, v: int) -> None:
+        self.value = v
+
+    @staticmethod
+    def add(a: int, b: int) -> int:
+        return a + b
+"""
+        result = compile_source(source, "test")
+        assert "mp_type_staticmethod" in result
+        assert "Calculator_add_native" in result
+        assert "Calculator_add_native(mp_int_t a, mp_int_t b)" in result
+
+    def test_static_method_no_args(self):
+        source = """
+class Config:
+    value: int
+
+    def __init__(self, v: int) -> None:
+        self.value = v
+
+    @staticmethod
+    def default_value() -> int:
+        return 42
+"""
+        result = compile_source(source, "test")
+        assert "mp_type_staticmethod" in result
+        assert "default_value" in result
+
+    def test_static_method_with_instance_method(self):
+        source = """
+class Counter:
+    value: int
+
+    def __init__(self, start: int) -> None:
+        self.value = start
+
+    def increment(self) -> int:
+        self.value += 1
+        return self.value
+
+    @staticmethod
+    def add(a: int, b: int) -> int:
+        return a + b
+"""
+        result = compile_source(source, "test")
+        assert "Counter_increment" in result
+        assert "Counter_add" in result
+        assert "mp_type_staticmethod" in result
+
+    def test_static_method_not_in_vtable(self):
+        source = """
+class MyClass:
+    value: int
+
+    def __init__(self, v: int) -> None:
+        self.value = v
+
+    def get_value(self) -> int:
+        return self.value
+
+    @staticmethod
+    def create(v: int) -> object:
+        return v
+"""
+        result = compile_source(source, "test")
+        assert "test_MyClass_create_native" in result
+        assert ".create = test_MyClass_create_native" not in result
+
+
+class TestClassMethod:
+    def test_basic_classmethod(self):
+        source = """
+class MyClass:
+    value: int
+
+    def __init__(self, v: int) -> None:
+        self.value = v
+
+    @classmethod
+    def from_value(cls, v: int) -> object:
+        return cls
+
+    def get_value(self) -> int:
+        return self.value
+"""
+        result = compile_source(source, "test")
+        assert "mp_type_classmethod" in result
+        assert "MyClass_from_value" in result
+        assert "mp_obj_t cls =" in result
+
+    def test_classmethod_no_extra_args(self):
+        source = """
+class MyClass:
+    value: int
+
+    def __init__(self, v: int) -> None:
+        self.value = v
+
+    @classmethod
+    def get_type(cls) -> object:
+        return cls
+"""
+        result = compile_source(source, "test")
+        assert "mp_type_classmethod" in result
+        assert "test_MyClass_get_type_mp(mp_obj_t arg0_obj)" in result
+
+    def test_classmethod_not_in_vtable(self):
+        source = """
+class MyClass:
+    value: int
+
+    def __init__(self, v: int) -> None:
+        self.value = v
+
+    def get_value(self) -> int:
+        return self.value
+
+    @classmethod
+    def from_int(cls, v: int) -> object:
+        return cls
+"""
+        result = compile_source(source, "test")
+        assert "mp_type_classmethod" in result
+        assert ".get_value = test_MyClass_get_value_native" in result
+        assert ".from_int = test_MyClass_from_int_native" not in result
+
+    def test_classmethod_with_staticmethod(self):
+        source = """
+class Calculator:
+    value: int
+
+    def __init__(self, v: int) -> None:
+        self.value = v
+
+    @staticmethod
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    @classmethod
+    def from_int(cls, v: int) -> object:
+        return cls
+
+    def get_value(self) -> int:
+        return self.value
+"""
+        result = compile_source(source, "test")
+        assert "mp_type_staticmethod" in result
+        assert "mp_type_classmethod" in result
+
+
+class TestProperty:
+    def test_readonly_property(self):
+        source = """
+class Rectangle:
+    width: int
+    height: int
+
+    def __init__(self, w: int, h: int) -> None:
+        self.width = w
+        self.height = h
+
+    @property
+    def area(self) -> int:
+        return self.width * self.height
+"""
+        result = compile_source(source, "test")
+        assert "Rectangle_area_native" in result
+        assert "MP_QSTR_area" in result
+        assert "mp_type_property" not in result
+
+    def test_readwrite_property(self):
+        source = """
+class Temperature:
+    _celsius: int
+
+    def __init__(self, c: int) -> None:
+        self._celsius = c
+
+    @property
+    def celsius(self) -> int:
+        return self._celsius
+
+    @celsius.setter
+    def celsius(self, value: int) -> None:
+        self._celsius = value
+"""
+        result = compile_source(source, "test")
+        assert "Temperature_celsius_native" in result
+        assert "celsius_setter" in result.lower() or "_celsius_setter" in result.lower()
+
+    def test_property_with_methods(self):
+        source = """
+class Circle:
+    radius: int
+
+    def __init__(self, r: int) -> None:
+        self.radius = r
+
+    @property
+    def diameter(self) -> int:
+        return self.radius * 2
+
+    def describe(self) -> int:
+        return self.radius
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_diameter" in result
+        assert "describe" in result
+
+    def test_property_not_in_locals_dict(self):
+        source = """
+class Point:
+    _x: int
+    _y: int
+
+    def __init__(self, x: int, y: int) -> None:
+        self._x = x
+        self._y = y
+
+    @property
+    def x(self) -> int:
+        return self._x
+
+    @property
+    def y(self) -> int:
+        return self._y
+"""
+        result = compile_source(source, "test")
+        assert "MP_QSTR_x" in result
+        assert "MP_QSTR_y" in result
+        assert "MP_ROM_QSTR(MP_QSTR_x), MP_ROM_PTR(&test_Point_x_obj)" not in result
+        assert "MP_ROM_QSTR(MP_QSTR_y), MP_ROM_PTR(&test_Point_y_obj)" not in result
 
 
 class TestDataclass:

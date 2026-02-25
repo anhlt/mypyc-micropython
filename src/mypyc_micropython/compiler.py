@@ -290,14 +290,20 @@ def compile_source(
 
         for method_ir in class_ir.methods.values():
             method_emitter = MethodEmitter(method_ir, class_ir)
+            needs_native = (
+                method_ir.is_static
+                or method_ir.is_classmethod
+                or method_ir.is_property
+                or (method_ir.is_virtual and not method_ir.is_special)
+            )
 
-            if method_ir.is_virtual and not method_ir.is_special:
+            if needs_native:
                 native_body = ir_builder.build_method_body(method_ir, class_ir, native=True)
                 function_code.append(method_emitter.emit_native(native_body))
                 function_code.append("")
 
             wrapper_body = None
-            if not (method_ir.is_virtual and not method_ir.is_special):
+            if not needs_native:
                 wrapper_body = ir_builder.build_method_body(method_ir, class_ir, native=False)
 
             function_code.append(method_emitter.emit_mp_wrapper(wrapper_body))

@@ -7,7 +7,7 @@ including structs, vtables, constructors, and method wrappers.
 
 from __future__ import annotations
 
-from .ir import ClassIR, CType
+from .ir import ClassIR, CType, PropertyInfo
 
 
 class ClassEmitter:
@@ -112,6 +112,7 @@ class ClassEmitter:
 
     def emit_attr_handler(self) -> list[str]:
         all_fields = self.class_ir.get_all_fields()
+        all_properties = self.class_ir.get_all_properties()
         if not all_fields:
             return self._emit_simple_attr_handler()
 
@@ -121,6 +122,7 @@ class ClassEmitter:
         )
         lines.append(f"    {self.c_name}_obj_t *self = MP_OBJ_TO_PTR(self_in);")
         lines.append("")
+        lines.extend(self._emit_property_dispatch(all_properties))
         lines.append(
             f"    for (const {self.c_name}_field_t *f = {self.c_name}_fields; f->name != MP_QSTR_NULL; f++) {{"
         )
@@ -164,13 +166,79 @@ class ClassEmitter:
         return lines
 
     def _emit_simple_attr_handler(self) -> list[str]:
+        all_properties = self.class_ir.get_all_properties()
         lines = []
         lines.append(
             f"static void {self.c_name}_attr(mp_obj_t self_in, qstr attr, mp_obj_t *dest) {{"
         )
+        if all_properties:
+            lines.append(f"    {self.c_name}_obj_t *self = MP_OBJ_TO_PTR(self_in);")
+            lines.append("")
+            lines.extend(self._emit_property_dispatch(all_properties))
         lines.append("    dest[1] = MP_OBJ_SENTINEL;")
         lines.append("}")
         lines.append("")
+        return lines
+
+    def _box_property_result(self, c_type: CType, expr: str) -> str:
+        if c_type == CType.MP_INT_T:
+            return f"mp_obj_new_int({expr})"
+        if c_type == CType.MP_FLOAT_T:
+            return f"mp_obj_new_float({expr})"
+        if c_type == CType.BOOL:
+            return f"{expr} ? mp_const_true : mp_const_false"
+        if c_type == CType.VOID:
+            return "mp_const_none"
+        return expr
+
+    def _unbox_property_value(self, c_type: CType, expr: str) -> str:
+        if c_type == CType.MP_INT_T:
+            return f"mp_obj_get_int({expr})"
+        if c_type == CType.MP_FLOAT_T:
+            return f"mp_obj_get_float({expr})"
+        if c_type == CType.BOOL:
+            return f"mp_obj_is_true({expr})"
+        return expr
+
+    def _property_self_expr(self, method_c_name: str, prop_name: str, setter: bool = False) -> str:
+        suffix = f"_{prop_name}_setter" if setter else f"_{prop_name}"
+        owner_c_name = self.c_name
+        if method_c_name.endswith(suffix):
+            owner_c_name = method_c_name[: -len(suffix)]
+        if owner_c_name == self.c_name:
+            return "self"
+        return f"({owner_c_name}_obj_t *)self"
+
+    def _emit_property_dispatch(self, properties: dict[str, PropertyInfo]) -> list[str]:
+        if not properties:
+            return []
+
+        lines = []
+        for prop_name, prop in properties.items():
+            lines.append(f"    if (attr == MP_QSTR_{prop_name}) {{")
+            lines.append("        if (dest[0] == MP_OBJ_NULL) {")
+            getter_self = self._property_self_expr(prop.getter.c_name, prop_name)
+            getter_call = f"{prop.getter.c_name}_native({getter_self})"
+            lines.append(
+                f"            dest[0] = {self._box_property_result(prop.getter.return_type, getter_call)};"
+            )
+            lines.append("            return;")
+            lines.append("        }")
+            lines.append("        if (dest[1] != MP_OBJ_NULL) {")
+            if prop.setter and prop.setter.params:
+                setter_arg_type = prop.setter.params[0][1]
+                setter_arg = self._unbox_property_value(setter_arg_type, "dest[1]")
+                setter_self = self._property_self_expr(prop.setter.c_name, prop_name, setter=True)
+                lines.append(
+                    f"            {prop.setter.c_name}_native({setter_self}, {setter_arg});"
+                )
+                lines.append("            dest[0] = MP_OBJ_NULL;")
+            else:
+                lines.append("            dest[1] = MP_OBJ_SENTINEL;")
+            lines.append("            return;")
+            lines.append("        }")
+            lines.append("    }")
+            lines.append("")
         return lines
 
     def emit_make_new(self) -> list[str]:
@@ -443,14 +511,38 @@ class ClassEmitter:
         all_methods = self.class_ir.get_all_methods()
         method_names = [
             name
-            for name in all_methods.keys()
-            if not name.startswith("__") or name in ("__len__", "__getitem__", "__setitem__")
+            for name, method in all_methods.items()
+            if not method.is_property
+            and not name.startswith("_prop_")
+            and (
+                method.is_static
+                or method.is_classmethod
+                or not name.startswith("__")
+                or name in ("__len__", "__getitem__", "__setitem__")
+            )
         ]
 
         if not method_names:
             return []
 
         lines = []
+        for name in method_names:
+            method = all_methods[name]
+            if method.is_static or method.is_classmethod:
+                # Only emit wrapper struct if method belongs to this class (not inherited)
+                is_own_method = name in self.class_ir.methods
+                if is_own_method:
+                    lines.append(
+                        f"static const mp_rom_obj_static_class_method_t {method.c_name}_obj = {{"
+                    )
+                    method_type = "mp_type_staticmethod" if method.is_static else "mp_type_classmethod"
+                    lines.append(f"    {{&{method_type}}}, MP_ROM_PTR(&{method.c_name}_fun_obj)")
+                    lines.append("};")
+        if any(
+            all_methods[name].is_static or all_methods[name].is_classmethod for name in method_names
+        ):
+            lines.append("")
+
         lines.append(f"static const mp_rom_map_elem_t {self.c_name}_locals_dict_table[] = {{")
         for name in method_names:
             method = all_methods[name]
@@ -472,7 +564,7 @@ class ClassEmitter:
         slots = []
         slots.append(f"    make_new, {self.c_name}_make_new")
 
-        if self.class_ir.get_all_fields():
+        if self.class_ir.get_all_fields() or self.class_ir.get_all_properties():
             slots.append(f"    attr, {self.c_name}_attr")
 
         if self.class_ir.is_dataclass:
@@ -483,10 +575,18 @@ class ClassEmitter:
         if self.class_ir.base:
             slots.append(f"    parent, &{self.class_ir.base.c_name}_type")
 
+        all_methods = self.class_ir.get_all_methods()
         method_names = [
             name
-            for name in self.class_ir.methods.keys()
-            if not name.startswith("__") or name in ("__len__", "__getitem__", "__setitem__")
+            for name, method in all_methods.items()
+            if not method.is_property
+            and not name.startswith("_prop_")
+            and (
+                method.is_static
+                or method.is_classmethod
+                or not name.startswith("__")
+                or name in ("__len__", "__getitem__", "__setitem__")
+            )
         ]
         if method_names:
             slots.append(f"    locals_dict, &{self.c_name}_locals_dict")

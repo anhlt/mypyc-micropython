@@ -1629,7 +1629,297 @@ def test_super_calls():
         "10",
     )
 
+def test_decorators():
+    """Test @property, @staticmethod, @classmethod decorators."""
+    print("\n[TEST] Testing decorators module...")
 
+    # @staticmethod
+    test(
+        "Rectangle.is_square_dims(3, 3) staticmethod",
+        "import decorators as d; print(d.Rectangle.is_square_dims(3, 3))",
+        "True",
+    )
+
+    test(
+        "Rectangle.is_square_dims(3, 4) staticmethod",
+        "import decorators as d; print(d.Rectangle.is_square_dims(3, 4))",
+        "False",
+    )
+
+    test(
+        "Counter.add(3, 4) staticmethod",
+        "import decorators as d; print(d.Counter.add(3, 4))",
+        "7",
+    )
+
+    # @classmethod
+    test(
+        "Rectangle.square(5) classmethod returns cls",
+        "import decorators as d; r = d.Rectangle.square(5); print(r is d.Rectangle)",
+        "True",
+    )
+
+    # @property getter
+    test(
+        "Rectangle.area property",
+        "import decorators as d; r = d.Rectangle(3, 4); print(r.area)",
+        "12",
+    )
+
+    test(
+        "Rectangle.perimeter property",
+        "import decorators as d; r = d.Rectangle(3, 4); print(r.perimeter)",
+        "14",
+    )
+
+    test(
+        "Temperature.celsius property getter",
+        "import decorators as d; t = d.Temperature(25); print(t.celsius)",
+        "25",
+    )
+
+    # @property setter
+    test(
+        "Temperature.celsius property setter",
+        "import decorators as d; t = d.Temperature(25); t.celsius = 30; print(t.celsius)",
+        "30",
+    )
+
+    # Counter property + methods
+    test(
+        "Counter.count property",
+        "import decorators as d; c = d.Counter(0); print(c.count)",
+        "0",
+    )
+
+    test(
+        "Counter.count after increment",
+        "import decorators as d; c = d.Counter(0); c.increment(); print(c.count)",
+        "1",
+    )
+
+    # Instance staticmethod call
+    test(
+        "Counter.add via instance",
+        "import decorators as d; c = d.Counter(0); print(c.add(10, 20))",
+        "30",
+    )
+
+    # Temperature fahrenheit method + property
+    test(
+        "Temperature.get_fahrenheit with property",
+        "import decorators as d; t = d.Temperature(100); print(t.get_fahrenheit())",
+        "212",
+    )
+
+    # Property after scale
+    test(
+        "Rectangle.area after scale",
+        "import decorators as d; r = d.Rectangle(3, 4); r.scale(2); print(r.area)",
+        "48",
+    )
+
+
+
+
+def test_classes():
+    """Test unified classes module (all class features in one hierarchy)."""
+    print("\n[TEST] Testing classes module (unified class hierarchy)...")
+
+    # -- Location (@dataclass, basic fields) --
+    test(
+        "Location creation",
+        "import classes as c; loc = c.Location(10, 20); print(loc.x, loc.y)",
+        "10 20",
+    )
+
+    # -- Entity (base class, manual __init__, str/int/list fields) --
+    test(
+        "Entity creation",
+        "import classes as c; e = c.Entity('sensor1', 42); print(e.name)",
+        "sensor1",
+    )
+
+    # @property (read-only)
+    test(
+        "Entity.id property",
+        "import classes as c; e = c.Entity('s', 7); print(e.id)",
+        "7",
+    )
+
+    # @staticmethod
+    test(
+        "Entity.validate_name staticmethod",
+        "import classes as c; print(c.Entity.validate_name('hello'))",
+        "True",
+    )
+
+    test(
+        "Entity.validate_name empty",
+        "import classes as c; print(c.Entity.validate_name(''))",
+        "False",
+    )
+
+    # Container field (list): add_tag, tag_count, has_tag
+    test(
+        "Entity.add_tag + tag_count",
+        "import classes as c; e = c.Entity('s', 1); e.add_tag(10); e.add_tag(20); print(e.tag_count())",
+        "2",
+    )
+
+    test(
+        "Entity.has_tag found",
+        "import classes as c; e = c.Entity('s', 1); e.add_tag(10); print(e.has_tag(10))",
+        "True",
+    )
+
+    test(
+        "Entity.has_tag not found",
+        "import classes as c; e = c.Entity('s', 1); e.add_tag(10); print(e.has_tag(99))",
+        "False",
+    )
+
+    test(
+        "Entity.describe",
+        "import classes as c; e = c.Entity('myname', 1); print(e.describe())",
+        "myname",
+    )
+
+    # -- Sensor(Entity): inheritance, super().__init__, float, dict, @property rw --
+    test(
+        "Sensor inherits Entity.name",
+        "import classes as c; s = c.Sensor('temp', 5, c.Location(1, 2)); print(s.name)",
+        "temp",
+    )
+
+    test(
+        "Sensor inherits Entity.id property",
+        "import classes as c; s = c.Sensor('t', 5, c.Location(0, 0)); print(s.id)",
+        "5",
+    )
+
+    # @property getter+setter on child
+    test(
+        "Sensor.value property getter",
+        "import classes as c; s = c.Sensor('t', 1, c.Location(0, 0)); print(s.value)",
+        "0.0",
+    )
+
+    test(
+        "Sensor.value property setter",
+        "import classes as c; s = c.Sensor('t', 1, c.Location(0, 0)); s.value = 3.14; print(s.value)",
+        "3.14",
+    )
+
+    # @classmethod
+    test(
+        "Sensor.create classmethod",
+        "import classes as c; print(c.Sensor.create('x') is c.Sensor)",
+        "True",
+    )
+
+    # Dict field (readings)
+    test(
+        "Sensor.record + reading_count",
+        "import classes as c; s = c.Sensor('t', 1, c.Location(0, 0)); s.record(100, 25.5); s.record(200, 26.0); print(s.reading_count())",
+        "2",
+    )
+
+    test(
+        "Sensor.get_reading",
+        "import classes as c; s = c.Sensor('t', 1, c.Location(0, 0)); s.record(100, 25.5); print(s.get_reading(100))",
+        "25.5",
+    )
+
+    # Chained attribute access (sensor.location.x)
+    test(
+        "Sensor.get_location_x chained attr",
+        "import classes as c; s = c.Sensor('t', 1, c.Location(30, 40)); print(s.get_location_x())",
+        "30",
+    )
+
+    test(
+        "Sensor.get_location_y chained attr",
+        "import classes as c; s = c.Sensor('t', 1, c.Location(30, 40)); print(s.get_location_y())",
+        "40",
+    )
+
+    # Method override + super().describe()
+    test(
+        "Sensor.describe override calls super",
+        "import classes as c; s = c.Sensor('mysensor', 1, c.Location(0, 0)); print(s.describe())",
+        "mysensor",
+    )
+
+    # Inherited container: tags from Entity still work on Sensor
+    test(
+        "Sensor inherits Entity.add_tag",
+        "import classes as c; s = c.Sensor('t', 1, c.Location(0, 0)); s.add_tag(42); print(s.has_tag(42))",
+        "True",
+    )
+
+    # -- SmartSensor(Sensor): 3-level, augmented assign, bool, cross-level --
+    test(
+        "SmartSensor 3-level inheritance name",
+        "import classes as c; ss = c.SmartSensor('smart', 10, c.Location(5, 5), 50.0); print(ss.name)",
+        "smart",
+    )
+
+    test(
+        "SmartSensor inherits id property",
+        "import classes as c; ss = c.SmartSensor('s', 10, c.Location(0, 0), 50.0); print(ss.id)",
+        "10",
+    )
+
+    test(
+        "SmartSensor.check_value below threshold",
+        "import classes as c; ss = c.SmartSensor('s', 1, c.Location(0, 0), 50.0); ss.value = 30.0; print(ss.check_value())",
+        "False",
+    )
+
+    test(
+        "SmartSensor.check_value above threshold (augmented +=)",
+        "import classes as c; ss = c.SmartSensor('s', 1, c.Location(0, 0), 50.0); ss.value = 60.0; print(ss.check_value())",
+        "True",
+    )
+
+    test(
+        "SmartSensor.alert_count after multiple checks",
+        "import classes as c; ss = c.SmartSensor('s', 1, c.Location(0, 0), 50.0); ss.value = 60.0; ss.check_value(); ss.check_value(); print(ss.get_alert_count())",
+        "2",
+    )
+
+    test(
+        "SmartSensor.describe chains 3-level super",
+        "import classes as c; ss = c.SmartSensor('deep', 1, c.Location(0, 0), 50.0); print(ss.describe())",
+        "deep",
+    )
+
+    test(
+        "SmartSensor.get_total_score cross-level fields",
+        "import classes as c; ss = c.SmartSensor('s', 10, c.Location(0, 0), 50.0); ss.value = 60.0; ss.check_value(); print(ss.get_total_score())",
+        "11",
+    )
+
+    # Staticmethod via instance
+    test(
+        "Entity.validate_name via Sensor instance",
+        "import classes as c; s = c.Sensor('t', 1, c.Location(0, 0)); print(s.validate_name('ok'))",
+        "True",
+    )
+
+    # -- Free functions taking class params --
+    test(
+        "distance_between two Locations",
+        "import classes as c; print(c.distance_between(c.Location(0, 0), c.Location(3, 4)))",
+        "25",
+    )
+
+    test(
+        "sensor_summary cross-inheritance",
+        "import classes as c; s = c.Sensor('t', 10, c.Location(0, 0)); s.record(1, 1.0); s.record(2, 2.0); print(c.sensor_summary(s))",
+        "12",
+    )
 def run_all_tests():
     """Run all test suites."""
     global total_tests, passed_tests, failed_tests
@@ -1664,6 +1954,8 @@ def run_all_tests():
     test_itertools_builtins()
     test_exception_handling()
     test_super_calls()
+    test_decorators()
+    test_classes()
     # Print summary
     print("\n" + "=" * 70)
     print("[SUMMARY] TEST SUMMARY")

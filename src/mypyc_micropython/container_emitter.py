@@ -579,7 +579,7 @@ class ContainerEmitter:
         elif isinstance(value, ParamAttrIR):
             return (
                 f"(({value.class_c_name}_obj_t *)MP_OBJ_TO_PTR({value.c_param_name}))"
-                f"->{value.attr_name}"
+                f"->{value.attr_path}"
             )
         elif isinstance(value, SubscriptIR):
             val_c = self._value_to_c(value.value)

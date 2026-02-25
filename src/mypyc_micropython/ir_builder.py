@@ -52,6 +52,7 @@ from .ir import (
     ParamIR,
     PassIR,
     PrintIR,
+    PropertyInfo,
     RaiseIR,
     ReturnIR,
     RTuple,
@@ -1096,7 +1097,7 @@ class IRBuilder:
                 class_name = self._class_typed_params[var_name]
                 class_ir = self._known_classes[class_name]
 
-                for fld in class_ir.get_all_fields():
+                for fld, path in class_ir.get_all_fields_with_path():
                     if fld.name == attr_name:
                         result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
                         return ParamAttrIR(
@@ -1104,6 +1105,7 @@ class IRBuilder:
                             param_name=var_name,
                             c_param_name=sanitize_name(var_name),
                             attr_name=attr_name,
+                            attr_path=path,
                             class_c_name=class_ir.c_name,
                             result_type=result_type,
                         ), []
@@ -1113,6 +1115,7 @@ class IRBuilder:
                     param_name=var_name,
                     c_param_name=sanitize_name(var_name),
                     attr_name=attr_name,
+                    attr_path=attr_name,
                     class_c_name=class_ir.c_name,
                     result_type=IRType.OBJ,
                 ), []
@@ -1142,9 +1145,7 @@ class IRBuilder:
 
         return ConstIR(ir_type=IRType.OBJ, value=None), []
 
-    def _build_list_comp(
-        self, expr: ast.ListComp, locals_: list[str]
-    ) -> tuple[ValueIR, list]:
+    def _build_list_comp(self, expr: ast.ListComp, locals_: list[str]) -> tuple[ValueIR, list]:
         """Build IR for list comprehension: [expr for var in iterable] or [expr for var in iterable if cond]."""
         if not expr.generators:
             return ConstIR(ir_type=IRType.OBJ, value=[]), []
@@ -1249,6 +1250,30 @@ class IRBuilder:
             if parent_class and parent_class in self._known_classes:
                 class_ir = self._known_classes[parent_class]
                 for fld in class_ir.get_all_fields():
+                    if fld.name == expr.attr:
+                        return fld.py_type
+        return None
+
+    def _get_method_attr_class_type(self, expr: ast.Attribute, class_ir: ClassIR) -> str | None:
+        """Get the class type name of an attribute in method context (handles self.attr)."""
+        if isinstance(expr.value, ast.Name):
+            var_name = expr.value.id
+            if var_name == "self":
+                for fld in class_ir.get_all_fields():
+                    if fld.name == expr.attr:
+                        return fld.py_type
+            elif var_name in self._class_typed_params:
+                param_class_name = self._class_typed_params[var_name]
+                if param_class_name in self._known_classes:
+                    param_class_ir = self._known_classes[param_class_name]
+                    for fld in param_class_ir.get_all_fields():
+                        if fld.name == expr.attr:
+                            return fld.py_type
+        elif isinstance(expr.value, ast.Attribute):
+            parent_type = self._get_method_attr_class_type(expr.value, class_ir)
+            if parent_type and parent_type in self._known_classes:
+                parent_ir = self._known_classes[parent_type]
+                for fld in parent_ir.get_all_fields():
                     if fld.name == expr.attr:
                         return fld.py_type
         return None
@@ -1567,6 +1592,29 @@ class IRBuilder:
         method_name = node.name
         c_method_name = f"{class_ir.c_name}_{sanitize_name(method_name)}"
 
+        is_static = False
+        is_classmethod = False
+        is_property = False
+        property_name: str | None = None
+        is_property_setter = False
+        for decorator in node.decorator_list:
+            if isinstance(decorator, ast.Name):
+                if decorator.id == "staticmethod":
+                    is_static = True
+                elif decorator.id == "classmethod":
+                    is_classmethod = True
+                elif decorator.id == "property":
+                    is_property = True
+            elif (
+                isinstance(decorator, ast.Attribute)
+                and decorator.attr == "setter"
+                and isinstance(decorator.value, ast.Name)
+            ):
+                is_property = True
+                is_property_setter = True
+                property_name = decorator.value.id
+                c_method_name = f"{class_ir.c_name}_{sanitize_name(property_name)}_setter"
+
         mypy_method = self._get_mypy_method_type(class_ir.name, method_name)
         mypy_param_types: dict[str, str] = {}
         mypy_return_type: str | None = None
@@ -1575,7 +1623,8 @@ class IRBuilder:
             mypy_return_type = mypy_method.return_type
 
         params: list[tuple[str, CType]] = []
-        for arg in node.args.args[1:]:
+        method_args = node.args.args if (is_static or is_classmethod) else node.args.args[1:]
+        for arg in method_args:
             if arg.arg in mypy_param_types:
                 py_type = self._mypy_type_to_py_type(mypy_param_types[arg.arg])
                 c_type = CType.from_python_type(py_type)
@@ -1600,7 +1649,9 @@ class IRBuilder:
                     return_type = CType.VOID
 
         is_special = method_name.startswith("__") and method_name.endswith("__")
-        is_virtual = not is_special or method_name in ("__len__", "__getitem__", "__setitem__")
+        is_virtual = (not is_static and not is_classmethod and not is_property) and (
+            not is_special or method_name in ("__len__", "__getitem__", "__setitem__")
+        )
 
         method_ir = MethodIR(
             name=method_name,
@@ -1609,11 +1660,26 @@ class IRBuilder:
             return_type=return_type,
             body_ast=node,
             is_virtual=is_virtual,
+            is_static=is_static,
+            is_classmethod=is_classmethod,
+            is_property=is_property,
             is_special=is_special,
             docstring=ast.get_docstring(node),
         )
 
-        class_ir.methods[method_name] = method_ir
+        if is_property and is_property_setter and property_name is not None:
+            class_ir.methods[f"_prop_{property_name}_setter"] = method_ir
+            if property_name in class_ir.properties:
+                class_ir.properties[property_name].setter = method_ir
+        else:
+            class_ir.methods[method_name] = method_ir
+            if is_property:
+                if method_name in class_ir.properties:
+                    class_ir.properties[method_name].getter = method_ir
+                else:
+                    class_ir.properties[method_name] = PropertyInfo(
+                        name=method_name, getter=method_ir
+                    )
 
         if is_virtual and not is_special:
             class_ir.virtual_methods.append(method_name)
@@ -1652,7 +1718,9 @@ class IRBuilder:
             self._var_types[param_name] = param_type.to_c_type_str()
 
         # Track self and params as locals
-        local_vars = ["self"] + [p[0] for p in method_ir.params]
+        local_vars = [p[0] for p in method_ir.params]
+        if not method_ir.is_static and not method_ir.is_classmethod:
+            local_vars.insert(0, "self")
 
         body_ir: list[StmtIR] = []
         for stmt in method_ir.body_ast.body:
@@ -2023,7 +2091,7 @@ class IRBuilder:
                     param_class_name = self._class_typed_params[var_name]
                     param_class_ir = self._known_classes[param_class_name]
 
-                    for fld in param_class_ir.get_all_fields():
+                    for fld, path in param_class_ir.get_all_fields_with_path():
                         if fld.name == attr_name:
                             result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
                             return ParamAttrIR(
@@ -2031,6 +2099,7 @@ class IRBuilder:
                                 param_name=var_name,
                                 c_param_name=sanitize_name(var_name),
                                 attr_name=attr_name,
+                                attr_path=path,
                                 class_c_name=param_class_ir.c_name,
                                 result_type=result_type,
                             ), []
@@ -2040,9 +2109,35 @@ class IRBuilder:
                         param_name=var_name,
                         c_param_name=sanitize_name(var_name),
                         attr_name=attr_name,
+                        attr_path=attr_name,
                         class_c_name=param_class_ir.c_name,
                         result_type=IRType.OBJ,
                     ), []
+
+            # Handle chained attribute access: self.attr1.attr2 or param.attr1.attr2
+            if isinstance(expr.value, ast.Attribute):
+                attr_name = expr.attr
+                base_class_name = self._get_method_attr_class_type(
+                    expr.value, class_ir
+                )
+                if base_class_name and base_class_name in self._known_classes:
+                    base_class_ir = self._known_classes[base_class_name]
+                    base_value, base_prelude = self._build_method_expr(
+                        expr.value, locals_, class_ir, native
+                    )
+                    for fld in base_class_ir.get_all_fields():
+                        if fld.name == attr_name:
+                            result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
+                            temp_name = self._fresh_temp()
+                            result_temp = TempIR(ir_type=result_type, name=temp_name)
+                            attr_access = AttrAccessIR(
+                                result=result_temp,
+                                obj=base_value,
+                                attr_name=attr_name,
+                                class_c_name=base_class_ir.c_name,
+                                result_type=result_type,
+                            )
+                            return result_temp, base_prelude + [attr_access]
 
         if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute):
             if (

@@ -38,13 +38,14 @@ A 7-phase roadmap for mypyc-micropython from proof-of-concept to production-read
   `print()`, `bool()`, `min()`, `max()`, `sum()` (with inline optimization for typed lists)
 - **Classes**: Class definitions with typed fields, `__init__`, instance methods, `@dataclass`,
   single inheritance with vtable-based virtual dispatch, `__eq__`, `__len__`, `__getitem__`,
-  `__setitem__`, class fields with `list`/`dict` types, augmented assignment on fields
+  `__setitem__`, class fields with `list`/`dict` types, augmented assignment on fields,
+  `@property` (getter + setter), `@staticmethod`, `@classmethod`
 - **IR pipeline**: Full two-phase architecture (IRBuilder → Emitters), StmtIR/ExprIR/ValueIR
   hierarchies, prelude pattern for side effects, BinOp type inference, RTuple optimization
-- **ESP32**: All 16 compiled modules verified on real ESP32-C6 hardware (161 device tests pass)
+- **ESP32**: All 17 compiled modules verified on real ESP32-C6 hardware (262 device tests pass)
 - **Performance**: RTuple internal ops (57x speedup), list[tuple] (9.2x speedup), 22 benchmarks
   suite with 11.8x average speedup
-- **Testing**: 518 tests (unit + C runtime), comprehensive device test coverage
+- **Testing**: 548 tests (unit + C runtime), comprehensive device test coverage
 - **Strings**: Full method support (`split`, `join`, `replace`, `find`, `strip`, `upper`, `lower`, etc.)
 - **Type Checking**: Optional mypy integration via `type_check=True` parameter, extracts function/class signatures
 - **Exception Handling**: `try`/`except`/`else`/`finally`, `raise`, multiple handlers, exception variable binding
@@ -56,7 +57,7 @@ A 7-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 - Remaining list methods (`extend`, `insert`, `remove`, `count`, `index`, `reverse`, `sort`)
 - List/dict comprehensions
 - Keyword-only arguments, positional-only arguments
-- `@property`, `@staticmethod`, `@classmethod`
+- Remaining class special methods (`__str__`/`__repr__`, `__ne__`/`__lt__`/`__gt__`/`__le__`/`__ge__`, `__hash__`, `__iter__`/`__next__`)
  Custom exception classes
 - Closures and generators
 
@@ -70,10 +71,10 @@ Phase 2: Functions & Arguments  █████████████░░  ~
   default args ✅ │ *args ✅ │ **kwargs ✅ │ bool ✅ │ min/max ✅ │ sum ✅
   enumerate ✅ │ zip ✅ │ sorted ✅ │ keyword-only args │ positional-only args
 
-Phase 3: Classes                ███████████████  ~95% done
+Phase 3: Classes                ████████████████ ~98% done
   class def ✅ │ __init__ ✅ │ methods ✅ │ @dataclass ✅ │ inheritance ✅
   vtable dispatch ✅ │ __eq__/__len__/__getitem__/__setitem__ ✅ │ inherited methods ✅
-  @property │ @staticmethod │ @classmethod
+  @property ✅ │ @staticmethod ✅ │ @classmethod ✅ │ remaining: special methods
 
 Phase 4: Exception Handling     ███████████████  ~95% done
   try/except ✅ │ try/finally ✅ │ try/except/else ✅ │ raise ✅ │ custom exceptions
@@ -453,18 +454,21 @@ Tasks:
 - [x] Support list/dict fields in methods (container IR + prelude flush)
 - [x] Augmented assignment on `self.field` (e.g., `self.count += 1`)
 
-### 3.3 Properties
+### 3.3 Properties ✅ DONE
 
 Tasks:
-- [ ] Detect `@property` decorator
-- [ ] Generate getter/setter in attr handler
-- [ ] Support read-only properties
-
-### 3.4 Static and Class Methods
+- [x] Detect `@property` decorator
+- [x] Generate getter in attr handler (direct native call, bypass `locals_dict`)
+- [x] Detect `@prop.setter` decorator via `ast.Attribute` pattern matching
+- [x] Generate setter in attr handler with type-aware unboxing
+- [x] Support read-only properties (getter only, no setter)
+- [x] `PropertyInfo` dataclass tracking getter/setter pairs in `ClassIR`
+### 3.4 Static and Class Methods ✅ DONE
 
 Tasks:
-- [ ] `@staticmethod` — no self parameter
-- [ ] `@classmethod` — cls parameter
+- [x] `@staticmethod` — skip self parameter, `mp_rom_obj_static_class_method_t` wrapper with `mp_type_staticmethod`
+- [x] `@classmethod` — cls parameter, `mp_rom_obj_static_class_method_t` wrapper with `mp_type_classmethod`
+- [x] Both callable from class and instance
 
 ### 3.5 Single Inheritance ✅ DONE (with known limitations)
 
@@ -508,8 +512,8 @@ Tasks:
 
 | Issue | Description | Workaround |
 |-------|-------------|------------|
-| No `@property` | No getter/setter decorator support | Use explicit getter/setter methods |
-| No `@staticmethod`/`@classmethod` | Only instance methods supported | Use module-level functions instead |
+| ~~No `@property`~~ | ~~No getter/setter decorator support~~ | ✅ Resolved — full @property support |
+| ~~No `@staticmethod`/`@classmethod`~~ | ~~Only instance methods supported~~ | ✅ Resolved — both decorators supported |
 
 ---
 

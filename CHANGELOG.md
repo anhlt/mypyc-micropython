@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `@staticmethod` decorator support for class methods
+  - Static methods have no `self` parameter and are wrapped in `mp_type_staticmethod`
+  - Accessible via both class and instance (e.g., `MyClass.add(1, 2)` or `obj.add(1, 2)`)
+- `@classmethod` decorator support for class methods
+  - Class methods receive the type object as first parameter (`cls`)
+  - Wrapped in `mp_type_classmethod` for automatic class binding by MicroPython runtime
+- `@property` decorator support with getter and setter
+  - Read-only properties via `@property` decorator
+  - Read-write properties via `@property` + `@name.setter` pattern
+  - Properties dispatched directly in generated `attr` handler (not via `locals_dict`)
+  - Type-aware boxing/unboxing for `int`, `float`, `bool`, and `mp_obj_t` return types
+- `examples/decorators.py` demonstrating all three decorator types
+- 14 device tests for decorator functionality
+- Compiler tests for `@staticmethod`, `@classmethod`, and `@property`
+- C runtime tests for static method and property getter execution
+
+### Added
  **Exception handling support**: `try`/`except`/`else`/`finally`/`raise` statements
   - `try`/`except ExceptionType:` - catch specific exception types
   - `try`/`except ExceptionType as e:` - catch with variable binding
