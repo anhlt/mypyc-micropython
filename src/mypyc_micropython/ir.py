@@ -433,6 +433,7 @@ class FuncIR:
     uses_list_opt: bool = False
     uses_builtins: bool = False  # min, max, sum builtins require py/builtin.h
     uses_checked_div: bool = False  # floor divide/modulo inside try blocks
+    uses_imports: bool = False  # runtime module imports (mp_import_name)
     used_rtuples: set[RTuple] = field(default_factory=set)
     rtuple_types: dict[str, RTuple] = field(default_factory=dict)
     list_vars: dict[str, str | None] = field(default_factory=dict)
@@ -1040,6 +1041,47 @@ class SuperCallIR(ExprIR):
     # Preludes for args
     arg_preludes: list[list[InstrIR]] = field(default_factory=list)
 
+@dataclass
+class ModuleImportIR(InstrIR):
+    """Runtime module import: import X or import X as Y.
+
+    Generated C:
+        mp_obj_t _tmp = mp_import_name(MP_QSTR_math, mp_const_none, MP_OBJ_NEW_SMALL_INT(0));
+    """
+
+    module_name: str  # Python module name (e.g., 'math')
+    result: TempIR  # Temp var holding the imported module object
+
+
+@dataclass
+class ModuleCallIR(ExprIR):
+    """Call a function on an imported module: module.func(args).
+
+    Generated C:
+        mp_obj_t mod = mp_import_name(MP_QSTR_math, mp_const_none, MP_OBJ_NEW_SMALL_INT(0));
+        mp_obj_t fn = mp_load_attr(mod, MP_QSTR_sqrt);
+        mp_obj_t result = mp_call_function_1(fn, arg);
+    """
+
+    module_name: str  # Python module name (e.g., 'math')
+    func_name: str  # Function name (e.g., 'sqrt')
+    args: list[ValueIR]
+    arg_preludes: list[list[InstrIR]] = field(default_factory=list)
+
+
+@dataclass
+class ModuleAttrIR(ExprIR):
+    """Access an attribute on an imported module: module.attr.
+
+    Used for constants like math.pi, math.e.
+
+    Generated C:
+        mp_obj_t mod = mp_import_name(MP_QSTR_math, mp_const_none, MP_OBJ_NEW_SMALL_INT(0));
+        mp_obj_t result = mp_load_attr(mod, MP_QSTR_pi);
+    """
+
+    module_name: str  # Python module name (e.g., 'math')
+    attr_name: str  # Attribute name (e.g., 'pi')
 
 @dataclass
 class SelfAugAssignIR(StmtIR):
@@ -1139,6 +1181,9 @@ class ModuleIR:
     # For tracking definition order (important for forward declarations)
     class_order: list[str] = field(default_factory=list)
     function_order: list[str] = field(default_factory=list)
+
+    # Imported modules used by compiled functions (for runtime import)
+    imported_modules: set[str] = field(default_factory=set)
 
     def add_class(self, class_ir: ClassIR) -> None:
         """Add a class to the module."""

@@ -423,6 +423,38 @@ Always run `source ~/esp/esp-idf/export.sh` before firmware builds.
 | `PORT` | `/dev/ttyACM0` | Serial port (macOS: `/dev/cu.usbmodem2101`) |
 | `ESP_IDF_DIR` | `~/esp/esp-idf` | ESP-IDF installation path |
 
+### ESP-IDF Python Version Mismatch (macOS)
+
+**CRITICAL**: The `make flash` command may fail with:
+```
+'/path/to/idf5.2_py3.9_env/bin/python' is currently active in the environment
+while the project was configured with '/path/to/idf5.2_py3.10_env/bin/python'.
+Run 'idf.py fullclean' to start again.
+```
+
+This happens because the system `python3` (e.g., 3.9.6) differs from the Python
+used during `make build` (e.g., 3.10.5 from ESP-IDF virtualenv). The Makefile's
+`flash` target spawns a subshell via `PATH="/usr/bin:$PATH" bash -c '...'` which
+picks up the wrong Python.
+
+**Fix**: Flash directly using `bash -c` with ESP-IDF sourced in the same shell:
+```bash
+bash -c 'source ~/esp/esp-idf/export.sh 2>/dev/null && \
+  cd deps/micropython/ports/esp32 && \
+  idf.py -D MICROPY_BOARD=ESP32_GENERIC_C6 \
+    -D MICROPY_BOARD_DIR="$(pwd)/boards/ESP32_GENERIC_C6" \
+    -B build-ESP32_GENERIC_C6 \
+    -p /dev/cu.usbmodem101 flash'
+```
+
+**Why this works**: `bash -c` starts a fresh bash shell where `source export.sh`
+sets PATH to use the correct Python 3.10 from the ESP-IDF virtualenv before
+`idf.py` runs. The default `make flash` target uses the system shell which may
+have a different Python version on PATH.
+
+**Note**: `make build` usually works fine because it also sources `export.sh`,
+but the `deploy` sub-make invoked by `make flash` can reset PATH.
+
 ## MicroPython C API Internals
 
 Understanding how MicroPython works internally is essential for this compiler project.

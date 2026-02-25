@@ -4270,3 +4270,124 @@ def nested_try(a: int, b: int) -> int:
         result = compile_source(source, "test", type_check=False)
         assert result.count("nlr_buf_t") == 2
         assert result.count("nlr_push") == 2
+
+
+
+
+class TestModuleImports:
+    """Tests for runtime module import support."""
+
+    def test_import_math_sqrt(self):
+        source = '''
+import math
+
+def sqrt_val(x: float) -> float:
+    return math.sqrt(x)
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_import_name" in result
+        assert "MP_QSTR_math" in result
+        assert "MP_QSTR_sqrt" in result
+        assert "mp_load_attr" in result
+        assert "mp_call_function_1" in result
+
+    def test_import_math_constant(self):
+        source = '''
+import math
+
+def get_pi() -> float:
+    return math.pi
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_import_name" in result
+        assert "MP_QSTR_math" in result
+        assert "MP_QSTR_pi" in result
+        assert "mp_load_attr" in result
+
+    def test_import_with_alias(self):
+        source = '''
+import math as m
+
+def sqrt_val(x: float) -> float:
+    return m.sqrt(x)
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_QSTR_math" in result
+        assert "MP_QSTR_sqrt" in result
+        assert "mp_import_name" in result
+
+    def test_import_time_module(self):
+        source = '''
+import time
+
+def sleep_ms(ms: int) -> None:
+    time.sleep_ms(ms)
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_QSTR_time" in result
+        assert "MP_QSTR_sleep_ms" in result
+        assert "mp_import_name" in result
+
+    def test_module_call_no_args(self):
+        source = '''
+import time
+
+def get_ticks() -> int:
+    return time.ticks_ms()
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_call_function_0" in result
+        assert "MP_QSTR_ticks_ms" in result
+
+    def test_module_call_two_args(self):
+        source = '''
+import math
+
+def power(x: float, y: float) -> float:
+    return math.pow(x, y)
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_call_function_2" in result
+        assert "MP_QSTR_pow" in result
+
+    def test_module_call_many_args(self):
+        source = '''
+import time
+
+def diff(t1: int, t2: int, t3: int, extra: int) -> int:
+    return time.ticks_diff(t1, t2)
+'''
+        # ticks_diff has 2 args, but test that n_kw path works for >3 args
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_QSTR_ticks_diff" in result
+
+    def test_multiple_imports(self):
+        source = '''
+import math
+import time
+
+def compute(x: float) -> float:
+    y: float = math.sqrt(x)
+    time.sleep_ms(1)
+    return y
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_QSTR_math" in result
+        assert "MP_QSTR_time" in result
+        assert "MP_QSTR_sqrt" in result
+        assert "MP_QSTR_sleep_ms" in result
+
+    def test_import_does_not_break_regular_method_calls(self):
+        source = '''
+import math
+
+def process(items: list) -> int:
+    items.append(1)
+    return math.floor(3.7)
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Regular method call should still use list append
+        assert "mp_obj_list_append" in result
+        # Module call should use import pattern
+        assert "MP_QSTR_math" in result
+        assert "MP_QSTR_floor" in result

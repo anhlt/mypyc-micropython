@@ -44,6 +44,9 @@ from .ir import (
     ListNewIR,
     MethodCallIR,
     MethodIR,
+    ModuleAttrIR,
+    ModuleCallIR,
+    ModuleImportIR,
     ModuleIR,
     NameIR,
     ParamAttrIR,
@@ -500,6 +503,8 @@ class IRPrinter:
         elif isinstance(instr, ListCompIR):
             filter_str = f" if {self.print_value(instr.condition)}" if instr.condition else ""
             return f"{self._i()}{instr.result.name} = [{self.print_value(instr.element)} for {instr.loop_var} in {self.print_value(instr.iterable)}{filter_str}]"
+        elif isinstance(instr, ModuleImportIR):
+            return f"{self._i()}{instr.result.name} = import {instr.module_name}"
         else:
             return f"{self._i()}/* unknown instr: {type(instr).__name__} */"
 
@@ -552,6 +557,11 @@ class IRPrinter:
             upper = self.print_value(value.upper) if value.upper else ""
             step = f":{self.print_value(value.step)}" if value.step else ""
             return f"{lower}:{upper}{step}"
+        elif isinstance(value, ModuleCallIR):
+            args = ", ".join(self.print_value(a) for a in value.args)
+            return f"{value.module_name}.{value.func_name}({args})"
+        elif isinstance(value, ModuleAttrIR):
+            return f"{value.module_name}.{value.attr_name}"
         else:
             return f"<{type(value).__name__}>"
 

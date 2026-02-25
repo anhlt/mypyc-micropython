@@ -47,6 +47,8 @@ from .ir import (
     ListNewIR,
     MethodCallIR,
     MethodIR,
+    ModuleAttrIR,
+    ModuleCallIR,
     NameIR,
     ParamAttrIR,
     ParamIR,
@@ -158,13 +160,35 @@ class IRBuilder:
         self._used_rtuples: set[RTuple] = set()
         self._uses_print = False
         self._uses_list_opt = False
+        self._uses_imports = False
         self._loop_depth = 0
         self._class_typed_params: dict[str, str] = {}
         self._mypy_local_types: dict[str, str] = {}
+        # Import tracking: alias -> module_name (e.g., 'm' -> 'math')
+        self._import_aliases: dict[str, str] = {}
+        self._imported_modules: set[str] = set()
 
     def _fresh_temp(self) -> str:
         self._temp_counter += 1
         return f"_tmp{self._temp_counter}"
+
+    def register_import(self, node: ast.Import | ast.ImportFrom) -> None:
+        """Register import statements for later resolution of module.func() calls."""
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                module_name = alias.name
+                local_name = alias.asname or alias.name
+                self._import_aliases[local_name] = module_name
+                self._imported_modules.add(module_name)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            # from X import Y -- track the module
+            self._import_aliases[node.module] = node.module
+            self._imported_modules.add(node.module)
+
+    @property
+    def imported_modules(self) -> set[str]:
+        """Set of module names that have been imported."""
+        return self._imported_modules
 
     def build_function(self, node: ast.FunctionDef) -> FuncIR:
         self._temp_counter = 0
@@ -175,6 +199,7 @@ class IRBuilder:
         self._used_rtuples = set()
         self._uses_print = False
         self._uses_list_opt = False
+        self._uses_imports = False
         self._class_typed_params = {}
         self._mypy_local_types = {}
 
@@ -266,6 +291,7 @@ class IRBuilder:
             arg_types=arg_types,
             uses_print=self._uses_print,
             uses_list_opt=self._uses_list_opt,
+            uses_imports=self._uses_imports,
             used_rtuples=set(self._used_rtuples),
             rtuple_types=dict(self._rtuple_types),
             list_vars=dict(self._list_vars),
@@ -932,6 +958,12 @@ class IRBuilder:
         if not isinstance(expr.func, ast.Attribute):
             return ConstIR(ir_type=IRType.OBJ, value=None), []
 
+        # Check if this is a call on an imported module: math.sqrt(x)
+        if isinstance(expr.func.value, ast.Name):
+            var_name = expr.func.value.id
+            if var_name in self._import_aliases:
+                return self._build_module_call(expr, var_name, locals_)
+
         receiver, recv_prelude = self._build_expr(expr.func.value, locals_)
         method_name = expr.func.attr
 
@@ -947,6 +979,33 @@ class IRBuilder:
         method_call = MethodCallIR(result=result, receiver=receiver, method=method_name, args=args)
 
         return result, all_preludes + [method_call]
+
+    def _build_module_call(
+        self, expr: ast.Call, alias: str, locals_: list[str]
+    ) -> tuple[ValueIR, list]:
+        """Build IR for a call on an imported module: module.func(args)."""
+        if not isinstance(expr.func, ast.Attribute):
+            return ConstIR(ir_type=IRType.OBJ, value=None), []
+
+        module_name = self._import_aliases[alias]
+        func_name = expr.func.attr
+        self._uses_imports = True
+
+        args: list[ValueIR] = []
+        arg_preludes: list[list] = []
+        for arg in expr.args:
+            val, prelude = self._build_expr(arg, locals_)
+            args.append(val)
+            arg_preludes.append(prelude)
+        all_preludes = [p for pl in arg_preludes for p in pl]
+
+        return ModuleCallIR(
+            ir_type=IRType.OBJ,
+            module_name=module_name,
+            func_name=func_name,
+            args=args,
+            arg_preludes=arg_preludes,
+        ), all_preludes
 
     def _build_class_instantiation(
         self, expr: ast.Call, class_name: str, locals_: list[str]
@@ -1089,6 +1148,18 @@ class IRBuilder:
         ), value_prelude + slice_prelude
 
     def _build_attribute(self, expr: ast.Attribute, locals_: list[str]) -> tuple[ValueIR, list]:
+        # Check if this is an attribute on an imported module: math.pi
+        if isinstance(expr.value, ast.Name):
+            var_name = expr.value.id
+            if var_name in self._import_aliases:
+                module_name = self._import_aliases[var_name]
+                self._uses_imports = True
+                return ModuleAttrIR(
+                    ir_type=IRType.OBJ,
+                    module_name=module_name,
+                    attr_name=expr.attr,
+                ), []
+
         attr_name = expr.attr
 
         if isinstance(expr.value, ast.Name):

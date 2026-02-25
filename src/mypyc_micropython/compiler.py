@@ -251,13 +251,15 @@ def compile_source(
     uses_list_opt = False
     uses_builtins = False
     uses_checked_div = False
+    uses_imports = False
     used_rtuples: set[RTuple] = set()
-
     for node in ast.iter_child_nodes(tree):
-        if isinstance(node, ast.ClassDef):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            ir_builder.register_import(node)
+
+        elif isinstance(node, ast.ClassDef):
             class_ir = ir_builder.build_class(node)
             module_ir.add_class(class_ir)
-
         elif isinstance(node, ast.FunctionDef):
             func_ir = ir_builder.build_function(node)
             function_irs.append(func_ir)
@@ -275,8 +277,12 @@ def compile_source(
                 uses_builtins = True
             if func_ir.uses_checked_div:
                 uses_checked_div = True
+            if func_ir.uses_imports:
+                uses_imports = True
             used_rtuples.update(func_ir.used_rtuples)
 
+
+    module_ir.imported_modules = ir_builder.imported_modules
     module_ir.resolve_base_classes()
 
     for class_ir in module_ir.get_classes_in_order():
@@ -317,6 +323,7 @@ def compile_source(
         uses_list_opt=uses_list_opt,
         uses_builtins=uses_builtins,
         uses_checked_div=uses_checked_div,
+        uses_imports=uses_imports,
         used_rtuples=used_rtuples,
     )
 

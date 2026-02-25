@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Runtime import support for built-in MicroPython modules (`import math`, `import time`, etc.)
+  - New IR nodes: `ModuleImportIR`, `ModuleCallIR`, `ModuleAttrIR`
+  - Generated C uses `mp_import_name()` + `mp_load_attr()` + `mp_call_function_N()` pattern
+  - Module function calls: `math.sqrt(x)` compiles to runtime dispatch
+  - Module attribute access: `math.pi` compiles to runtime attribute load
+  - Works with all MicroPython built-in modules (math, time, machine, etc.)
+- `examples/math_ops.py` demonstrating runtime import of `math` and `time` modules
+- 8 device tests for runtime import functionality
+- Compiler unit tests for import handling
+- ESP-IDF Python version mismatch troubleshooting in AGENTS.md
+
+### Added
 - `@staticmethod` decorator support for class methods
   - Static methods have no `self` parameter and are wrapped in `mp_type_staticmethod`
   - Accessible via both class and instance (e.g., `MyClass.add(1, 2)` or `obj.add(1, 2)`)

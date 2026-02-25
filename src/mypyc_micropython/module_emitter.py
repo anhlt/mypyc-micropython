@@ -71,6 +71,7 @@ class ModuleEmitter:
         uses_list_opt: bool = False,
         uses_builtins: bool = False,
         uses_checked_div: bool = False,
+        uses_imports: bool = False,
         used_rtuples: set[RTuple] | None = None,
     ):
         self.module_ir = module_ir
@@ -79,6 +80,7 @@ class ModuleEmitter:
         self._uses_list_opt = uses_list_opt
         self._uses_builtins = uses_builtins
         self._uses_checked_div = uses_checked_div
+        self._uses_imports = uses_imports
         self._used_rtuples = used_rtuples or set()
 
     def emit(

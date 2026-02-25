@@ -1920,6 +1920,65 @@ def test_classes():
         "import classes as c; s = c.Sensor('t', 10, c.Location(0, 0)); s.record(1, 1.0); s.record(2, 2.0); print(c.sensor_summary(s))",
         "12",
     )
+
+
+def test_math_ops():
+    """Test math_ops module (runtime imports of built-in modules)."""
+    print("\n[TEST] Testing math_ops module (runtime imports)...")
+
+    # distance(x1, y1, x2, y2) uses math.sqrt
+    test(
+        "distance(0, 0, 3, 4)",
+        "import math_ops; print(math_ops.distance(0, 0, 3, 4))",
+        "5.0",
+    )
+
+    test(
+        "distance(1, 1, 1, 1)",
+        "import math_ops; print(math_ops.distance(1, 1, 1, 1))",
+        "0.0",
+    )
+
+    # circle_area(radius) uses math.pi
+    test(
+        "circle_area(1)",
+        "import math_ops; r = math_ops.circle_area(1); print(r > 3.14 and r < 3.15)",
+        "True",
+    )
+
+    test(
+        "circle_area(0)",
+        "import math_ops; print(math_ops.circle_area(0))",
+        "0.0",
+    )
+
+    # deg_to_rad(degrees) uses math.pi
+    test(
+        "deg_to_rad(180)",
+        "import math_ops; r = math_ops.deg_to_rad(180); print(r > 3.14 and r < 3.15)",
+        "True",
+    )
+
+    test(
+        "deg_to_rad(0)",
+        "import math_ops; print(math_ops.deg_to_rad(0))",
+        "0.0",
+    )
+
+    # trig_sum(angle) uses math.sin + math.cos
+    test(
+        "trig_sum(0)",
+        "import math_ops; print(math_ops.trig_sum(0))",
+        "1.0",
+    )
+
+    # timed_sum(n) - basic integer sum (no imports, but in same module)
+    test(
+        "timed_sum(10)",
+        "import math_ops; print(math_ops.timed_sum(10))",
+        "45",
+    )
+
 def run_all_tests():
     """Run all test suites."""
     global total_tests, passed_tests, failed_tests
@@ -1956,6 +2015,7 @@ def run_all_tests():
     test_super_calls()
     test_decorators()
     test_classes()
+    test_math_ops()
     # Print summary
     print("\n" + "=" * 70)
     print("[SUMMARY] TEST SUMMARY")
