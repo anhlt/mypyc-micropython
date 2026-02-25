@@ -1005,6 +1005,7 @@ class ParamAttrIR(ExprIR):
     param_name: str  # Python parameter name (e.g., "p1")
     c_param_name: str  # C parameter name (sanitized)
     attr_name: str  # Attribute name (e.g., "x")
+    attr_path: str  # C access path (e.g., "x" or "super._id" for inherited fields)
     class_c_name: str  # C class name (e.g., "module_Point")
     result_type: IRType
 

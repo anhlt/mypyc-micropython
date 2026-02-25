@@ -950,7 +950,7 @@ class BaseEmitter:
 
     def _emit_param_attr(self, attr: ParamAttrIR) -> tuple[str, str]:
         expr = (
-            f"(({attr.class_c_name}_obj_t *)MP_OBJ_TO_PTR({attr.c_param_name}))->{attr.attr_name}"
+            f"(({attr.class_c_name}_obj_t *)MP_OBJ_TO_PTR({attr.c_param_name}))->{attr.attr_path}"
         )
         return expr, attr.result_type.to_c_type_str()
 

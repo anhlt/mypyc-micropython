@@ -1097,7 +1097,7 @@ class IRBuilder:
                 class_name = self._class_typed_params[var_name]
                 class_ir = self._known_classes[class_name]
 
-                for fld in class_ir.get_all_fields():
+                for fld, path in class_ir.get_all_fields_with_path():
                     if fld.name == attr_name:
                         result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
                         return ParamAttrIR(
@@ -1105,6 +1105,7 @@ class IRBuilder:
                             param_name=var_name,
                             c_param_name=sanitize_name(var_name),
                             attr_name=attr_name,
+                            attr_path=path,
                             class_c_name=class_ir.c_name,
                             result_type=result_type,
                         ), []
@@ -1114,6 +1115,7 @@ class IRBuilder:
                     param_name=var_name,
                     c_param_name=sanitize_name(var_name),
                     attr_name=attr_name,
+                    attr_path=attr_name,
                     class_c_name=class_ir.c_name,
                     result_type=IRType.OBJ,
                 ), []
@@ -1248,6 +1250,30 @@ class IRBuilder:
             if parent_class and parent_class in self._known_classes:
                 class_ir = self._known_classes[parent_class]
                 for fld in class_ir.get_all_fields():
+                    if fld.name == expr.attr:
+                        return fld.py_type
+        return None
+
+    def _get_method_attr_class_type(self, expr: ast.Attribute, class_ir: ClassIR) -> str | None:
+        """Get the class type name of an attribute in method context (handles self.attr)."""
+        if isinstance(expr.value, ast.Name):
+            var_name = expr.value.id
+            if var_name == "self":
+                for fld in class_ir.get_all_fields():
+                    if fld.name == expr.attr:
+                        return fld.py_type
+            elif var_name in self._class_typed_params:
+                param_class_name = self._class_typed_params[var_name]
+                if param_class_name in self._known_classes:
+                    param_class_ir = self._known_classes[param_class_name]
+                    for fld in param_class_ir.get_all_fields():
+                        if fld.name == expr.attr:
+                            return fld.py_type
+        elif isinstance(expr.value, ast.Attribute):
+            parent_type = self._get_method_attr_class_type(expr.value, class_ir)
+            if parent_type and parent_type in self._known_classes:
+                parent_ir = self._known_classes[parent_type]
+                for fld in parent_ir.get_all_fields():
                     if fld.name == expr.attr:
                         return fld.py_type
         return None
@@ -2065,7 +2091,7 @@ class IRBuilder:
                     param_class_name = self._class_typed_params[var_name]
                     param_class_ir = self._known_classes[param_class_name]
 
-                    for fld in param_class_ir.get_all_fields():
+                    for fld, path in param_class_ir.get_all_fields_with_path():
                         if fld.name == attr_name:
                             result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
                             return ParamAttrIR(
@@ -2073,6 +2099,7 @@ class IRBuilder:
                                 param_name=var_name,
                                 c_param_name=sanitize_name(var_name),
                                 attr_name=attr_name,
+                                attr_path=path,
                                 class_c_name=param_class_ir.c_name,
                                 result_type=result_type,
                             ), []
@@ -2082,9 +2109,35 @@ class IRBuilder:
                         param_name=var_name,
                         c_param_name=sanitize_name(var_name),
                         attr_name=attr_name,
+                        attr_path=attr_name,
                         class_c_name=param_class_ir.c_name,
                         result_type=IRType.OBJ,
                     ), []
+
+            # Handle chained attribute access: self.attr1.attr2 or param.attr1.attr2
+            if isinstance(expr.value, ast.Attribute):
+                attr_name = expr.attr
+                base_class_name = self._get_method_attr_class_type(
+                    expr.value, class_ir
+                )
+                if base_class_name and base_class_name in self._known_classes:
+                    base_class_ir = self._known_classes[base_class_name]
+                    base_value, base_prelude = self._build_method_expr(
+                        expr.value, locals_, class_ir, native
+                    )
+                    for fld in base_class_ir.get_all_fields():
+                        if fld.name == attr_name:
+                            result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
+                            temp_name = self._fresh_temp()
+                            result_temp = TempIR(ir_type=result_type, name=temp_name)
+                            attr_access = AttrAccessIR(
+                                result=result_temp,
+                                obj=base_value,
+                                attr_name=attr_name,
+                                class_c_name=base_class_ir.c_name,
+                                result_type=result_type,
+                            )
+                            return result_temp, base_prelude + [attr_access]
 
         if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute):
             if (

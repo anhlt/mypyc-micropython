@@ -529,12 +529,15 @@ class ClassEmitter:
         for name in method_names:
             method = all_methods[name]
             if method.is_static or method.is_classmethod:
-                lines.append(
-                    f"static const mp_rom_obj_static_class_method_t {method.c_name}_obj = {{"
-                )
-                method_type = "mp_type_staticmethod" if method.is_static else "mp_type_classmethod"
-                lines.append(f"    {{&{method_type}}}, MP_ROM_PTR(&{method.c_name}_fun_obj)")
-                lines.append("};")
+                # Only emit wrapper struct if method belongs to this class (not inherited)
+                is_own_method = name in self.class_ir.methods
+                if is_own_method:
+                    lines.append(
+                        f"static const mp_rom_obj_static_class_method_t {method.c_name}_obj = {{"
+                    )
+                    method_type = "mp_type_staticmethod" if method.is_static else "mp_type_classmethod"
+                    lines.append(f"    {{&{method_type}}}, MP_ROM_PTR(&{method.c_name}_fun_obj)")
+                    lines.append("};")
         if any(
             all_methods[name].is_static or all_methods[name].is_classmethod for name in method_names
         ):
