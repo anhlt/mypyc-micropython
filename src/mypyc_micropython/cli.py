@@ -4,7 +4,7 @@ import ast
 import sys
 from pathlib import Path
 
-from mypyc_micropython.compiler import compile_to_micropython
+from mypyc_micropython.compiler import compile_package, compile_to_micropython
 from mypyc_micropython.ir_builder import IRBuilder
 from mypyc_micropython.ir_visualizer import dump_ir
 
@@ -13,7 +13,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         prog="mpy-compile", description="Compile typed Python to MicroPython native module"
     )
-    parser.add_argument("source", help="Input Python file (.py)")
+    parser.add_argument("source", help="Input Python file (.py) or package directory")
     parser.add_argument("-o", "--output", help="Output directory (default: usermod_<name>/)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     parser.add_argument(
@@ -43,9 +43,14 @@ def main() -> int:
     output_dir = Path(args.output) if args.output else None
 
     type_check = not args.no_type_check
-    result = compile_to_micropython(
-        source_path, output_dir, type_check=type_check, strict_type_check=type_check
-    )
+    if source_path.is_dir():
+        result = compile_package(
+            source_path, output_dir, type_check=type_check, strict_type_check=type_check
+        )
+    else:
+        result = compile_to_micropython(
+            source_path, output_dir, type_check=type_check, strict_type_check=type_check
+        )
 
     if not result.success:
         print("Compilation failed:", file=sys.stderr)

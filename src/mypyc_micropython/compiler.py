@@ -31,6 +31,30 @@ class CompilationResult:
     type_check_result: TypeCheckResult | None = None
 
 
+@dataclass
+class _ModuleCompileParts:
+    module_ir: ModuleIR
+    function_irs: list[FuncIR]
+    function_code: list[str]
+    forward_decls: list[str]
+    struct_code: list[str]
+    class_code: list[str]
+    uses_print: bool
+    uses_list_opt: bool
+    uses_builtins: bool
+    uses_checked_div: bool
+    uses_imports: bool
+    used_rtuples: set[RTuple]
+
+
+@dataclass
+class _PackageSubmodule:
+    name: str
+    symbol_prefix: str
+    module_ir: ModuleIR
+    functions: list[FuncIR]
+    children: list[_PackageSubmodule] = field(default_factory=list)  # nested sub-packages
+
 C_RESERVED_WORDS = {
     "auto",
     "break",
@@ -198,31 +222,16 @@ target_link_libraries(usermod INTERFACE usermod_{c_name})
 """
 
 
-def compile_source(
+def _compile_module_parts(
     source: str,
-    module_name: str = "mymodule",
+    module_name: str,
     *,
-    type_check: bool = True,
-    strict: bool = True,
-) -> str:
-    """Compile typed Python source to MicroPython C code.
-
-    Args:
-        source: Python source code to compile
-        module_name: Name for the generated module
-        type_check: Enable mypy type checking before compilation (default: True)
-        strict: Enable strict mypy type checking (default: True)
-
-    Returns:
-        Generated C code as a string
-
-    Raises:
-        TypeError: If type checking is enabled and type errors are found
-    """
+    type_check: bool,
+    strict: bool,
+) -> _ModuleCompileParts:
     from .class_emitter import ClassEmitter
     from .function_emitter import FunctionEmitter, MethodEmitter
     from .ir_builder import IRBuilder, MypyTypeInfo
-    from .module_emitter import ModuleEmitter
 
     mypy_types: MypyTypeInfo | None = None
     if type_check:
@@ -253,10 +262,10 @@ def compile_source(
     uses_checked_div = False
     uses_imports = False
     used_rtuples: set[RTuple] = set()
+
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             ir_builder.register_import(node)
-
         elif isinstance(node, ast.ClassDef):
             class_ir = ir_builder.build_class(node)
             module_ir.add_class(class_ir)
@@ -280,7 +289,6 @@ def compile_source(
             if func_ir.uses_imports:
                 uses_imports = True
             used_rtuples.update(func_ir.used_rtuples)
-
 
     module_ir.imported_modules = ir_builder.imported_modules
     module_ir.resolve_base_classes()
@@ -317,8 +325,13 @@ def compile_source(
 
         class_code.append(class_emitter.emit_all_except_struct())
 
-    module_emitter = ModuleEmitter(
-        module_ir,
+    return _ModuleCompileParts(
+        module_ir=module_ir,
+        function_irs=function_irs,
+        function_code=function_code,
+        forward_decls=forward_decls,
+        struct_code=struct_code,
+        class_code=class_code,
         uses_print=uses_print,
         uses_list_opt=uses_list_opt,
         uses_builtins=uses_builtins,
@@ -327,10 +340,271 @@ def compile_source(
         used_rtuples=used_rtuples,
     )
 
-    return module_emitter.emit(
-        forward_decls=forward_decls,
-        struct_code=struct_code,
-        function_code=function_code,
-        class_code=class_code,
-        functions=function_irs,
+
+def compile_source(
+    source: str,
+    module_name: str = "mymodule",
+    *,
+    type_check: bool = True,
+    strict: bool = True,
+) -> str:
+    """Compile typed Python source to MicroPython C code.
+
+    Args:
+        source: Python source code to compile
+        module_name: Name for the generated module
+        type_check: Enable mypy type checking before compilation (default: True)
+        strict: Enable strict mypy type checking (default: True)
+
+    Returns:
+        Generated C code as a string
+
+    Raises:
+        TypeError: If type checking is enabled and type errors are found
+    """
+    from .module_emitter import ModuleEmitter
+
+    parts = _compile_module_parts(source, module_name, type_check=type_check, strict=strict)
+
+    module_emitter = ModuleEmitter(
+        parts.module_ir,
+        uses_print=parts.uses_print,
+        uses_list_opt=parts.uses_list_opt,
+        uses_builtins=parts.uses_builtins,
+        uses_checked_div=parts.uses_checked_div,
+        uses_imports=parts.uses_imports,
+        used_rtuples=parts.used_rtuples,
     )
+
+    return module_emitter.emit(
+        forward_decls=parts.forward_decls,
+        struct_code=parts.struct_code,
+        function_code=parts.function_code,
+        class_code=parts.class_code,
+        functions=parts.function_irs,
+    )
+
+
+def _scan_package_recursive(
+    package_path: Path,
+    parent_prefix: str,
+    *,
+    type_check: bool,
+    strict: bool,
+    accumulated_parts: _ModuleCompileParts,
+) -> list[_PackageSubmodule]:
+    """Recursively scan a package directory and compile all .py files and sub-packages.
+
+    Returns a list of _PackageSubmodule with nested children for sub-packages.
+    All function code, forward decls, etc. are accumulated into accumulated_parts.
+    """
+    submodules: list[_PackageSubmodule] = []
+
+    # First: compile .py files at this level
+    for py_file in sorted(package_path.glob("*.py")):
+        if py_file.name == "__init__.py":
+            continue
+        submodule_name = py_file.stem
+        symbol_prefix = sanitize_name(f"{parent_prefix}_{submodule_name}")
+        source = py_file.read_text()
+        parts = _compile_module_parts(
+            source,
+            symbol_prefix,
+            type_check=type_check,
+            strict=strict,
+        )
+        submodules.append(
+            _PackageSubmodule(
+                name=submodule_name,
+                symbol_prefix=symbol_prefix,
+                module_ir=parts.module_ir,
+                functions=parts.function_irs,
+            )
+        )
+
+        accumulated_parts.forward_decls.extend(parts.forward_decls)
+        accumulated_parts.struct_code.extend(parts.struct_code)
+        accumulated_parts.function_code.extend(parts.function_code)
+        accumulated_parts.class_code.extend(parts.class_code)
+
+        accumulated_parts.uses_print = accumulated_parts.uses_print or parts.uses_print
+        accumulated_parts.uses_list_opt = accumulated_parts.uses_list_opt or parts.uses_list_opt
+        accumulated_parts.uses_builtins = accumulated_parts.uses_builtins or parts.uses_builtins
+        accumulated_parts.uses_checked_div = (
+            accumulated_parts.uses_checked_div or parts.uses_checked_div
+        )
+        accumulated_parts.uses_imports = accumulated_parts.uses_imports or parts.uses_imports
+        accumulated_parts.used_rtuples.update(parts.used_rtuples)
+
+    # Second: recurse into sub-directories with __init__.py
+    for sub_dir in sorted(package_path.iterdir()):
+        if not sub_dir.is_dir():
+            continue
+        sub_init = sub_dir / "__init__.py"
+        if not sub_init.exists():
+            continue
+
+        sub_name = sub_dir.name
+        sub_prefix = sanitize_name(f"{parent_prefix}_{sub_name}")
+
+        # Compile the sub-package's __init__.py
+        init_source = sub_init.read_text()
+        init_parts = _compile_module_parts(
+            init_source,
+            sub_prefix,
+            type_check=type_check,
+            strict=strict,
+        )
+
+        accumulated_parts.forward_decls.extend(init_parts.forward_decls)
+        accumulated_parts.struct_code.extend(init_parts.struct_code)
+        accumulated_parts.function_code.extend(init_parts.function_code)
+        accumulated_parts.class_code.extend(init_parts.class_code)
+
+        accumulated_parts.uses_print = accumulated_parts.uses_print or init_parts.uses_print
+        accumulated_parts.uses_list_opt = (
+            accumulated_parts.uses_list_opt or init_parts.uses_list_opt
+        )
+        accumulated_parts.uses_builtins = (
+            accumulated_parts.uses_builtins or init_parts.uses_builtins
+        )
+        accumulated_parts.uses_checked_div = (
+            accumulated_parts.uses_checked_div or init_parts.uses_checked_div
+        )
+        accumulated_parts.uses_imports = accumulated_parts.uses_imports or init_parts.uses_imports
+        accumulated_parts.used_rtuples.update(init_parts.used_rtuples)
+
+        # Recurse into the sub-package
+        children = _scan_package_recursive(
+            sub_dir,
+            sub_prefix,
+            type_check=type_check,
+            strict=strict,
+            accumulated_parts=accumulated_parts,
+        )
+
+        submodules.append(
+            _PackageSubmodule(
+                name=sub_name,
+                symbol_prefix=sub_prefix,
+                module_ir=init_parts.module_ir,
+                functions=init_parts.function_irs,
+                children=children,
+            )
+        )
+
+    return submodules
+
+
+def compile_package(
+    package_dir: str | Path,
+    output_dir: str | Path | None = None,
+    *,
+    type_check: bool = True,
+    strict_type_check: bool = True,
+) -> CompilationResult:
+    from .module_emitter import ModuleEmitter
+
+    package_path = Path(package_dir)
+
+    if not package_path.exists():
+        return CompilationResult(
+            module_name="",
+            c_code="",
+            h_code=None,
+            mk_code="",
+            cmake_code="",
+            success=False,
+            errors=[f"Package directory not found: {package_path}"],
+        )
+
+    if not package_path.is_dir():
+        return CompilationResult(
+            module_name="",
+            c_code="",
+            h_code=None,
+            mk_code="",
+            cmake_code="",
+            success=False,
+            errors=[f"Not a directory: {package_path}"],
+        )
+
+    init_path = package_path / "__init__.py"
+    if not init_path.exists():
+        return CompilationResult(
+            module_name="",
+            c_code="",
+            h_code=None,
+            mk_code="",
+            cmake_code="",
+            success=False,
+            errors=[f"Package missing __init__.py: {package_path}"],
+        )
+
+    module_name = package_path.name
+    if output_dir is None:
+        output_dir = package_path.parent / f"usermod_{module_name}"
+    output_dir = Path(output_dir)
+
+    try:
+        init_source = init_path.read_text()
+        parent_parts = _compile_module_parts(
+            init_source,
+            module_name,
+            type_check=type_check,
+            strict=strict_type_check,
+        )
+
+        submodules = _scan_package_recursive(
+            package_path,
+            module_name,
+            type_check=type_check,
+            strict=strict_type_check,
+            accumulated_parts=parent_parts,
+        )
+
+        module_emitter = ModuleEmitter(
+            parent_parts.module_ir,
+            uses_print=parent_parts.uses_print,
+            uses_list_opt=parent_parts.uses_list_opt,
+            uses_builtins=parent_parts.uses_builtins,
+            uses_checked_div=parent_parts.uses_checked_div,
+            uses_imports=parent_parts.uses_imports,
+            used_rtuples=parent_parts.used_rtuples,
+        )
+        c_code = module_emitter.emit_package(
+            forward_decls=parent_parts.forward_decls,
+            struct_code=parent_parts.struct_code,
+            function_code=parent_parts.function_code,
+            class_code=parent_parts.class_code,
+            parent_functions=parent_parts.function_irs,
+            submodules=submodules,
+        )
+
+        mk_code = generate_micropython_mk(module_name)
+        cmake_code = generate_micropython_cmake(module_name)
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / f"{module_name}.c").write_text(c_code)
+        (output_dir / "micropython.mk").write_text(mk_code)
+        (output_dir / "micropython.cmake").write_text(cmake_code)
+
+        return CompilationResult(
+            module_name=module_name,
+            c_code=c_code,
+            h_code=None,
+            mk_code=mk_code,
+            cmake_code=cmake_code,
+            success=True,
+        )
+
+    except Exception as e:
+        return CompilationResult(
+            module_name=module_name,
+            c_code="",
+            h_code=None,
+            mk_code="",
+            cmake_code="",
+            success=False,
+            errors=[str(e)],
+        )

@@ -2015,6 +2015,118 @@ def test_cross_import():
         "1200",
     )
 
+def test_sensor_lib():
+    """Test sensor_lib package (nested package compilation)."""
+    print("\n[TEST] Testing sensor_lib package (package compilation)...")
+
+    # Top-level submodule: math_helpers
+    test(
+        "math_helpers.distance(0,0,3,4)",
+        "import sensor_lib; print(sensor_lib.math_helpers.distance(0, 0, 3, 4))",
+        "25",
+    )
+
+    test(
+        "math_helpers.midpoint(10,20)",
+        "import sensor_lib; print(sensor_lib.math_helpers.midpoint(10, 20))",
+        "15",
+    )
+
+    test(
+        "math_helpers.scale(5,3)",
+        "import sensor_lib; print(sensor_lib.math_helpers.scale(5, 3))",
+        "15",
+    )
+
+    # Top-level submodule: filters
+    test(
+        "filters.clamp(150,0,100)",
+        "import sensor_lib; print(sensor_lib.filters.clamp(150, 0, 100))",
+        "100",
+    )
+
+    test(
+        "filters.clamp(-5,0,100)",
+        "import sensor_lib; print(sensor_lib.filters.clamp(-5, 0, 100))",
+        "0",
+    )
+
+    test(
+        "filters.clamp(50,0,100)",
+        "import sensor_lib; print(sensor_lib.filters.clamp(50, 0, 100))",
+        "50",
+    )
+
+    test(
+        "filters.moving_avg(100,200,50)",
+        "import sensor_lib; print(sensor_lib.filters.moving_avg(100, 200, 50))",
+        "150",
+    )
+
+    test(
+        "filters.threshold(75,50)",
+        "import sensor_lib; print(sensor_lib.filters.threshold(75, 50))",
+        "True",
+    )
+
+    test(
+        "filters.threshold(25,50)",
+        "import sensor_lib; print(sensor_lib.filters.threshold(25, 50))",
+        "False",
+    )
+
+    # Top-level submodule: converters
+    test(
+        "converters.celsius_to_fahrenheit(100)",
+        "import sensor_lib; print(sensor_lib.converters.celsius_to_fahrenheit(100))",
+        "212",
+    )
+
+    test(
+        "converters.fahrenheit_to_celsius(212)",
+        "import sensor_lib; print(sensor_lib.converters.fahrenheit_to_celsius(212))",
+        "100",
+    )
+
+    test(
+        "converters.mm_to_inches(254)",
+        "import sensor_lib; print(sensor_lib.converters.mm_to_inches(254))",
+        "100",
+    )
+
+    # Nested sub-package: processing
+    test(
+        "processing.version()",
+        "import sensor_lib; print(sensor_lib.processing.version())",
+        "1",
+    )
+
+    # Nested sub-package leaf: processing.smoothing
+    test(
+        "processing.smoothing.simple_avg(10,20)",
+        "import sensor_lib; print(sensor_lib.processing.smoothing.simple_avg(10, 20))",
+        "15",
+    )
+
+    test(
+        "processing.smoothing.exponential_avg(100,200,50)",
+        "import sensor_lib; print(sensor_lib.processing.smoothing.exponential_avg(100, 200, 50))",
+        "150",
+    )
+
+    # Nested sub-package leaf: processing.calibration
+    test(
+        "processing.calibration.apply_offset(100,5)",
+        "import sensor_lib; print(sensor_lib.processing.calibration.apply_offset(100, 5))",
+        "105",
+    )
+
+    test(
+        "processing.calibration.apply_scale(100,3,2)",
+        "import sensor_lib; print(sensor_lib.processing.calibration.apply_scale(100, 3, 2))",
+        "150",
+    )
+
 def run_all_tests():
     """Run all test suites."""
     global total_tests, passed_tests, failed_tests
@@ -2053,6 +2165,7 @@ def run_all_tests():
     test_classes()
     test_math_ops()
     test_cross_import()
+    test_sensor_lib()
     # Print summary
     print("\n" + "=" * 70)
     print("[SUMMARY] TEST SUMMARY")

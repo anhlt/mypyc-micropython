@@ -131,6 +131,64 @@ class ModuleEmitter:
 
         return "\n".join(lines)
 
+    def emit_package(
+        self,
+        *,
+        forward_decls: list[str],
+        struct_code: list[str],
+        function_code: list[str],
+        class_code: list[str],
+        parent_functions: list[FuncIR],
+        submodules: list[object],
+    ) -> str:
+        lines: list[str] = []
+
+        lines.extend(self._emit_includes())
+        lines.append("")
+
+        if forward_decls:
+            lines.extend(forward_decls)
+            lines.append("")
+
+        if self._used_rtuples:
+            for rtuple in sorted(self._used_rtuples, key=lambda r: r.get_c_struct_name()):
+                lines.append(rtuple.get_c_struct_typedef())
+            lines.append("")
+
+        lines.extend(self._emit_float_helper())
+        lines.append("")
+
+        if self._uses_checked_div:
+            lines.extend(self._emit_checked_div_helper())
+            lines.append("")
+
+        if self._uses_list_opt:
+            lines.extend(self._emit_list_helpers())
+            lines.append("")
+
+        if struct_code:
+            lines.extend(struct_code)
+            lines.append("")
+
+        for func_code in function_code:
+            lines.append(func_code)
+
+        for cls_code in class_code:
+            lines.append(cls_code)
+
+        # Emit all submodule globals tables recursively (depth-first)
+        self._emit_submodules_recursive(lines, submodules)
+
+        lines.extend(
+            self._emit_package_globals_table(
+                parent_functions=parent_functions,
+                submodules=submodules,
+            )
+        )
+        lines.extend(self._emit_module_registration())
+
+        return "\n".join(lines)
+
     def _emit_includes(self) -> list[str]:
         lines = [
             '#include "py/runtime.h"',
@@ -251,6 +309,105 @@ class ModuleEmitter:
             class_ir = self.module_ir.classes[class_name]
             lines.append(
                 f"    {{ MP_ROM_QSTR(MP_QSTR_{class_ir.name}), MP_ROM_PTR(&{class_ir.c_name}_type) }},"
+            )
+
+        lines.append("};")
+        lines.append(
+            f"MP_DEFINE_CONST_DICT({self.c_name}_module_globals, {self.c_name}_module_globals_table);"
+        )
+        lines.append("")
+        return lines
+
+    def _emit_submodule_globals_table(
+        self,
+        *,
+        symbol_prefix: str,
+        submodule_name: str,
+        functions: list[FuncIR],
+        module_ir: ModuleIR,
+        children: list[object] | None = None,
+    ) -> list[str]:
+        lines = [
+            f"static const mp_rom_map_elem_t {symbol_prefix}_globals_table[] = {{",
+            f"    {{ MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_{submodule_name}) }},",
+        ]
+
+        for func in functions:
+            lines.append(
+                f"    {{ MP_ROM_QSTR(MP_QSTR_{func.name}), MP_ROM_PTR(&{func.c_name}_obj) }},"
+            )
+
+        for class_name in module_ir.class_order:
+            class_ir = module_ir.classes[class_name]
+            lines.append(
+                f"    {{ MP_ROM_QSTR(MP_QSTR_{class_ir.name}), MP_ROM_PTR(&{class_ir.c_name}_type) }},"
+            )
+
+        # Add child sub-package references (for nested packages)
+        if children:
+            for child in children:
+                child_name = sanitize_name(child.name)
+                lines.append(
+                    f"    {{ MP_ROM_QSTR(MP_QSTR_{child_name}), MP_ROM_PTR(&{child.symbol_prefix}_module) }},"
+                )
+
+        lines.append("};")
+        lines.append(
+            f"MP_DEFINE_CONST_DICT({symbol_prefix}_globals, {symbol_prefix}_globals_table);"
+        )
+        lines.append("")
+        lines.append(f"static const mp_obj_module_t {symbol_prefix}_module = {{")
+        lines.append("    .base = { &mp_type_module },")
+        lines.append(f"    .globals = (mp_obj_dict_t *)&{symbol_prefix}_globals,")
+        lines.append("};")
+        lines.append("")
+        return lines
+
+    def _emit_submodules_recursive(self, lines: list[str], submodules: list[object]) -> None:
+        """Emit submodule globals tables depth-first (children before parents)."""
+        for submodule in submodules:
+            # Recurse into children first (they must be defined before parent references them)
+            if hasattr(submodule, "children") and submodule.children:
+                self._emit_submodules_recursive(lines, submodule.children)
+
+            submodule_name = sanitize_name(submodule.name)
+            children = getattr(submodule, "children", None) or []
+            lines.extend(
+                self._emit_submodule_globals_table(
+                    symbol_prefix=submodule.symbol_prefix,
+                    submodule_name=submodule_name,
+                    functions=submodule.functions,
+                    module_ir=submodule.module_ir,
+                    children=children if children else None,
+                )
+            )
+
+    def _emit_package_globals_table(
+        self,
+        *,
+        parent_functions: list[FuncIR],
+        submodules: list[object],
+    ) -> list[str]:
+        lines = [
+            f"static const mp_rom_map_elem_t {self.c_name}_module_globals_table[] = {{",
+            f"    {{ MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_{self.c_name}) }},",
+        ]
+
+        for func in parent_functions:
+            lines.append(
+                f"    {{ MP_ROM_QSTR(MP_QSTR_{func.name}), MP_ROM_PTR(&{func.c_name}_obj) }},"
+            )
+
+        for class_name in self.module_ir.class_order:
+            class_ir = self.module_ir.classes[class_name]
+            lines.append(
+                f"    {{ MP_ROM_QSTR(MP_QSTR_{class_ir.name}), MP_ROM_PTR(&{class_ir.c_name}_type) }},"
+            )
+
+        for submodule in submodules:
+            submodule_name = sanitize_name(submodule.name)
+            lines.append(
+                f"    {{ MP_ROM_QSTR(MP_QSTR_{submodule_name}), MP_ROM_PTR(&{submodule.symbol_prefix}_module) }},"
             )
 
         lines.append("};")

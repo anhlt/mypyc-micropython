@@ -14,9 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Module function calls: `math.sqrt(x)` compiles to runtime dispatch
   - Module attribute access: `math.pi` compiles to runtime attribute load
   - Works with all MicroPython built-in modules (math, time, machine, etc.)
+- Cross-module imports between compiled native modules (`import factorial` from another compiled module)
+- Package compilation: compile a directory with `__init__.py` into a single C module with namespaced submodules
+  - `mpy-compile examples/sensor_lib/` compiles the entire package
+  - Nested multi-level sub-packages supported (arbitrary depth)
+  - Sub-packages generate `mp_obj_module_t` with their own globals table
+  - Parent module's globals table references sub-package modules via `MP_ROM_PTR`
+  - Depth-first emission ensures C forward references are satisfied
+- `examples/sensor_lib/` package example with `math_helpers`, `filters`, `converters` submodules
+  and nested `processing/` sub-package with `smoothing` and `calibration` modules
+- 8 unit tests for package compilation (flat + nested)
+- 17 device tests for sensor_lib package including nested sub-package access
+- Makefile `compile-all` now detects and compiles package directories automatically
 - `examples/math_ops.py` demonstrating runtime import of `math` and `time` modules
-- 8 device tests for runtime import functionality
-- Compiler unit tests for import handling
 - ESP-IDF Python version mismatch troubleshooting in AGENTS.md
 
 ### Added
