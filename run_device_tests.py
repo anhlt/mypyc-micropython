@@ -17,6 +17,7 @@ Requires: mpremote, ESP32 device connected
 import argparse
 import subprocess
 import sys
+import time
 from typing import Callable
 
 # Default configuration
@@ -36,24 +37,76 @@ failed_tests: list[tuple[str, str]] = []
 RGB_LED_GPIO = 8
 
 
-def run_on_device(code: str, port: str = "", timeout: int = 30) -> tuple[bool, str]:
-    """Execute Python code on device via mpremote."""
-    device_port = port if port else PORT
+# Number of consecutive connection failures before aborting
+MAX_CONSECUTIVE_FAILURES = 5
+_consecutive_failures = 0
+
+
+def _flush_serial(port: str) -> None:
+    """Flush stale data from serial port to recover from stuck raw REPL."""
     try:
-        result = subprocess.run(
-            ["mpremote", "connect", device_port, "exec", code],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        if result.returncode == 0:
-            return True, result.stdout.strip()
-        else:
-            return False, result.stderr.strip()
-    except subprocess.TimeoutExpired:
-        return False, "Timeout"
-    except Exception as e:
-        return False, str(e)
+        import serial
+        s = serial.Serial(port, 115200, timeout=0.5)
+        s.reset_input_buffer()
+        s.reset_output_buffer()
+        # Send Ctrl-C + Ctrl-B to exit raw REPL cleanly
+        s.write(b'\x03\x03')  # Ctrl-C twice to interrupt
+        time.sleep(0.1)
+        s.write(b'\x02')  # Ctrl-B to exit raw REPL
+        time.sleep(0.3)
+        s.read(s.in_waiting or 1)  # Drain buffer
+        s.close()
+    except Exception:
+        pass  # Best effort -- serial module may not be installed
+
+
+def run_on_device(code: str, port: str = "", timeout: int = 15) -> tuple[bool, str]:
+    """Execute Python code on device via mpremote with retry and recovery.
+    Default 15s timeout -- if the board doesn't respond, skip quickly.
+    On ESP32-C6 with native USB-Serial/JTAG, the serial port can get stuck in
+    raw REPL mode after a timeout or unclean disconnect. This function retries
+    once with serial flush recovery before giving up.
+    """
+    global _consecutive_failures
+    device_port = port if port else PORT
+    for attempt in range(2):  # At most 1 retry
+        try:
+            result = subprocess.run(
+                ["mpremote", "connect", device_port, "exec", code],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if result.returncode == 0:
+                _consecutive_failures = 0
+                return True, result.stdout.strip()
+            # Check if it's a raw REPL / connection error (retryable)
+            stderr = result.stderr.strip()
+            if "could not enter raw repl" in stderr or "TransportError" in stderr:
+                if attempt == 0:
+                    _flush_serial(device_port)
+                    time.sleep(1.0)
+                    continue
+            _consecutive_failures += 1
+            return False, stderr
+        except subprocess.TimeoutExpired:
+            _consecutive_failures += 1
+            # Kill any zombie mpremote process
+            subprocess.run(
+                ["pkill", "-f", "mpremote"],
+                capture_output=True,
+                timeout=5,
+            )
+            if attempt == 0:
+                _flush_serial(device_port)
+                time.sleep(1.0)
+                continue
+            return False, "Timeout (device not responding)"
+        except Exception as e:
+            _consecutive_failures += 1
+            return False, str(e)
+    _consecutive_failures += 1
+    return False, "Failed after retry"
 
 
 
@@ -75,8 +128,6 @@ def led_off() -> None:
 
 def led_cycle_colors() -> None:
     """Cycle RGB LED through R, G, B, White -- visual proof the board responds."""
-    import time
-
     colors = [
         ("Red", 255, 0, 0),
         ("Green", 0, 255, 0),
@@ -95,32 +146,35 @@ def led_cycle_colors() -> None:
 
 
 def test(name: str, code: str, expected: str | Callable[[str], bool]) -> None:
-    """Run a single test case."""
+    """Run a single test case with inter-test delay and abort on repeated failures."""
     global total_tests, passed_tests
     total_tests += 1
-
+    # Abort early if device seems unrecoverable
+    if _consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+        failed_tests.append((name, "Skipped: device unresponsive"))
+        print(f"  {name}... SKIP (device unresponsive)")
+        return
     sys.stdout.write(f"  {name}... ")
     sys.stdout.flush()
+    # Small delay between tests to let USB-Serial/JTAG settle
+    time.sleep(0.5)
 
     success, output = run_on_device(code)
-
     if not success:
         failed_tests.append((name, f"Execution failed: {output}"))
-        print(f"FAIL")
+        print("FAIL")
         print(f"    Error: {output[:80]}")
         return
-
     if callable(expected):
         passed = expected(output)
     else:
         passed = expected in output
-
     if passed:
         passed_tests += 1
         print("PASS")
     else:
         failed_tests.append((name, f"Expected: {expected}, Got: {output}"))
-        print(f"FAIL")
+        print("FAIL")
         print(f"    Expected: {expected}")
         print(f"    Got: {output[:80]}")
 
@@ -1629,6 +1683,41 @@ def test_super_calls():
         "10",
     )
 
+# Track per-group results for LCD display
+_group_results: list[tuple[str, int, int]] = []  # (name, passed, total)
+
+
+def _update_lcd() -> None:
+    """Update LCD with running test results after each group."""
+    if not _group_results:
+        return
+
+    all_passed = sum(p for _, p, _ in _group_results)
+    all_total = sum(t for _, _, t in _group_results)
+
+    # Build scrolling result lines (172x320 screen)
+    # Show last ~12 groups that fit on screen
+    visible = _group_results[-12:]
+    lines = []
+    for name, p, t in visible:
+        mark = "OK" if p == t else f"{t - p}F"
+        # Shorten group name: test_factorial -> factorial
+        short = name.replace("test_", "")[:16]
+        lines.append(f"{short}: {p}/{t} {mark}")
+    lines.append("---")
+    lines.append(f"Total: {all_passed}/{all_total}")
+    text = "\\n".join(lines)
+    code = (
+        "import lvgl, time; lvgl.init_display(); time.sleep_ms(200); "
+        "scr = lvgl.lv_screen_active(); "
+        "lvgl.lv_obj_clean(scr); "  # Clear old widgets first
+        "lbl = lvgl.lv_label_create(scr); "
+        f"lvgl.lv_label_set_text(lbl, '{text}'); "
+        "lvgl.lv_obj_center(lbl); "
+        "[lvgl.timer_handler() or time.sleep_ms(10) for _ in range(30)]; "
+        "print('ok')"
+    )
+    run_on_device(code, timeout=10)
 
 def run_all_tests():
     """Run all test suites."""
@@ -1641,29 +1730,55 @@ def run_all_tests():
     print("=" * 70)
     print(f"Device port: {PORT}")
     print("=" * 70)
-    # Run all test suites
-    test_factorial()
-    test_point()
-    test_counter()
-    test_sensor()
-    test_list_operations()
-    test_math_utils()
-    test_bitwise()
-    test_algorithms()
-    test_dict_operations()
-    test_inventory()
-    test_tuple_operations()
-    test_set_operations()
-    test_builtins_demo()
-    test_default_args()
-    test_star_args()
-    test_class_param()
-    test_chained_attr()
-    test_container_attrs()
-    test_string_operations()
-    test_itertools_builtins()
-    test_exception_handling()
-    test_super_calls()
+    # Run all test suites with inter-group delays for USB-Serial/JTAG stability
+    test_suites = [
+        test_factorial,
+        test_point,
+        test_counter,
+        test_sensor,
+        test_list_operations,
+        test_math_utils,
+        test_bitwise,
+        test_algorithms,
+        test_dict_operations,
+        test_inventory,
+        test_tuple_operations,
+        test_set_operations,
+        test_builtins_demo,
+        test_default_args,
+        test_star_args,
+        test_class_param,
+        test_chained_attr,
+        test_container_attrs,
+        test_string_operations,
+        test_itertools_builtins,
+        test_exception_handling,
+        test_super_calls,
+    ]
+    for i, suite in enumerate(test_suites):
+        if _consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+            print(f"\n[ABORT] Device unresponsive after {MAX_CONSECUTIVE_FAILURES} "
+                   f"consecutive failures. Stopping tests.")
+            print("         Unplug/replug USB cable and retry.")
+            break
+        # Check RAM before test group
+        ok, mem_before = run_on_device("import gc; gc.collect(); print(gc.mem_free())")
+        mem_before_str = mem_before if ok else "?"
+        before_passed = passed_tests
+        before_total = total_tests
+        suite()
+        # Check RAM after test group
+        ok, mem_after = run_on_device("import gc; gc.collect(); print(gc.mem_free())")
+        mem_after_str = mem_after if ok else "?"
+        print(f"  [RAM] {mem_before_str} -> {mem_after_str} bytes free")
+        # Record this group's results and update LCD
+        group_passed = passed_tests - before_passed
+        group_total = total_tests - before_total
+        _group_results.append((suite.__name__, group_passed, group_total))
+        _update_lcd()
+        # Pause between test groups to let serial settle
+        if i < len(test_suites) - 1:
+            time.sleep(10)
     # Print summary
     print("\n" + "=" * 70)
     print("[SUMMARY] TEST SUMMARY")
@@ -1704,7 +1819,10 @@ def main():
     )
     args = parser.parse_args()
     PORT = args.port
+    # Flush serial first in case device is stuck from a previous run
     print("[CHECK] Checking device connection...")
+    _flush_serial(PORT)
+    time.sleep(0.5)
     success, output = run_on_device("print('Device ready')")
     if not success:
         print(f"FAIL Cannot connect to device on {PORT}")
@@ -1713,16 +1831,17 @@ def main():
         print("  1. ESP32 device is connected via USB")
         print(f"  2. Device port is correct (current: {PORT})")
         print("  3. Firmware has been flashed with 'make deploy'")
+        print("  4. Try unplugging and replugging the USB cable")
         sys.exit(1)
     print("PASS Device connected and responding\n")
     # Cycle RGB LED to visually confirm the board is responding
     led_cycle_colors()
     success = run_all_tests()
-    # Final LED status: green = all pass, red = failures
+    # Final LED status (WS2812 NeoPixel uses GRB order)
     if success:
-        led_rgb(0, 255, 0)  # Green = all tests passed
+        led_rgb(255, 0, 0)  # Green (GRB: G=255)
     else:
-        led_rgb(255, 0, 0)  # Red = some tests failed
+        led_rgb(0, 255, 0)  # Red (GRB: R=255)
     sys.exit(0 if success else 1)
 
 
