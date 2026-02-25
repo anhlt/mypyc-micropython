@@ -4391,3 +4391,59 @@ def process(items: list) -> int:
         # Module call should use import pattern
         assert "MP_QSTR_math" in result
         assert "MP_QSTR_floor" in result
+
+    def test_cross_module_import(self):
+        source = '''
+import factorial
+
+def double_fact(n: int) -> int:
+    return factorial.factorial(n) * 2
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_QSTR_factorial" in result
+        assert "mp_import_name" in result
+        assert "mp_load_attr" in result
+        assert "mp_call_function_1" in result
+
+    def test_cross_module_multiple_functions(self):
+        source = '''
+import factorial
+
+def use_fib(n: int) -> int:
+    return factorial.fib(n)
+
+def use_add(a: int, b: int) -> int:
+    return factorial.add(a, b)
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_QSTR_fib" in result
+        assert "MP_QSTR_add" in result
+        assert result.count("mp_import_name") >= 2
+
+    def test_cross_module_chained_import(self):
+        """Import a module that itself imports another module."""
+        source = '''
+import math_ops
+
+def indirect_distance(x1: float, y1: float, x2: float, y2: float) -> float:
+    return math_ops.distance(x1, y1, x2, y2)
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_QSTR_math_ops" in result
+        assert "MP_QSTR_distance" in result
+
+    def test_cross_module_two_imports(self):
+        """Import two user-defined modules in the same file."""
+        source = '''
+import factorial
+import math_ops
+
+def combo(n: int) -> int:
+    s: int = math_ops.timed_sum(n)
+    f: int = factorial.factorial(n)
+    return s * f
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_QSTR_factorial" in result
+        assert "MP_QSTR_math_ops" in result
+        assert "MP_QSTR_timed_sum" in result

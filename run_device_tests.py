@@ -1979,6 +1979,42 @@ def test_math_ops():
         "45",
     )
 
+def test_cross_import():
+    """Test cross_import module (importing other compiled modules at runtime)."""
+    print("\n[TEST] Testing cross_import module (cross-module imports)...")
+
+    test(
+        "double_factorial(5)",
+        "import cross_import; print(cross_import.double_factorial(5))",
+        "240",
+    )
+
+    test(
+        "fib_plus(10, 100)",
+        "import cross_import; print(cross_import.fib_plus(10, 100))",
+        "155",
+    )
+
+    test(
+        "combo_add(3, 4)",
+        "import cross_import; print(cross_import.combo_add(3, 4))",
+        "7",
+    )
+
+    test(
+        "native_distance(0, 0, 3, 4)",
+        "import cross_import; print(cross_import.native_distance(0, 0, 3, 4))",
+        "5.0",
+    )
+
+    # sum_and_factorial uses both math_ops.timed_sum and factorial.factorial
+    # timed_sum(5) = 0+1+2+3+4 = 10, factorial(5) = 120, result = 1200
+    test(
+        "sum_and_factorial(5)",
+        "import cross_import; print(cross_import.sum_and_factorial(5))",
+        "1200",
+    )
+
 def run_all_tests():
     """Run all test suites."""
     global total_tests, passed_tests, failed_tests
@@ -2016,6 +2052,7 @@ def run_all_tests():
     test_decorators()
     test_classes()
     test_math_ops()
+    test_cross_import()
     # Print summary
     print("\n" + "=" * 70)
     print("[SUMMARY] TEST SUMMARY")
