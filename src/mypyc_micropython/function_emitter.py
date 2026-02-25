@@ -32,6 +32,8 @@ from .ir import (
     InstrIR,
     IRType,
     MethodIR,
+    ModuleAttrIR,
+    ModuleCallIR,
     NameIR,
     ParamAttrIR,
     PassIR,
@@ -556,6 +558,10 @@ class BaseEmitter:
             return self._emit_self_method_call(value, native)
         elif isinstance(value, SuperCallIR):
             return self._emit_super_call(value, native)
+        elif isinstance(value, ModuleCallIR):
+            return self._emit_module_call(value, native)
+        elif isinstance(value, ModuleAttrIR):
+            return self._emit_module_attr(value)
         return "/* unsupported */", "mp_obj_t"
 
     def _emit_const(self, const: ConstIR) -> tuple[str, str]:
@@ -997,6 +1003,75 @@ class BaseEmitter:
             f"{call.parent_method_c_name}_native(({call.parent_c_name}_obj_t *)self{', ' if args_str else ''}{args_str})",
             call.return_type.to_c_type_str(),
         )
+
+
+
+    def _emit_module_call(self, call: ModuleCallIR, native: bool = False) -> tuple[str, str]:
+        """Emit C code for calling a function on an imported module.
+
+        Generated C pattern:
+            mp_obj_t _mod = mp_import_name(MP_QSTR_math, mp_const_none, MP_OBJ_NEW_SMALL_INT(0));
+            mp_obj_t _fn = mp_load_attr(_mod, MP_QSTR_sqrt);
+            mp_obj_t result = mp_call_function_1(_fn, arg);
+        """
+        mod_name = call.module_name
+        func_name = call.func_name
+
+        # Build boxed args
+        boxed_args = []
+        for arg in call.args:
+            arg_expr, arg_type = self._emit_expr(arg, native)
+            boxed_args.append(self._box_value(arg_expr, arg_type))
+
+        # Emit inline expression using compound statement expression (GCC extension)
+        # For cleaner code, use sequential calls:
+        n_args = len(boxed_args)
+        if n_args == 0:
+            return (
+                f"mp_call_function_0("
+                f"mp_load_attr("
+                f"mp_import_name(MP_QSTR_{mod_name}, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)), "
+                f"MP_QSTR_{func_name}))"
+            ), "mp_obj_t"
+        elif n_args == 1:
+            return (
+                f"mp_call_function_1("
+                f"mp_load_attr("
+                f"mp_import_name(MP_QSTR_{mod_name}, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)), "
+                f"MP_QSTR_{func_name}), "
+                f"{boxed_args[0]})"
+            ), "mp_obj_t"
+        elif n_args == 2:
+            return (
+                f"mp_call_function_2("
+                f"mp_load_attr("
+                f"mp_import_name(MP_QSTR_{mod_name}, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)), "
+                f"MP_QSTR_{func_name}), "
+                f"{boxed_args[0]}, {boxed_args[1]})"
+            ), "mp_obj_t"
+        else:
+            args_str = ", ".join(boxed_args)
+            return (
+                f"mp_call_function_n_kw("
+                f"mp_load_attr("
+                f"mp_import_name(MP_QSTR_{mod_name}, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)), "
+                f"MP_QSTR_{func_name}), "
+                f"{n_args}, 0, (const mp_obj_t[]){{{args_str}}})"
+            ), "mp_obj_t"
+
+    def _emit_module_attr(self, attr: ModuleAttrIR) -> tuple[str, str]:
+        """Emit C code for accessing an attribute on an imported module.
+
+        Generated C pattern:
+            mp_obj_t result = mp_load_attr(
+                mp_import_name(MP_QSTR_math, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)),
+                MP_QSTR_pi);
+        """
+        return (
+            f"mp_load_attr("
+            f"mp_import_name(MP_QSTR_{attr.module_name}, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)), "
+            f"MP_QSTR_{attr.attr_name})"
+        ), "mp_obj_t"
 
     def _box_value(self, expr: str, expr_type: str) -> str:
         if expr_type == "mp_int_t":

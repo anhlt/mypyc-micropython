@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from mypyc_micropython.compiler import (
+    compile_package,
     compile_source,
     compile_to_micropython,
     sanitize_name,
@@ -449,6 +450,149 @@ class TestCompileToMicropython:
             assert "target_include_directories" in result.cmake_code
             assert "target_link_libraries" in result.cmake_code
 
+
+class TestCompilePackage:
+    def test_compile_sensor_lib_package(self):
+        package_dir = Path(__file__).parent.parent / "examples" / "sensor_lib"
+
+        result = compile_package(package_dir, type_check=False)
+
+        assert result.success is True
+        assert result.module_name == "sensor_lib"
+        assert "const mp_obj_module_t sensor_lib_user_cmodule" in result.c_code
+        assert "MP_REGISTER_MODULE(MP_QSTR_sensor_lib, sensor_lib_user_cmodule);" in result.c_code
+
+    def test_submodule_function_prefixes(self):
+        package_dir = Path(__file__).parent.parent / "examples" / "sensor_lib"
+
+        result = compile_package(package_dir, type_check=False)
+
+        assert "static mp_obj_t sensor_lib_math_helpers_distance" in result.c_code
+        assert "static mp_obj_t sensor_lib_filters_clamp" in result.c_code
+        assert "static mp_obj_t sensor_lib_converters_celsius_to_fahrenheit" in result.c_code
+
+    def test_submodule_globals_and_parent_entries(self):
+        package_dir = Path(__file__).parent.parent / "examples" / "sensor_lib"
+
+        result = compile_package(package_dir, type_check=False)
+
+        assert "sensor_lib_math_helpers_globals_table" in result.c_code
+        assert "sensor_lib_filters_globals_table" in result.c_code
+        assert "sensor_lib_converters_globals_table" in result.c_code
+
+        assert "MP_QSTR_math_helpers), MP_ROM_PTR(&sensor_lib_math_helpers_module)" in result.c_code
+        assert "MP_QSTR_filters), MP_ROM_PTR(&sensor_lib_filters_module)" in result.c_code
+        assert "MP_QSTR_converters), MP_ROM_PTR(&sensor_lib_converters_module)" in result.c_code
+
+    def test_nested_subpackage_compiles(self):
+        """Test that sub-packages (directories with __init__.py) are compiled."""
+        package_dir = Path(__file__).parent.parent / "examples" / "sensor_lib"
+
+        result = compile_package(package_dir, type_check=False)
+
+        assert result.success is True
+        # Processing sub-package's own functions from __init__.py
+        assert "sensor_lib_processing_version" in result.c_code
+        # Nested leaf modules
+        assert "sensor_lib_processing_smoothing_exponential_avg" in result.c_code
+        assert "sensor_lib_processing_smoothing_simple_avg" in result.c_code
+        assert "sensor_lib_processing_calibration_apply_offset" in result.c_code
+        assert "sensor_lib_processing_calibration_apply_scale" in result.c_code
+
+    def test_nested_subpackage_globals_tables(self):
+        """Test that nested sub-packages have correct globals table structure."""
+        package_dir = Path(__file__).parent.parent / "examples" / "sensor_lib"
+
+        result = compile_package(package_dir, type_check=False)
+
+        # Leaf submodule globals tables inside the sub-package
+        assert "sensor_lib_processing_smoothing_globals_table" in result.c_code
+        assert "sensor_lib_processing_calibration_globals_table" in result.c_code
+
+        # Sub-package's own globals table references its children
+        assert "sensor_lib_processing_globals_table" in result.c_code
+        assert (
+            "MP_QSTR_smoothing), MP_ROM_PTR(&sensor_lib_processing_smoothing_module)"
+            in result.c_code
+        )
+        assert (
+            "MP_QSTR_calibration), MP_ROM_PTR(&sensor_lib_processing_calibration_module)"
+            in result.c_code
+        )
+
+        # Sub-package's __init__.py function appears in its globals
+        assert "MP_QSTR_version), MP_ROM_PTR(&sensor_lib_processing_version_obj)" in result.c_code
+
+    def test_nested_subpackage_in_parent_globals(self):
+        """Test that the parent module's globals table references the sub-package."""
+        package_dir = Path(__file__).parent.parent / "examples" / "sensor_lib"
+
+        result = compile_package(package_dir, type_check=False)
+
+        # Parent's globals table should reference the processing sub-package module
+        assert (
+            "MP_QSTR_processing), MP_ROM_PTR(&sensor_lib_processing_module)"
+            in result.c_code
+        )
+
+    def test_nested_subpackage_depth_first_ordering(self):
+        """Test that child modules are defined before their parent references them."""
+        package_dir = Path(__file__).parent.parent / "examples" / "sensor_lib"
+
+        result = compile_package(package_dir, type_check=False)
+
+        # calibration and smoothing modules must be defined before processing
+        cal_pos = result.c_code.index("sensor_lib_processing_calibration_module = {")
+        smooth_pos = result.c_code.index("sensor_lib_processing_smoothing_module = {")
+        proc_pos = result.c_code.index("sensor_lib_processing_globals_table")
+        assert cal_pos < proc_pos
+        assert smooth_pos < proc_pos
+
+        # processing module must be defined before top-level globals
+        top_pos = result.c_code.index("sensor_lib_module_globals_table")
+        proc_module_pos = result.c_code.index("sensor_lib_processing_module = {")
+        assert proc_module_pos < top_pos
+
+    def test_nested_package_with_tempdir(self):
+        """Test nested package compilation with a temporary directory structure."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pkg_dir = Path(tmpdir) / "mypkg"
+            sub_dir = pkg_dir / "sub"
+            sub_dir.mkdir(parents=True)
+
+            (pkg_dir / "__init__.py").write_text(
+                "def pkg_version() -> int:\n    return 1\n"
+            )
+            (pkg_dir / "utils.py").write_text(
+                "def add(a: int, b: int) -> int:\n    return a + b\n"
+            )
+            (sub_dir / "__init__.py").write_text(
+                "def sub_info() -> int:\n    return 42\n"
+            )
+            (sub_dir / "helper.py").write_text(
+                "def multiply(x: int, y: int) -> int:\n    return x * y\n"
+            )
+
+            result = compile_package(pkg_dir, type_check=False)
+
+            assert result.success is True
+            assert result.module_name == "mypkg"
+
+            # Top-level function
+            assert "mypkg_pkg_version" in result.c_code
+            # Top-level submodule
+            assert "mypkg_utils_add" in result.c_code
+            # Nested sub-package __init__ function
+            assert "mypkg_sub_sub_info" in result.c_code
+            # Nested sub-package leaf module
+            assert "mypkg_sub_helper_multiply" in result.c_code
+
+            # Structure: mypkg -> sub -> helper
+            assert "MP_QSTR_helper), MP_ROM_PTR(&mypkg_sub_helper_module)" in result.c_code
+            assert "MP_QSTR_sub), MP_ROM_PTR(&mypkg_sub_module)" in result.c_code
+            assert "MP_REGISTER_MODULE(MP_QSTR_mypkg, mypkg_user_cmodule);" in result.c_code
 
 class TestArithmeticOperations:
     """Tests for arithmetic operation translation."""
@@ -4270,3 +4414,178 @@ def nested_try(a: int, b: int) -> int:
         result = compile_source(source, "test", type_check=False)
         assert result.count("nlr_buf_t") == 2
         assert result.count("nlr_push") == 2
+
+
+class TestModuleImports:
+    """Tests for runtime module import support."""
+
+    def test_import_math_sqrt(self):
+        source = """
+import math
+
+def sqrt_val(x: float) -> float:
+    return math.sqrt(x)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_import_name" in result
+        assert "MP_QSTR_math" in result
+        assert "MP_QSTR_sqrt" in result
+        assert "mp_load_attr" in result
+        assert "mp_call_function_1" in result
+
+    def test_import_math_constant(self):
+        source = """
+import math
+
+def get_pi() -> float:
+    return math.pi
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_import_name" in result
+        assert "MP_QSTR_math" in result
+        assert "MP_QSTR_pi" in result
+        assert "mp_load_attr" in result
+
+    def test_import_with_alias(self):
+        source = """
+import math as m
+
+def sqrt_val(x: float) -> float:
+    return m.sqrt(x)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_QSTR_math" in result
+        assert "MP_QSTR_sqrt" in result
+        assert "mp_import_name" in result
+
+    def test_import_time_module(self):
+        source = """
+import time
+
+def sleep_ms(ms: int) -> None:
+    time.sleep_ms(ms)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_QSTR_time" in result
+        assert "MP_QSTR_sleep_ms" in result
+        assert "mp_import_name" in result
+
+    def test_module_call_no_args(self):
+        source = """
+import time
+
+def get_ticks() -> int:
+    return time.ticks_ms()
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_call_function_0" in result
+        assert "MP_QSTR_ticks_ms" in result
+
+    def test_module_call_two_args(self):
+        source = """
+import math
+
+def power(x: float, y: float) -> float:
+    return math.pow(x, y)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_call_function_2" in result
+        assert "MP_QSTR_pow" in result
+
+    def test_module_call_many_args(self):
+        source = """
+import time
+
+def diff(t1: int, t2: int, t3: int, extra: int) -> int:
+    return time.ticks_diff(t1, t2)
+"""
+        # ticks_diff has 2 args, but test that n_kw path works for >3 args
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_QSTR_ticks_diff" in result
+
+    def test_multiple_imports(self):
+        source = """
+import math
+import time
+
+def compute(x: float) -> float:
+    y: float = math.sqrt(x)
+    time.sleep_ms(1)
+    return y
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_QSTR_math" in result
+        assert "MP_QSTR_time" in result
+        assert "MP_QSTR_sqrt" in result
+        assert "MP_QSTR_sleep_ms" in result
+
+    def test_import_does_not_break_regular_method_calls(self):
+        source = """
+import math
+
+def process(items: list) -> int:
+    items.append(1)
+    return math.floor(3.7)
+"""
+        result = compile_source(source, "test", type_check=False)
+        # Regular method call should still use list append
+        assert "mp_obj_list_append" in result
+        # Module call should use import pattern
+        assert "MP_QSTR_math" in result
+        assert "MP_QSTR_floor" in result
+
+    def test_cross_module_import(self):
+        source = """
+import factorial
+
+def double_fact(n: int) -> int:
+    return factorial.factorial(n) * 2
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_QSTR_factorial" in result
+        assert "mp_import_name" in result
+        assert "mp_load_attr" in result
+        assert "mp_call_function_1" in result
+
+    def test_cross_module_multiple_functions(self):
+        source = """
+import factorial
+
+def use_fib(n: int) -> int:
+    return factorial.fib(n)
+
+def use_add(a: int, b: int) -> int:
+    return factorial.add(a, b)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_QSTR_fib" in result
+        assert "MP_QSTR_add" in result
+        assert result.count("mp_import_name") >= 2
+
+    def test_cross_module_chained_import(self):
+        """Import a module that itself imports another module."""
+        source = """
+import math_ops
+
+def indirect_distance(x1: float, y1: float, x2: float, y2: float) -> float:
+    return math_ops.distance(x1, y1, x2, y2)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_QSTR_math_ops" in result
+        assert "MP_QSTR_distance" in result
+
+    def test_cross_module_two_imports(self):
+        """Import two user-defined modules in the same file."""
+        source = """
+import factorial
+import math_ops
+
+def combo(n: int) -> int:
+    s: int = math_ops.timed_sum(n)
+    f: int = factorial.factorial(n)
+    return s * f
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_QSTR_factorial" in result
+        assert "MP_QSTR_math_ops" in result
+        assert "MP_QSTR_timed_sum" in result

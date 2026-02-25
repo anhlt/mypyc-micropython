@@ -1920,6 +1920,213 @@ def test_classes():
         "import classes as c; s = c.Sensor('t', 10, c.Location(0, 0)); s.record(1, 1.0); s.record(2, 2.0); print(c.sensor_summary(s))",
         "12",
     )
+
+
+def test_math_ops():
+    """Test math_ops module (runtime imports of built-in modules)."""
+    print("\n[TEST] Testing math_ops module (runtime imports)...")
+
+    # distance(x1, y1, x2, y2) uses math.sqrt
+    test(
+        "distance(0, 0, 3, 4)",
+        "import math_ops; print(math_ops.distance(0, 0, 3, 4))",
+        "5.0",
+    )
+
+    test(
+        "distance(1, 1, 1, 1)",
+        "import math_ops; print(math_ops.distance(1, 1, 1, 1))",
+        "0.0",
+    )
+
+    # circle_area(radius) uses math.pi
+    test(
+        "circle_area(1)",
+        "import math_ops; r = math_ops.circle_area(1); print(r > 3.14 and r < 3.15)",
+        "True",
+    )
+
+    test(
+        "circle_area(0)",
+        "import math_ops; print(math_ops.circle_area(0))",
+        "0.0",
+    )
+
+    # deg_to_rad(degrees) uses math.pi
+    test(
+        "deg_to_rad(180)",
+        "import math_ops; r = math_ops.deg_to_rad(180); print(r > 3.14 and r < 3.15)",
+        "True",
+    )
+
+    test(
+        "deg_to_rad(0)",
+        "import math_ops; print(math_ops.deg_to_rad(0))",
+        "0.0",
+    )
+
+    # trig_sum(angle) uses math.sin + math.cos
+    test(
+        "trig_sum(0)",
+        "import math_ops; print(math_ops.trig_sum(0))",
+        "1.0",
+    )
+
+    # timed_sum(n) - basic integer sum (no imports, but in same module)
+    test(
+        "timed_sum(10)",
+        "import math_ops; print(math_ops.timed_sum(10))",
+        "45",
+    )
+
+def test_cross_import():
+    """Test cross_import module (importing other compiled modules at runtime)."""
+    print("\n[TEST] Testing cross_import module (cross-module imports)...")
+
+    test(
+        "double_factorial(5)",
+        "import cross_import; print(cross_import.double_factorial(5))",
+        "240",
+    )
+
+    test(
+        "fib_plus(10, 100)",
+        "import cross_import; print(cross_import.fib_plus(10, 100))",
+        "155",
+    )
+
+    test(
+        "combo_add(3, 4)",
+        "import cross_import; print(cross_import.combo_add(3, 4))",
+        "7",
+    )
+
+    test(
+        "native_distance(0, 0, 3, 4)",
+        "import cross_import; print(cross_import.native_distance(0, 0, 3, 4))",
+        "5.0",
+    )
+
+    # sum_and_factorial uses both math_ops.timed_sum and factorial.factorial
+    # timed_sum(5) = 0+1+2+3+4 = 10, factorial(5) = 120, result = 1200
+    test(
+        "sum_and_factorial(5)",
+        "import cross_import; print(cross_import.sum_and_factorial(5))",
+        "1200",
+    )
+
+def test_sensor_lib():
+    """Test sensor_lib package (nested package compilation)."""
+    print("\n[TEST] Testing sensor_lib package (package compilation)...")
+
+    # Top-level submodule: math_helpers
+    test(
+        "math_helpers.distance(0,0,3,4)",
+        "import sensor_lib; print(sensor_lib.math_helpers.distance(0, 0, 3, 4))",
+        "25",
+    )
+
+    test(
+        "math_helpers.midpoint(10,20)",
+        "import sensor_lib; print(sensor_lib.math_helpers.midpoint(10, 20))",
+        "15",
+    )
+
+    test(
+        "math_helpers.scale(5,3)",
+        "import sensor_lib; print(sensor_lib.math_helpers.scale(5, 3))",
+        "15",
+    )
+
+    # Top-level submodule: filters
+    test(
+        "filters.clamp(150,0,100)",
+        "import sensor_lib; print(sensor_lib.filters.clamp(150, 0, 100))",
+        "100",
+    )
+
+    test(
+        "filters.clamp(-5,0,100)",
+        "import sensor_lib; print(sensor_lib.filters.clamp(-5, 0, 100))",
+        "0",
+    )
+
+    test(
+        "filters.clamp(50,0,100)",
+        "import sensor_lib; print(sensor_lib.filters.clamp(50, 0, 100))",
+        "50",
+    )
+
+    test(
+        "filters.moving_avg(100,200,50)",
+        "import sensor_lib; print(sensor_lib.filters.moving_avg(100, 200, 50))",
+        "150",
+    )
+
+    test(
+        "filters.threshold(75,50)",
+        "import sensor_lib; print(sensor_lib.filters.threshold(75, 50))",
+        "True",
+    )
+
+    test(
+        "filters.threshold(25,50)",
+        "import sensor_lib; print(sensor_lib.filters.threshold(25, 50))",
+        "False",
+    )
+
+    # Top-level submodule: converters
+    test(
+        "converters.celsius_to_fahrenheit(100)",
+        "import sensor_lib; print(sensor_lib.converters.celsius_to_fahrenheit(100))",
+        "212",
+    )
+
+    test(
+        "converters.fahrenheit_to_celsius(212)",
+        "import sensor_lib; print(sensor_lib.converters.fahrenheit_to_celsius(212))",
+        "100",
+    )
+
+    test(
+        "converters.mm_to_inches(254)",
+        "import sensor_lib; print(sensor_lib.converters.mm_to_inches(254))",
+        "100",
+    )
+
+    # Nested sub-package: processing
+    test(
+        "processing.version()",
+        "import sensor_lib; print(sensor_lib.processing.version())",
+        "1",
+    )
+
+    # Nested sub-package leaf: processing.smoothing
+    test(
+        "processing.smoothing.simple_avg(10,20)",
+        "import sensor_lib; print(sensor_lib.processing.smoothing.simple_avg(10, 20))",
+        "15",
+    )
+
+    test(
+        "processing.smoothing.exponential_avg(100,200,50)",
+        "import sensor_lib; print(sensor_lib.processing.smoothing.exponential_avg(100, 200, 50))",
+        "150",
+    )
+
+    # Nested sub-package leaf: processing.calibration
+    test(
+        "processing.calibration.apply_offset(100,5)",
+        "import sensor_lib; print(sensor_lib.processing.calibration.apply_offset(100, 5))",
+        "105",
+    )
+
+    test(
+        "processing.calibration.apply_scale(100,3,2)",
+        "import sensor_lib; print(sensor_lib.processing.calibration.apply_scale(100, 3, 2))",
+        "150",
+    )
+
 def run_all_tests():
     """Run all test suites."""
     global total_tests, passed_tests, failed_tests
@@ -1956,6 +2163,9 @@ def run_all_tests():
     test_super_calls()
     test_decorators()
     test_classes()
+    test_math_ops()
+    test_cross_import()
+    test_sensor_lib()
     # Print summary
     print("\n" + "=" * 70)
     print("[SUMMARY] TEST SUMMARY")
