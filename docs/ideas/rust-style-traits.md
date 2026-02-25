@@ -1,20 +1,14 @@
 # Rust-Style Traits in mypyc-micropython
-
 This proposes Rust-style trait support for `mypyc-micropython` by generating per-trait vtables and using explicit fat pointers only at trait boundaries.
 Objects remain unchanged, so there is zero per-object memory cost. Trait-typed values pay an explicit cost: 8 bytes per trait value on ESP32 and one indirect call per trait-dispatched method.
-
 This is a concrete, implementation-ready plan. It fits the current architecture: single inheritance `ClassIR`, existing class vtable generation, and MicroPython's runtime constraints.
-
 ## Goals
-
 - Express structural polymorphism across unrelated classes in typed Python.
 - Keep object layout stable and compatible with existing generated classes.
 - Make dynamic dispatch explicit and localized, like Rust `dyn Trait`.
 - Generate C that is readable and debuggable, with clear symbols and IR dumps.
 - Keep ROM and SRAM costs predictable on ESP32-class microcontrollers.
-
 ## Non-goals
-
 - Multiple inheritance in the MicroPython type system.
 - Making traits real MicroPython runtime types.
 - `isinstance(obj, Trait)` semantics from interpreted MicroPython.
@@ -22,7 +16,6 @@ This is a concrete, implementation-ready plan. It fits the current architecture:
 - Default method bodies in traits.
 - Trait inheritance.
 - Generics over traits.
-
 ## Current Architecture (What We Must Not Break)
 
 ### Class IR Shape
@@ -326,39 +319,7 @@ class TraitMethodCallIR(ExprIR):
     args: list[ValueIR]
 ```
 
-Optional helpers (recommended for clean wrappers and debug output):
-
-```python
-@dataclass
-class TraitObjGetIR(ExprIR):
-    recv: ValueIR
-    trait: TraitIR
-
-
-@dataclass
-class TraitIsIR(ExprIR):
-    obj: ValueIR
-    trait: TraitIR
-```
-
-### IR Dump Examples (Expected)
-
-Traits must show up clearly when running `mpy-compile ... --dump-ir text`.
-
-Example dump for `render(shape: Drawable) -> float`:
-
-```text
-def render(shape: Drawable) -> MP_FLOAT_T:
-  c_name: shapes_render
-  locals: {shape: drawable_obj_t}
-  body:
-    # prelude:
-      _tmp0 = pack_trait Drawable from arg0
-    call_trait Drawable.draw(_tmp0)
-    return call_trait Drawable.area(_tmp0)
-```
-
-This requires adding renderers in `src/mypyc_micropython/ir_visualizer.py` for new node types.
+Implementation note: wrappers and debug output are easier if you also add a small helper expression to extract `.obj` from a trait fat pointer, but it is not required for MVP.
 
 ### C Type Support For Trait Fat Pointers
 
@@ -936,31 +897,3 @@ It is out of scope for the current compiler architecture.
 3. Builtin implementers
    Allowing builtins (like `list`) to implement traits is possible but it needs special casing.
    MVP supports compiled classes only.
-
-## Appendix: Minimal Helper Decorators
-
-Users want `@trait` and `@implements` imports.
-The runtime can keep them as no-ops; the compiler interprets them.
-
-This is the minimal shape the compiler will look for:
-
-```python
-from __future__ import annotations
-
-from typing import Any, Callable, TypeVar
-
-T = TypeVar("T")
-
-
-def trait(cls: type[T]) -> type[T]:
-    return cls
-
-
-def implements(proto: type[Any]) -> Callable[[type[T]], type[T]]:
-    def dec(cls: type[T]) -> type[T]:
-        return cls
-    return dec
-```
-
-The compiler should not depend on runtime behavior here.
-It should match decorator names and arguments in the AST.
