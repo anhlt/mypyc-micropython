@@ -1629,6 +1629,96 @@ def test_super_calls():
         "10",
     )
 
+def test_decorators():
+    """Test @property, @staticmethod, @classmethod decorators."""
+    print("\n[TEST] Testing decorators module...")
+
+    # @staticmethod
+    test(
+        "Rectangle.is_square_dims(3, 3) staticmethod",
+        "import decorators as d; print(d.Rectangle.is_square_dims(3, 3))",
+        "True",
+    )
+
+    test(
+        "Rectangle.is_square_dims(3, 4) staticmethod",
+        "import decorators as d; print(d.Rectangle.is_square_dims(3, 4))",
+        "False",
+    )
+
+    test(
+        "Counter.add(3, 4) staticmethod",
+        "import decorators as d; print(d.Counter.add(3, 4))",
+        "7",
+    )
+
+    # @classmethod
+    test(
+        "Rectangle.square(5) classmethod returns cls",
+        "import decorators as d; r = d.Rectangle.square(5); print(r is d.Rectangle)",
+        "True",
+    )
+
+    # @property getter
+    test(
+        "Rectangle.area property",
+        "import decorators as d; r = d.Rectangle(3, 4); print(r.area)",
+        "12",
+    )
+
+    test(
+        "Rectangle.perimeter property",
+        "import decorators as d; r = d.Rectangle(3, 4); print(r.perimeter)",
+        "14",
+    )
+
+    test(
+        "Temperature.celsius property getter",
+        "import decorators as d; t = d.Temperature(25); print(t.celsius)",
+        "25",
+    )
+
+    # @property setter
+    test(
+        "Temperature.celsius property setter",
+        "import decorators as d; t = d.Temperature(25); t.celsius = 30; print(t.celsius)",
+        "30",
+    )
+
+    # Counter property + methods
+    test(
+        "Counter.count property",
+        "import decorators as d; c = d.Counter(0); print(c.count)",
+        "0",
+    )
+
+    test(
+        "Counter.count after increment",
+        "import decorators as d; c = d.Counter(0); c.increment(); print(c.count)",
+        "1",
+    )
+
+    # Instance staticmethod call
+    test(
+        "Counter.add via instance",
+        "import decorators as d; c = d.Counter(0); print(c.add(10, 20))",
+        "30",
+    )
+
+    # Temperature fahrenheit method + property
+    test(
+        "Temperature.get_fahrenheit with property",
+        "import decorators as d; t = d.Temperature(100); print(t.get_fahrenheit())",
+        "212",
+    )
+
+    # Property after scale
+    test(
+        "Rectangle.area after scale",
+        "import decorators as d; r = d.Rectangle(3, 4); r.scale(2); print(r.area)",
+        "48",
+    )
+
 
 def run_all_tests():
     """Run all test suites."""
@@ -1664,6 +1754,7 @@ def run_all_tests():
     test_itertools_builtins()
     test_exception_handling()
     test_super_calls()
+    test_decorators()
     # Print summary
     print("\n" + "=" * 70)
     print("[SUMMARY] TEST SUMMARY")

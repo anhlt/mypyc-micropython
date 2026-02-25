@@ -52,6 +52,7 @@ from .ir import (
     ParamIR,
     PassIR,
     PrintIR,
+    PropertyInfo,
     RaiseIR,
     ReturnIR,
     RTuple,
@@ -1142,9 +1143,7 @@ class IRBuilder:
 
         return ConstIR(ir_type=IRType.OBJ, value=None), []
 
-    def _build_list_comp(
-        self, expr: ast.ListComp, locals_: list[str]
-    ) -> tuple[ValueIR, list]:
+    def _build_list_comp(self, expr: ast.ListComp, locals_: list[str]) -> tuple[ValueIR, list]:
         """Build IR for list comprehension: [expr for var in iterable] or [expr for var in iterable if cond]."""
         if not expr.generators:
             return ConstIR(ir_type=IRType.OBJ, value=[]), []
@@ -1567,6 +1566,29 @@ class IRBuilder:
         method_name = node.name
         c_method_name = f"{class_ir.c_name}_{sanitize_name(method_name)}"
 
+        is_static = False
+        is_classmethod = False
+        is_property = False
+        property_name: str | None = None
+        is_property_setter = False
+        for decorator in node.decorator_list:
+            if isinstance(decorator, ast.Name):
+                if decorator.id == "staticmethod":
+                    is_static = True
+                elif decorator.id == "classmethod":
+                    is_classmethod = True
+                elif decorator.id == "property":
+                    is_property = True
+            elif (
+                isinstance(decorator, ast.Attribute)
+                and decorator.attr == "setter"
+                and isinstance(decorator.value, ast.Name)
+            ):
+                is_property = True
+                is_property_setter = True
+                property_name = decorator.value.id
+                c_method_name = f"{class_ir.c_name}_{sanitize_name(property_name)}_setter"
+
         mypy_method = self._get_mypy_method_type(class_ir.name, method_name)
         mypy_param_types: dict[str, str] = {}
         mypy_return_type: str | None = None
@@ -1575,7 +1597,8 @@ class IRBuilder:
             mypy_return_type = mypy_method.return_type
 
         params: list[tuple[str, CType]] = []
-        for arg in node.args.args[1:]:
+        method_args = node.args.args if (is_static or is_classmethod) else node.args.args[1:]
+        for arg in method_args:
             if arg.arg in mypy_param_types:
                 py_type = self._mypy_type_to_py_type(mypy_param_types[arg.arg])
                 c_type = CType.from_python_type(py_type)
@@ -1600,7 +1623,9 @@ class IRBuilder:
                     return_type = CType.VOID
 
         is_special = method_name.startswith("__") and method_name.endswith("__")
-        is_virtual = not is_special or method_name in ("__len__", "__getitem__", "__setitem__")
+        is_virtual = (not is_static and not is_classmethod and not is_property) and (
+            not is_special or method_name in ("__len__", "__getitem__", "__setitem__")
+        )
 
         method_ir = MethodIR(
             name=method_name,
@@ -1609,11 +1634,26 @@ class IRBuilder:
             return_type=return_type,
             body_ast=node,
             is_virtual=is_virtual,
+            is_static=is_static,
+            is_classmethod=is_classmethod,
+            is_property=is_property,
             is_special=is_special,
             docstring=ast.get_docstring(node),
         )
 
-        class_ir.methods[method_name] = method_ir
+        if is_property and is_property_setter and property_name is not None:
+            class_ir.methods[f"_prop_{property_name}_setter"] = method_ir
+            if property_name in class_ir.properties:
+                class_ir.properties[property_name].setter = method_ir
+        else:
+            class_ir.methods[method_name] = method_ir
+            if is_property:
+                if method_name in class_ir.properties:
+                    class_ir.properties[method_name].getter = method_ir
+                else:
+                    class_ir.properties[method_name] = PropertyInfo(
+                        name=method_name, getter=method_ir
+                    )
 
         if is_virtual and not is_special:
             class_ir.virtual_methods.append(method_name)
@@ -1652,7 +1692,9 @@ class IRBuilder:
             self._var_types[param_name] = param_type.to_c_type_str()
 
         # Track self and params as locals
-        local_vars = ["self"] + [p[0] for p in method_ir.params]
+        local_vars = [p[0] for p in method_ir.params]
+        if not method_ir.is_static and not method_ir.is_classmethod:
+            local_vars.insert(0, "self")
 
         body_ir: list[StmtIR] = []
         for stmt in method_ir.body_ast.body:

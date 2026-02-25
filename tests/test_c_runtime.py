@@ -250,6 +250,69 @@ int main(void) {
     assert stdout.strip() == "120"
 
 
+def test_c_static_method(compile_and_run):
+    source = """
+class Calculator:
+    @staticmethod
+    def add(a: int, b: int) -> int:
+        return a + b
+"""
+    test_main_c = """
+#include <stdio.h>
+extern mp_obj_t test_Calculator_add_mp(mp_obj_t a, mp_obj_t b);
+int main(void) {
+    mp_obj_t result = test_Calculator_add_mp(mp_obj_new_int(3), mp_obj_new_int(4));
+    printf("%d\\n", (int)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "7"
+
+
+def test_c_classmethod(compile_and_run):
+    source = """
+class MyClass:
+    @classmethod
+    def get_cls(cls) -> object:
+        return cls
+"""
+    test_main_c = """
+#include <stdio.h>
+extern mp_obj_t test_MyClass_get_cls_mp(mp_obj_t cls);
+int main(void) {
+    mp_obj_t cls_arg = mp_obj_new_int(99);
+    mp_obj_t result = test_MyClass_get_cls_mp(cls_arg);
+    printf("%d\\n", (int)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "99"
+
+
+def test_c_property_getter(compile_and_run):
+    source = """
+class Rectangle:
+    @property
+    def pop(self) -> int:
+        return 12
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t rect = test_Rectangle_make_new(&test_Rectangle_type, 0, 0, NULL);
+    mp_obj_t dest[2] = {MP_OBJ_NULL, MP_OBJ_NULL};
+    test_Rectangle_attr(rect, MP_QSTR_pop, dest);
+    printf("%ld\\n", (long)mp_obj_get_int(dest[0]));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "12"
+
+
 def test_c_super_init(compile_and_run):
     source = """
 class Counter:
@@ -1716,11 +1779,11 @@ int main(void) {
 
 def test_c_list_comp_squares(compile_and_run):
     """Test basic list comprehension with range."""
-    source = '''
+    source = """
 def squares(n: int) -> list[int]:
     return [i * i for i in range(n)]
-'''
-    test_main_c = '''
+"""
+    test_main_c = """
 #include <stdio.h>
 
 int main(void) {
@@ -1733,18 +1796,18 @@ int main(void) {
     }
     return 0;
 }
-'''
+"""
     stdout = compile_and_run(source, "test", test_main_c)
     assert stdout.strip().splitlines() == ["5", "0", "1", "4", "9", "16"]
 
 
 def test_c_list_comp_with_condition(compile_and_run):
     """Test list comprehension with filter condition."""
-    source = '''
+    source = """
 def evens(n: int) -> list[int]:
     return [i for i in range(n) if i % 2 == 0]
-'''
-    test_main_c = '''
+"""
+    test_main_c = """
 #include <stdio.h>
 
 int main(void) {
@@ -1757,18 +1820,18 @@ int main(void) {
     }
     return 0;
 }
-'''
+"""
     stdout = compile_and_run(source, "test", test_main_c)
     assert stdout.strip().splitlines() == ["5", "0", "2", "4", "6", "8"]
 
 
 def test_c_list_comp_iterator(compile_and_run):
     """Test list comprehension iterating over a list."""
-    source = '''
+    source = """
 def double_items(items: list[int]) -> list[int]:
     return [x * 2 for x in items]
-'''
-    test_main_c = '''
+"""
+    test_main_c = """
 #include <stdio.h>
 
 int main(void) {
@@ -1783,6 +1846,6 @@ int main(void) {
     }
     return 0;
 }
-'''
+"""
     stdout = compile_and_run(source, "test", test_main_c)
     assert stdout.strip().splitlines() == ["3", "2", "4", "6"]

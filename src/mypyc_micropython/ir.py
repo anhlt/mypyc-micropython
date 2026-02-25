@@ -240,6 +240,13 @@ class MethodIR:
 
 
 @dataclass
+class PropertyInfo:
+    name: str
+    getter: MethodIR
+    setter: MethodIR | None = None
+
+
+@dataclass
 class DataclassInfo:
     """Metadata for @dataclass decorated classes."""
 
@@ -271,6 +278,7 @@ class ClassIR:
     # Members
     fields: list[FieldIR] = field(default_factory=list)
     methods: dict[str, MethodIR] = field(default_factory=dict)
+    properties: dict[str, PropertyInfo] = field(default_factory=dict)
 
     # Special methods tracking
     has_init: bool = False
@@ -342,6 +350,13 @@ class ClassIR:
             methods.update(self.base.get_all_methods())
         methods.update(self.methods)
         return methods
+
+    def get_all_properties(self) -> dict[str, PropertyInfo]:
+        properties = {}
+        if self.base:
+            properties.update(self.base.get_all_properties())
+        properties.update(self.properties)
+        return properties
 
     def get_struct_name(self) -> str:
         """Get the C struct type name."""
@@ -617,6 +632,7 @@ class AttrAccessIR(InstrIR):
     class_c_name: str
     result_type: IRType
 
+
 @dataclass
 class ListCompIR(InstrIR):
     """List comprehension: [expr for var in iterable] or [expr for var in iterable if cond].
@@ -644,6 +660,7 @@ class ListCompIR(InstrIR):
     range_start: ValueIR | None = None
     range_end: ValueIR | None = None
     range_step: ValueIR | None = None
+
 
 # ---------------------------------------------------------------------------
 # Lowered expression: prelude instructions + final value
@@ -1021,6 +1038,7 @@ class SuperCallIR(ExprIR):
     is_init: bool = False  # True if calling super().__init__()
     # Preludes for args
     arg_preludes: list[list[InstrIR]] = field(default_factory=list)
+
 
 @dataclass
 class SelfAugAssignIR(StmtIR):

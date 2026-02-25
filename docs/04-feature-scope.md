@@ -84,18 +84,23 @@ This document defines what Python features mypyc-micropython will support, parti
 | Instance methods | ✅ Implemented | With vtable dispatch |
 | Instance attributes | ✅ Implemented | Native C types |
 | Class attributes | 📋 Planned | Phase 3 |
-| `@property` | 📋 Planned | Phase 3 |
-| `@staticmethod` | 📋 Planned | Phase 3 |
-| `@classmethod` | 📋 Planned | Phase 3 |
+| `@property` | ✅ Implemented | Getter + setter with type-aware boxing/unboxing |
+| `@staticmethod` | ✅ Implemented | Via `mp_rom_obj_static_class_method_t` wrapper |
+| `@classmethod` | ✅ Implemented | Via `mp_rom_obj_static_class_method_t` wrapper |
 | Single inheritance | ✅ Implemented | With vtable-based virtual dispatch |
 | `__str__`/`__repr__` | 📋 Planned | Phase 3 |
 | `__eq__`/`__len__`/`__getitem__`/`__setitem__` | ✅ Implemented | Special methods |
 | `@dataclass` | ✅ Implemented | Auto-generated `__init__` and `__eq__` |
 
-### Exception Handling 📋
+### Exception Handling ✅
 
 | Feature | Status | Notes |
 |---------|--------|-------|
+| `try`/`except` | ✅ Implemented | With `nlr_push`/`nlr_pop` |
+| `try`/`finally` | ✅ Implemented | Ensures finally runs on all paths |
+| `raise` | ✅ Implemented | With exception type + message |
+| Exception chaining | ⚠️ Limited | Basic support only |
+| Custom exceptions | 📋 Planned | Phase 4 |
 | `try`/`except` | 📋 Planned | Phase 4 |
 | `try`/`finally` | 📋 Planned | Phase 4 |
 | `raise` | 📋 Planned | Phase 4 |
@@ -599,8 +604,8 @@ if (n := len(data)) > 10:
 |-------|----------|
 | **1 (Core)** | `for` loops ✅, `list` ✅, `tuple` ✅, `dict` ✅, `set` ✅, `range()` ✅, `len()` ✅, `print()` ✅ |
 | **2 (Functions)** | Default args ✅, `*args` ✅, `**kwargs` ✅, `bool()` ✅, `min()`/`max()` ✅, `sum()` ✅, `enumerate()` ✅, `zip()` ✅, `sorted()` ✅ |
-| **3 (Classes)** | Basic classes ✅, methods ✅, @dataclass ✅, single inheritance ✅, properties, @staticmethod |
-| **4 (Exceptions)** | `try`/`except`/`finally`, `raise`, custom exceptions |
+| **3 (Classes)** | Basic classes ✅, methods ✅, @dataclass ✅, single inheritance ✅, @property ✅, @staticmethod ✅, @classmethod ✅ |
+| **4 (Exceptions)** | `try`/`except`/`finally` ✅, `raise` ✅, custom exceptions |
 | **5 (Advanced)** | Simple closures, simple generators, `map()`/`filter()` |
 | **6 (Polish)** | Full IR pipeline ✅, RTuple optimization ✅ (47x speedup), list access optimization ✅, 504 tests ✅ |
 
