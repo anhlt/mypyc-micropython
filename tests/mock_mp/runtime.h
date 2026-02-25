@@ -29,8 +29,8 @@ typedef struct {
     mp_obj_t fun;
 } mp_rom_obj_static_class_method_t;
 
-static mp_obj_type_t mp_type_staticmethod = {0};
-static mp_obj_type_t mp_type_classmethod = {0};
+static mp_obj_type_t mp_type_staticmethod __attribute__((unused)) = {0};
+static mp_obj_type_t mp_type_classmethod __attribute__((unused)) = {0};
 
 typedef struct {
     mp_obj_t key;
