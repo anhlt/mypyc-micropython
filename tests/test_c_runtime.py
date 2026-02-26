@@ -1849,3 +1849,105 @@ int main(void) {
 """
     stdout = compile_and_run(source, "test", test_main_c)
     assert stdout.strip().splitlines() == ["3", "2", "4", "6"]
+
+
+def test_c_private_method_via_public(compile_and_run):
+    """Private method called through public method should work correctly."""
+    source = """
+class Calc:
+    value: int
+
+    def __init__(self, v: int) -> None:
+        self.value = v
+
+    def __add_internal(self, x: int) -> int:
+        return self.value + x
+
+    def compute(self, x: int) -> int:
+        return self.__add_internal(x)
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t args[] = {mp_obj_new_int(10)};
+    mp_obj_t obj = test_Calc_make_new(&test_Calc_type, 1, 0, args);
+    mp_obj_t result = test_Calc_compute_mp(obj, mp_obj_new_int(5));
+    printf(\"%ld\\n\", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "15"
+
+
+def test_c_final_class_method(compile_and_run):
+    """@final class methods should work via direct native calls."""
+    source = """
+from typing import final
+
+@final
+class Config:
+    rate: int
+
+    def __init__(self, r: int) -> None:
+        self.rate = r
+
+    def get_rate(self) -> int:
+        return self.rate
+
+    def doubled(self) -> int:
+        return self.rate * 2
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t args[] = {mp_obj_new_int(7)};
+    mp_obj_t obj = test_Config_make_new(&test_Config_type, 1, 0, args);
+    mp_obj_t r1 = test_Config_get_rate_mp(obj);
+    mp_obj_t r2 = test_Config_doubled_mp(obj);
+    printf(\"%ld\\n\", (long)mp_obj_get_int(r1));
+    printf(\"%ld\\n\", (long)mp_obj_get_int(r2));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().splitlines()
+    assert lines == ["7", "14"]
+
+
+def test_c_final_attribute_constant_fold(compile_and_run):
+    """Final attribute should be constant-folded in generated C."""
+    source = """
+from typing import Final
+
+class Settings:
+    MAX: Final[int] = 42
+    count: int
+
+    def __init__(self, c: int) -> None:
+        self.count = c
+
+    def is_over_max(self) -> bool:
+        return self.count > self.MAX
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t args[] = {mp_obj_new_int(50)};
+    mp_obj_t obj = test_Settings_make_new(&test_Settings_type, 1, 0, args);
+    mp_obj_t result = test_Settings_is_over_max_mp(obj);
+    printf(\"%s\\n\", mp_obj_is_true(result) ? \"true\" : \"false\");
+
+    mp_obj_t args2[] = {mp_obj_new_int(10)};
+    mp_obj_t obj2 = test_Settings_make_new(&test_Settings_type, 1, 0, args2);
+    mp_obj_t result2 = test_Settings_is_over_max_mp(obj2);
+    printf(\"%s\\n\", mp_obj_is_true(result2) ? \"true\" : \"false\");
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().splitlines()
+    assert lines == ["true", "false"]

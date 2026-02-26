@@ -564,6 +564,24 @@ static inline mp_obj_t mp_binary_op(mp_binary_op_t op, mp_obj_t lhs, mp_obj_t rh
 #define MP_QSTR_pop   ((qstr)0x1001)
 #define MP_QSTR_append ((qstr)0x1002)
 
+/* Catch-all for unknown QSTRs used by class field descriptors */
+#define MP_QSTR_value   ((qstr)0x2001)
+#define MP_QSTR_x       ((qstr)0x2002)
+#define MP_QSTR_y       ((qstr)0x2003)
+#define MP_QSTR_count   ((qstr)0x2004)
+#define MP_QSTR_rate    ((qstr)0x2005)
+#define MP_QSTR_factor  ((qstr)0x2006)
+#define MP_QSTR_name    ((qstr)0x2007)
+#define MP_QSTR_MAX     ((qstr)0x2008)
+#define MP_QSTR_mass    ((qstr)0x2009)
+#define MP_QSTR_GRAVITY ((qstr)0x200A)
+#define MP_QSTR_DEBUG   ((qstr)0x200B)
+#define MP_QSTR_MAX_SIZE ((qstr)0x200C)
+#define MP_QSTR_TIMEOUT  ((qstr)0x200D)
+#define MP_QSTR_MAX_RETRIES ((qstr)0x200E)
+#define MP_QSTR_RATE    ((qstr)0x200F)
+#define MP_QSTR_LIMIT   ((qstr)0x2010)
+#define MP_QSTR_size    ((qstr)0x2011)
 #define MP_MOCK_TAG_ITER (0x173A)
 
 typedef struct {

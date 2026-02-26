@@ -126,6 +126,8 @@ class IRPrinter:
         if cls.is_dataclass:
             lines.append(f"{self._i()}@dataclass")
 
+        if cls.is_final_class:
+            lines.append(f"{self._i()}@final")
         if cls.fields:
             lines.append(f"{self._i()}Fields:")
             self._indent_inc()
@@ -147,7 +149,8 @@ class IRPrinter:
         default_str = ""
         if field.has_default:
             default_str = f" = {field.default_value}"
-        return f"{self._i()}{field.name}: {field.py_type} ({field.c_type.name}){default_str}"
+        final_str = " [Final]" if field.is_final else ""
+        return f"{self._i()}{field.name}: {field.py_type} ({field.c_type.name}){default_str}{final_str}"
 
     def print_method(self, method: MethodIR) -> str:
         params = ", ".join(f"{name}: {ctype.name}" for name, ctype in method.params)
@@ -158,9 +161,40 @@ class IRPrinter:
             decorators.append("@classmethod")
         if method.is_property:
             decorators.append("@property")
-
+        if method.is_final:
+            decorators.append("@final")
+        if method.is_private:
+            decorators.append("[private]")
         dec_str = " ".join(decorators) + " " if decorators else ""
         return f"{self._i()}{dec_str}def {method.name}({params}) -> {method.return_type.name}"
+
+    def print_method_detail(self, method: MethodIR) -> str:
+        """Print detailed method info (used when MethodIR is dumped standalone)."""
+        lines = []
+        params = ", ".join(f"{name}: {ctype.name}" for name, ctype in method.params)
+        decorators = []
+        if method.is_static:
+            decorators.append("@staticmethod")
+        if method.is_classmethod:
+            decorators.append("@classmethod")
+        if method.is_property:
+            decorators.append("@property")
+        if method.is_final:
+            decorators.append("@final")
+        if method.is_private:
+            decorators.append("[private]")
+        for dec in decorators:
+            lines.append(f"{self._i()}{dec}")
+        lines.append(f"{self._i()}def {method.name}({params}) -> {method.return_type.name}:")
+        lines.append(f"{self._i()}  c_name: {method.c_name}")
+        lines.append(f"{self._i()}  max_temp: {method.max_temp}")
+        if method.is_virtual:
+            vtable_str = f", vtable_index={method.vtable_index}" if method.vtable_index >= 0 else ""
+            lines.append(f"{self._i()}  virtual: True{vtable_str}")
+        if method.is_special:
+            lines.append(f"{self._i()}  special: True")
+        lines.append(f"{self._i()}  (body from AST -- use cli to build full FuncIR)")
+        return "\n".join(lines)
 
     def print_function(self, func: FuncIR) -> str:
         lines = []
@@ -714,6 +748,8 @@ def dump_ir(ir_node: Any, format: str = "text") -> str:
             return printer.print_value(ir_node)
         elif isinstance(ir_node, InstrIR):
             return printer.print_instr(ir_node)
+        elif isinstance(ir_node, MethodIR):
+            return printer.print_method_detail(ir_node)
         else:
             return f"<unsupported: {type(ir_node).__name__}>"
     elif format == "tree":

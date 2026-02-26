@@ -114,7 +114,21 @@ def dump_ir_command(source_path: Path, format: str, function_name: str | None) -
             found = False
             for cls in module_ir.classes.values():
                 if function_name in cls.methods:
-                    print(dump_ir(cls.methods[function_name], format))
+                    method_ir = cls.methods[function_name]
+                    # Build method body IR for full dump
+                    body = builder.build_method_body(method_ir, cls)
+                    from mypyc_micropython.ir import FuncIR
+                    func_ir = FuncIR(
+                        name=method_ir.name,
+                        c_name=method_ir.c_name,
+                        params=method_ir.params,
+                        return_type=method_ir.return_type,
+                        body=body,
+                        is_method=True,
+                        class_ir=cls,
+                        max_temp=builder._temp_counter,
+                    )
+                    print(dump_ir(func_ir, format))
                     found = True
                     break
             if not found:

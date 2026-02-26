@@ -1427,6 +1427,26 @@ class MethodEmitter(BaseEmitter):
         del call
         return native
 
+    def _emit_self_attr(self, attr: SelfAttrIR) -> tuple[str, str]:
+        """Override to constant-fold Final field access."""
+        # Check if this is a Final field with a known literal value
+        for fld in self.class_ir.get_all_fields():
+            if fld.name == attr.attr_name and fld.is_final and fld.final_value is not None:
+                val = fld.final_value
+                if isinstance(val, bool):
+                    return ("true" if val else "false"), "bool"
+                elif isinstance(val, int):
+                    return str(val), "mp_int_t"
+                elif isinstance(val, float):
+                    return str(val), "mp_float_t"
+                elif isinstance(val, str):
+                    escaped = val.replace('"', '\\"')
+                    return (
+                        f'mp_obj_new_str("{escaped}", {len(val)})',
+                        "mp_obj_t",
+                    )
+        return f"self->{attr.attr_path}", attr.result_type.to_c_type_str()
+
     def emit_native(self, body: list[StmtIR]) -> str:
         method_ir = self.method_ir
         class_ir = self.class_ir
@@ -1524,6 +1544,7 @@ class MethodEmitter(BaseEmitter):
             method_ir.is_static
             or method_ir.is_classmethod
             or method_ir.is_property
+            or method_ir.is_final
             or (method_ir.is_virtual and not method_ir.is_special)
         ):
             args_list = [p[0] for p in method_ir.params]

@@ -17,6 +17,7 @@ Requires: mpremote, ESP32 device connected
 import argparse
 import subprocess
 import sys
+import time
 from typing import Callable
 
 # Default configuration
@@ -36,26 +37,76 @@ failed_tests: list[tuple[str, str]] = []
 RGB_LED_GPIO = 8
 
 
-def run_on_device(code: str, port: str = "", timeout: int = 30) -> tuple[bool, str]:
-    """Execute Python code on device via mpremote."""
+def _wait_for_port(port: str, max_retries: int = 20, interval: float = 0.3) -> bool:
+    """Wait until the serial port is not held by another process.
+
+    Uses two strategies:
+    1. lsof to check if any process holds the port file
+    2. Try opening the port directly as a fallback
+    """
+    import os
+    for attempt in range(max_retries):
+        # Strategy 1: lsof check
+        try:
+            result = subprocess.run(
+                ["lsof", "-t", port],
+                capture_output=True, text=True, timeout=3,
+            )
+            if result.returncode != 0:
+                return True  # No process holds the port
+        except Exception:
+            pass  # lsof failed, try direct open
+
+        # Strategy 2: try opening the device file directly
+        try:
+            fd = os.open(port, os.O_RDWR | os.O_NONBLOCK | os.O_NOCTTY)
+            os.close(fd)
+            return True
+        except OSError:
+            pass  # Port busy
+
+        time.sleep(interval)
+    return False
+
+
+def run_on_device(
+    code: str, port: str = "", timeout: int = 30, max_retries: int = 3,
+) -> tuple[bool, str]:
+    """Execute Python code on device via mpremote with automatic retry.
+
+    Waits for port availability before each attempt. Retries on port
+    contention errors (common on macOS USB serial).
+    """
     device_port = port if port else PORT
-    try:
-        result = subprocess.run(
-            ["mpremote", "connect", device_port, "exec", code],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        if result.returncode == 0:
-            return True, result.stdout.strip()
-        else:
-            return False, result.stderr.strip()
-    except subprocess.TimeoutExpired:
-        return False, "Timeout"
-    except Exception as e:
-        return False, str(e)
-
-
+    last_error = ""
+    for attempt in range(max_retries):
+        _wait_for_port(device_port)
+        try:
+            result = subprocess.run(
+                ["mpremote", "connect", device_port, "exec", code],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if result.returncode == 0:
+                return True, result.stdout.strip()
+            last_error = result.stderr.strip()
+            # Retry on transient errors (port contention, raw repl)
+            retryable = (
+                "failed to access" in last_error
+                or "it may be in use" in last_error
+                or "could not enter raw repl" in last_error
+            )
+            if retryable:
+                time.sleep(0.5 * (attempt + 1))  # Backoff
+                continue
+            return False, last_error
+        except subprocess.TimeoutExpired:
+            return False, "Timeout"
+        except Exception as e:
+            last_error = str(e)
+            time.sleep(0.5)
+    return False, last_error
 
 
 def led_rgb(r: int, g: int, b: int) -> None:
@@ -2127,6 +2178,81 @@ def test_sensor_lib():
         "150",
     )
 
+def test_private_methods():
+    """Test private_methods module (private methods, @final class, Final attrs)."""
+    print("\n[TEST] Testing private_methods module (optimization tiers)...")
+
+    # Tier 1: Private method via public wrapper
+    test(
+        "Calculator(10).compute(5)",
+        "import private_methods as pm; c = pm.Calculator(10); print(c.compute(5))",
+        "35",
+    )
+
+    test(
+        "Calculator(0).compute(3)",
+        "import private_methods as pm; c = pm.Calculator(0); print(c.compute(3))",
+        "9",
+    )
+
+    # Tier 2: @final class -- all methods devirtualized
+    test(
+        "FastCounter increment",
+        "import private_methods as pm; fc = pm.FastCounter(3); fc.increment(); fc.increment(); print(fc.get())",
+        "6",
+    )
+
+    test(
+        "FastCounter reset",
+        "import private_methods as pm; fc = pm.FastCounter(3); fc.increment(); fc.reset(); print(fc.get())",
+        "0",
+    )
+
+    test(
+        "FastCounter increment returns count",
+        "import private_methods as pm; fc = pm.FastCounter(5); print(fc.increment())",
+        "5",
+    )
+
+    # Tier 3: Final attribute constant folding
+    test(
+        "Config(7).scaled_value()",
+        "import private_methods as pm; cfg = pm.Config(7); print(cfg.scaled_value())",
+        "14",
+    )
+
+    test(
+        "Config.is_within_limit(999) True",
+        "import private_methods as pm; cfg = pm.Config(1); print(cfg.is_within_limit(999))",
+        "True",
+    )
+
+    test(
+        "Config.is_within_limit(1000) False",
+        "import private_methods as pm; cfg = pm.Config(1); print(cfg.is_within_limit(1000))",
+        "False",
+    )
+
+    # Benchmark class: public vs private produce same result
+    test(
+        "Benchmark.run_public(10)",
+        "import private_methods as pm; b = pm.Benchmark(5); print(b.run_public(10))",
+        "95",
+    )
+
+    test(
+        "Benchmark.run_private(10)",
+        "import private_methods as pm; b = pm.Benchmark(5); print(b.run_private(10))",
+        "95",
+    )
+
+    # Verify public and private produce identical results for larger input
+    test(
+        "Benchmark public==private (100)",
+        "import private_methods as pm; b = pm.Benchmark(3); print(b.run_public(100) == b.run_private(100))",
+        "True",
+    )
+
 def run_all_tests():
     """Run all test suites."""
     global total_tests, passed_tests, failed_tests
@@ -2166,6 +2292,7 @@ def run_all_tests():
     test_math_ops()
     test_cross_import()
     test_sensor_lib()
+    test_private_methods()
     # Print summary
     print("\n" + "=" * 70)
     print("[SUMMARY] TEST SUMMARY")

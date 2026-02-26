@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Private method (`__method`) optimization: skip MP wrappers, vtable entries, and `locals_dict` registration for class-internal methods
+  - Compile-time enforcement: accessing `__private` methods from outside the class is a compilation error
+  - Private methods emit only a native C function -- no boxing/unboxing wrapper
+- `@final` class devirtualization: classes decorated with `@final` skip vtable struct and vtable pointer entirely
+  - Saves 4 bytes per instance on 32-bit MCU (no vtable pointer in struct)
+  - All methods marked `@final` automatically when class is `@final`
+- `Final` attribute constant folding: `Final[int]` class fields with literal values are inlined as C constants
+  - `self.SCALE` (where `SCALE: Final[int] = 2`) emits literal `2` instead of struct field load
+- IR visualizer: fix `MethodIR` dump support (`--dump-ir` with `--ir-function` now shows method body)
+- IR visualizer: fix duplicate `@final` annotation in class output
+- `examples/private_methods.py` exercising all 3 optimization tiers
+- 14 unit tests for private method, `@final`, and `Final` optimizations
+- 3 C runtime tests for native call, devirtualization, and constant folding
+- 11 device tests for `private_methods` module
+- 3 benchmarks: public vs private method call, `@final` FastCounter
+- Blog post 23: Private Methods, @final, and Constant Folding
+
+### Fixed
+- Serial port contention in `run_device_tests.py`: added `_wait_for_port()` with retry and backoff
+- Serial port contention in `run_benchmarks.py`: same retry logic
+- Fixed pre-existing corruption (duplicated entries) in `run_benchmarks.py`
+
+### Added
 - Runtime import support for built-in MicroPython modules (`import math`, `import time`, etc.)
   - New IR nodes: `ModuleImportIR`, `ModuleCallIR`, `ModuleAttrIR`
   - Generated C uses `mp_import_name()` + `mp_load_attr()` + `mp_call_function_N()` pattern
