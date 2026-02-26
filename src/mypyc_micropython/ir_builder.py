@@ -429,6 +429,10 @@ class IRBuilder:
         return RaiseIR(exc_type=exc_type, exc_msg=exc_msg, prelude=prelude)
 
     def _build_for(self, stmt: ast.For, locals_: list[str]) -> ForRangeIR | ForIterIR:
+        # Handle tuple unpacking: for k, v in items
+        if isinstance(stmt.target, ast.Tuple):
+            return self._build_for_tuple_unpack(stmt, locals_)
+
         if not isinstance(stmt.target, ast.Name):
             raise ValueError("Unsupported for loop target")
 
@@ -523,6 +527,60 @@ class IRBuilder:
             iter_prelude=iter_prelude,
             is_new_var=is_new_var,
         )
+
+    def _build_for_tuple_unpack(self, stmt: ast.For, locals_: list[str]) -> ForIterIR:
+        """Build for loop with tuple unpacking: for k, v in items."""
+        assert isinstance(stmt.target, ast.Tuple)
+
+        # Generate a temp variable to hold each iteration item
+        item_var = f"_item_{self._temp_counter}"
+        self._temp_counter += 1
+        c_item_var = item_var
+
+        # Item var is always new
+        locals_.append(item_var)
+        self._var_types[item_var] = "mp_obj_t"
+
+        # Build tuple unpack targets
+        unpack_targets: list[tuple[str, str, bool, str]] = []
+        for elt in stmt.target.elts:
+            if isinstance(elt, ast.Name):
+                var_name = elt.id
+                c_var_name = sanitize_name(var_name)
+                is_new = var_name not in locals_
+                if is_new:
+                    locals_.append(var_name)
+                    self._var_types[var_name] = "mp_obj_t"
+                unpack_targets.append((var_name, c_var_name, is_new, "mp_obj_t"))
+
+        # Create tuple unpack IR to prepend to body
+        unpack_ir = TupleUnpackIR(
+            targets=unpack_targets,
+            value=NameIR(py_name=item_var, c_name=c_item_var, ir_type=IRType.OBJ),
+            prelude=[],
+        )
+
+        # Build iterable expression
+        iterable, iter_prelude = self._build_expr(stmt.iter, locals_)
+
+        # Build loop body with unpack prepended
+        self._loop_depth += 1
+        body_stmts = [self._build_statement(s, locals_) for s in stmt.body]
+        body_stmts = [s for s in body_stmts if s is not None]
+        self._loop_depth -= 1
+
+        # Prepend tuple unpack to body
+        body = [unpack_ir] + body_stmts
+
+        return ForIterIR(
+            loop_var=item_var,
+            c_loop_var=c_item_var,
+            iterable=iterable,
+            body=body,
+            iter_prelude=iter_prelude,
+            is_new_var=True,
+        )
+
 
     def _build_assign(self, stmt: ast.Assign, locals_: list[str]) -> StmtIR | None:
         if len(stmt.targets) != 1:
@@ -647,6 +705,7 @@ class IRBuilder:
             ast.Sub: "-=",
             ast.Mult: "*=",
             ast.Div: "/=",
+            ast.FloorDiv: "//=",
             ast.Mod: "%=",
             ast.BitAnd: "&=",
             ast.BitOr: "|=",
@@ -2025,6 +2084,7 @@ class IRBuilder:
             ast.Sub: "-=",
             ast.Mult: "*=",
             ast.Div: "/=",
+            ast.FloorDiv: "//=",
             ast.Mod: "%=",
             ast.BitAnd: "&=",
             ast.BitOr: "|=",
@@ -2088,6 +2148,10 @@ class IRBuilder:
         self, stmt: ast.For, locals_: list[str], class_ir: ClassIR, native: bool
     ) -> ForRangeIR | ForIterIR:
         """Build for statement in method context."""
+        # Handle tuple unpacking: for k, v in items
+        if isinstance(stmt.target, ast.Tuple):
+            return self._build_method_for_tuple_unpack(stmt, locals_, class_ir, native)
+
         if not isinstance(stmt.target, ast.Name):
             raise ValueError("Unsupported for loop target")
 
