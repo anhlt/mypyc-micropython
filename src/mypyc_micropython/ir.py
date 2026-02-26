@@ -288,9 +288,15 @@ class ClassIR:
     has_init: bool = False
     has_repr: bool = False
     has_eq: bool = False
+    has_ne: bool = False
+    has_lt: bool = False
+    has_le: bool = False
+    has_gt: bool = False
+    has_ge: bool = False
     has_str: bool = False
     has_hash: bool = False
-
+    has_iter: bool = False
+    has_next: bool = False
     # Virtual dispatch
     virtual_methods: list[str] = field(default_factory=list)
     vtable_size: int = 0

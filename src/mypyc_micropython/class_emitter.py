@@ -499,49 +499,176 @@ class ClassEmitter:
         lines.append("")
         return lines
 
-    def emit_binary_op_handler(self) -> list[str]:
-        if not (
+    def _has_user_comparison_methods(self) -> bool:
+        """Check if this class has any user-defined comparison methods."""
+        return (
+            self.class_ir.has_eq
+            or self.class_ir.has_ne
+            or self.class_ir.has_lt
+            or self.class_ir.has_le
+            or self.class_ir.has_gt
+            or self.class_ir.has_ge
+        )
+
+    def _has_dataclass_eq(self) -> bool:
+        """Check if this is a dataclass with auto-generated __eq__."""
+        return (
             self.class_ir.is_dataclass
-            and self.class_ir.dataclass_info
+            and self.class_ir.dataclass_info is not None
             and self.class_ir.dataclass_info.eq
-        ):
+            and not self.class_ir.has_eq  # No user override
+        )
+
+    def emit_binary_op_handler(self) -> list[str]:
+        """Emit binary_op handler for comparison operators."""
+        has_user_comparisons = self._has_user_comparison_methods()
+        has_dataclass_eq = self._has_dataclass_eq()
+
+        if not has_user_comparisons and not has_dataclass_eq:
             return []
 
-        lines = []
-        fields_with_path = self.class_ir.get_all_fields_with_path()
-
+        lines: list[str] = []
         lines.append(
             f"static mp_obj_t {self.c_name}_binary_op(mp_binary_op_t op, mp_obj_t lhs_in, mp_obj_t rhs_in) {{"
         )
-        lines.append("    if (op != MP_BINARY_OP_EQUAL) {")
-        lines.append("        return MP_OBJ_NULL;")
-        lines.append("    }")
-        lines.append("")
-        lines.append("    if (!mp_obj_is_type(rhs_in, mp_obj_get_type(lhs_in))) {")
-        lines.append("        return mp_const_false;")
-        lines.append("    }")
-        lines.append("")
-        lines.append(f"    {self.c_name}_obj_t *lhs = MP_OBJ_TO_PTR(lhs_in);")
-        lines.append(f"    {self.c_name}_obj_t *rhs = MP_OBJ_TO_PTR(rhs_in);")
-        lines.append("")
 
-        conditions = []
-        for fld, path in fields_with_path:
-            if fld.c_type == CType.MP_OBJ_T:
-                conditions.append(f"mp_obj_equal(lhs->{path}, rhs->{path})")
+        # Map of comparison ops to methods
+        comparison_ops = [
+            ("MP_BINARY_OP_EQUAL", "__eq__", self.class_ir.has_eq),
+            ("MP_BINARY_OP_NOT_EQUAL", "__ne__", self.class_ir.has_ne),
+            ("MP_BINARY_OP_LESS", "__lt__", self.class_ir.has_lt),
+            ("MP_BINARY_OP_LESS_EQUAL", "__le__", self.class_ir.has_le),
+            ("MP_BINARY_OP_MORE", "__gt__", self.class_ir.has_gt),
+            ("MP_BINARY_OP_MORE_EQUAL", "__ge__", self.class_ir.has_ge),
+        ]
+
+        # Emit dispatch for user-defined comparison methods
+        for mp_op, py_method, has_method in comparison_ops:
+            if has_method and py_method in self.class_ir.methods:
+                method_ir = self.class_ir.methods[py_method]
+                lines.append(f"    if (op == {mp_op}) {{")
+                lines.append(f"        return {method_ir.c_name}_mp(lhs_in, rhs_in);")
+                lines.append("    }")
+
+        # Handle dataclass auto-generated __eq__
+        if has_dataclass_eq:
+            lines.append("    if (op == MP_BINARY_OP_EQUAL) {")
+            lines.append("        if (!mp_obj_is_type(rhs_in, mp_obj_get_type(lhs_in))) {")
+            lines.append("            return mp_const_false;")
+            lines.append("        }")
+            lines.append(f"        {self.c_name}_obj_t *lhs = MP_OBJ_TO_PTR(lhs_in);")
+            lines.append(f"        {self.c_name}_obj_t *rhs = MP_OBJ_TO_PTR(rhs_in);")
+
+            fields_with_path = self.class_ir.get_all_fields_with_path()
+            conditions = []
+            for fld, path in fields_with_path:
+                if fld.c_type == CType.MP_OBJ_T:
+                    conditions.append(f"mp_obj_equal(lhs->{path}, rhs->{path})")
+                else:
+                    conditions.append(f"lhs->{path} == rhs->{path}")
+
+            if conditions:
+                cond_str = " &&\n            ".join(conditions)
+                lines.append("        return mp_obj_new_bool(")
+                lines.append(f"            {cond_str}")
+                lines.append("        );")
             else:
-                conditions.append(f"lhs->{path} == rhs->{path}")
+                lines.append("        return mp_const_true;")
+            lines.append("    }")
 
-        if conditions:
-            cond_str = " &&\n        ".join(conditions)
-            lines.append("    return mp_obj_new_bool(")
-            lines.append(f"        {cond_str}")
-            lines.append("    );")
-        else:
-            lines.append("    return mp_const_true;")
-
+        # Return NULL for unsupported operations
+        lines.append("    return MP_OBJ_NULL;")
         lines.append("}")
         lines.append("")
+
+        return lines
+
+    def emit_unary_op_handler(self) -> list[str]:
+        """Emit unary_op handler for __hash__."""
+        if not self.class_ir.has_hash:
+            return []
+
+        if "__hash__" not in self.class_ir.methods:
+            return []
+
+        lines: list[str] = []
+        method_ir = self.class_ir.methods["__hash__"]
+
+        lines.append(
+            f"static mp_obj_t {self.c_name}_unary_op(mp_unary_op_t op, mp_obj_t self_in) {{"
+        )
+        lines.append("    if (op == MP_UNARY_OP_HASH) {")
+        lines.append(f"        return {method_ir.c_name}_mp(self_in);")
+        lines.append("    }")
+        lines.append("    return MP_OBJ_NULL;")
+        lines.append("}")
+        lines.append("")
+
+        return lines
+
+    def emit_iter_handlers(self) -> list[str]:
+        """Emit getiter and iternext handlers for __iter__ and __next__."""
+        if not self.class_ir.has_iter and not self.class_ir.has_next:
+            return []
+
+        lines: list[str] = []
+
+        is_self_iterator = self.class_ir.has_iter and self.class_ir.has_next
+
+        if is_self_iterator:
+            # Common case: __iter__ returns self, __next__ does the work.
+            # Use MP_TYPE_FLAG_ITER_IS_ITERNEXT: the single iter slot IS the
+            # iternext function and MicroPython auto-returns self for getiter.
+            pass
+        elif self.class_ir.has_iter and "__iter__" in self.class_ir.methods:
+            # __iter__ only (no __next__): emit a getiter wrapper
+            method_ir = self.class_ir.methods["__iter__"]
+            lines.append(
+                f"static mp_obj_t {self.c_name}_getiter(mp_obj_t self_in, mp_obj_iter_buf_t *iter_buf) {{"
+            )
+            lines.append("    (void)iter_buf;")
+            lines.append(f"    return {method_ir.c_name}_mp(self_in);")
+            lines.append("}")
+            lines.append("")
+
+        # Emit iternext handler for __next__
+        if self.class_ir.has_next and "__next__" in self.class_ir.methods:
+            method_ir = self.class_ir.methods["__next__"]
+            lines.append(
+                f"static mp_obj_t {self.c_name}_iternext(mp_obj_t self_in) {{"
+            )
+            # Call the user's __next__ method, which should raise StopIteration
+            # when done. We need to catch that and return MP_OBJ_STOP_ITERATION.
+            lines.append("    nlr_buf_t nlr;")
+            lines.append("    if (nlr_push(&nlr) == 0) {")
+            lines.append(f"        mp_obj_t result = {method_ir.c_name}_mp(self_in);")
+            lines.append("        nlr_pop();")
+            lines.append("        return result;")
+            lines.append("    } else {")
+            lines.append("        // Check if StopIteration was raised")
+            lines.append("        mp_obj_t exc = MP_OBJ_FROM_PTR(nlr.ret_val);")
+            lines.append("        if (mp_obj_is_subclass_fast(MP_OBJ_FROM_PTR(mp_obj_get_type(exc)), MP_OBJ_FROM_PTR(&mp_type_StopIteration))) {")
+            lines.append("            return MP_OBJ_STOP_ITERATION;")
+            lines.append("        }")
+            lines.append("        // Re-raise other exceptions")
+            lines.append("        nlr_jump(nlr.ret_val);")
+            lines.append("    }")
+            lines.append("}")
+            lines.append("")
+
+        # For MP_TYPE_FLAG_ITER_IS_CUSTOM: emit the getiter_iternext struct
+        if is_self_iterator:
+            # Self-iterator: no struct needed, use MP_TYPE_FLAG_ITER_IS_ITERNEXT
+            pass
+        elif self.class_ir.has_iter and self.class_ir.has_next:
+            # Custom: separate getiter and iternext
+            lines.append(
+                f"static const mp_getiter_iternext_custom_t {self.c_name}_iter_custom = {{"
+            )
+            lines.append(f"    .getiter = {self.c_name}_getiter,")
+            lines.append(f"    .iternext = {self.c_name}_iternext,")
+            lines.append("}};")
+            lines.append("")
 
         return lines
 
@@ -647,13 +774,30 @@ class ClassEmitter:
         if has_user_str or has_user_repr or has_dataclass_repr:
             slots.append(f"    print, {self.c_name}_print")
 
-        if (
-            self.class_ir.is_dataclass
-            and self.class_ir.dataclass_info
-            and self.class_ir.dataclass_info.eq
-        ):
+        # Add binary_op slot for comparison methods
+        has_binary_op = (
+            self._has_user_comparison_methods()
+            or self._has_dataclass_eq()
+        )
+        if has_binary_op:
             slots.append(f"    binary_op, {self.c_name}_binary_op")
 
+        # Add unary_op slot for __hash__
+        if self.class_ir.has_hash:
+            slots.append(f"    unary_op, {self.c_name}_unary_op")
+
+        # Add iter slot for __iter__ and/or __next__
+        is_self_iterator = self.class_ir.has_iter and self.class_ir.has_next
+        if is_self_iterator:
+            # Self-iterator: iter slot = iternext function
+            # Flag MP_TYPE_FLAG_ITER_IS_ITERNEXT makes getiter return self
+            slots.append(f"    iter, {self.c_name}_iternext")
+        elif self.class_ir.has_next:
+            # __next__ only: use ITER_IS_ITERNEXT
+            slots.append(f"    iter, {self.c_name}_iternext")
+        elif self.class_ir.has_iter:
+            # __iter__ only: use default getiter
+            slots.append(f"    iter, {self.c_name}_getiter")
         if self.class_ir.base:
             slots.append(f"    parent, &{self.class_ir.base.c_name}_type")
 
@@ -675,10 +819,17 @@ class ClassEmitter:
 
         slots_str = ",\n".join(slots)
 
+        # Determine type flags
+        has_iternext = self.class_ir.has_next
+        if has_iternext:
+            type_flags = "MP_TYPE_FLAG_ITER_IS_ITERNEXT"
+        else:
+            type_flags = "MP_TYPE_FLAG_NONE"
+
         lines.append("MP_DEFINE_CONST_OBJ_TYPE(")
         lines.append(f"    {self.c_name}_type,")
         lines.append(f"    MP_QSTR_{self.class_ir.name},")
-        lines.append("    MP_TYPE_FLAG_NONE,")
+        lines.append(f"    {type_flags},")
         lines.append(slots_str)
         lines.append(");")
         lines.append("")
@@ -693,6 +844,8 @@ class ClassEmitter:
         sections.extend(self.emit_attr_handler())
         sections.extend(self.emit_print_handler())
         sections.extend(self.emit_binary_op_handler())
+        sections.extend(self.emit_unary_op_handler())
+        sections.extend(self.emit_iter_handlers())
         sections.extend(self.emit_vtable_instance())
         sections.extend(self.emit_make_new())
         sections.extend(self.emit_locals_dict())
@@ -707,6 +860,8 @@ class ClassEmitter:
         sections.extend(self.emit_attr_handler())
         sections.extend(self.emit_print_handler())
         sections.extend(self.emit_binary_op_handler())
+        sections.extend(self.emit_unary_op_handler())
+        sections.extend(self.emit_iter_handlers())
         sections.extend(self.emit_vtable_instance())
         sections.extend(self.emit_make_new())
         sections.extend(self.emit_locals_dict())

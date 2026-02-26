@@ -1592,6 +1592,17 @@ class MethodEmitter(BaseEmitter):
 
         expr, expr_type = self._emit_expr(stmt.value, native)
 
+        # In methods, "return self" should return self_in (the original mp_obj_t)
+        # not the struct pointer "self"
+        if expr == "self" and not native:
+            if self._nlr_stack:
+                lines.append("        nlr_pop();")
+                lines.append("        return self_in;")
+            else:
+                lines.append("    return self_in;")
+            return lines
+
+
         if self._nlr_stack:
             ret_tmp = self._fresh_temp()
             if native:

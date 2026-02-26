@@ -471,11 +471,23 @@ static inline mp_obj_t mp_obj_list_append(mp_obj_t list_obj, mp_obj_t item) {
 typedef uintptr_t qstr;
 
 typedef enum {
+    MP_BINARY_OP_LESS,
+    MP_BINARY_OP_MORE,
+    MP_BINARY_OP_EQUAL,
+    MP_BINARY_OP_LESS_EQUAL,
+    MP_BINARY_OP_MORE_EQUAL,
+    MP_BINARY_OP_NOT_EQUAL,
     MP_BINARY_OP_ADD,
     MP_BINARY_OP_SUBTRACT,
     MP_BINARY_OP_MULTIPLY,
     MP_BINARY_OP_IN,
 } mp_binary_op_t;
+
+typedef enum {
+    MP_UNARY_OP_BOOL,
+    MP_UNARY_OP_LEN,
+    MP_UNARY_OP_HASH,
+} mp_unary_op_t;
 
 static inline mp_obj_t mp_binary_op(mp_binary_op_t op, mp_obj_t lhs, mp_obj_t rhs) {
     if (op == MP_BINARY_OP_IN) {
