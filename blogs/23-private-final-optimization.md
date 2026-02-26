@@ -542,10 +542,40 @@ This explains why Tier 1 matters even though internal performance does not chang
   Speedup (native vs vanilla): 55.9x
 ```
 
-Two points:
+To understand why, look at the generated C for both call paths side by side:
 
-- "Native public" and "native private" are the same speed internally because both resolve to direct C calls inside compiled code. The compiler does not route internal calls through MP wrappers.
-- The private method still matters because it prevents the 7.4us/call external path from existing, and it shrinks the generated module (no wrapper function, no function object, no dict entry).
+```c
+// run_public_native calls public_add:
+total += private_methods_Benchmark_public_add_native(self, i);
+
+// run_private_native calls __private_add:
+total += private_methods_Benchmark___private_add_native(self, i);
+```
+
+Both are direct C function calls. The compiler resolves `self.public_add(i)` and `self.__private_add(i)` the same way when the call site is inside compiled code: look up the method at compile time, emit a direct call to the `_native` function. No vtable lookup, no MP wrapper, no boxing.
+
+The difference is in what *else* gets generated for each method:
+
+```
+public_add generates:
+  1. _native function            (the real work)
+  2. _mp wrapper function         (boxes/unboxes mp_obj_t for runtime)
+  3. MP_DEFINE_CONST_FUN_OBJ_2    (function object stored in flash)
+  4. vtable slot                  (function pointer in vtable struct)
+  5. locals_dict entry            (MP_ROM_QSTR + MP_ROM_PTR)
+
+__private_add generates:
+  1. _native function            (the real work)
+  (nothing else)
+```
+
+`public_add` generates 8 extra lines of C that exist solely so the MicroPython runtime (REPL, `dir()`, `getattr()`) can discover and call the method. Inside compiled code, neither method ever touches that infrastructure.
+
+So the private method optimization is not about making internal calls faster. It is about:
+
+- **Binary size**: no wrapper function, no function object constant, no vtable slot, no dict entry. On a flash-constrained MCU, every removed symbol counts.
+- **Encapsulation enforcement**: the 7.4us/call external wrapper path is physically impossible for `__private_add` because the wrapper does not exist. You cannot accidentally call it from the slow path.
+- **Attack surface**: fewer exported symbols means fewer entry points into the native code from the dynamic runtime.
 
 ## `@final` FastCounter vs vanilla
 
