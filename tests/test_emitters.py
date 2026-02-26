@@ -11,15 +11,13 @@ Test naming convention: test_emit_<feature>_<behavior>
 
 from __future__ import annotations
 
-import pytest
-
+from mypyc_micropython.function_emitter import FunctionEmitter
 from mypyc_micropython.ir import (
     AnnAssignIR,
     AssignIR,
     AugAssignIR,
     BinOpIR,
     BreakIR,
-    CallIR,
     ClassIR,
     CompareIR,
     ConstIR,
@@ -36,11 +34,9 @@ from mypyc_micropython.ir import (
     IRType,
     ListNewIR,
     MethodCallIR,
-    MethodIR,
     NameIR,
     PassIR,
     ReturnIR,
-    SelfAttrIR,
     SubscriptAssignIR,
     SubscriptIR,
     TempIR,
@@ -48,8 +44,6 @@ from mypyc_micropython.ir import (
     UnaryOpIR,
     WhileIR,
 )
-from mypyc_micropython.function_emitter import FunctionEmitter
-
 
 # ============================================================================
 # Helpers: Factory functions for building IR nodes
@@ -745,7 +739,7 @@ class TestEmitAssignment:
         assert "mp_int_t x = 0" in c_code
         # Second assignment (no type declaration)
         lines = c_code.split("\n")
-        assign_lines = [l for l in lines if "x = 10" in l]
+        assign_lines = [line for line in lines if "x = 10" in line]
         assert len(assign_lines) >= 1
         # Should not redeclare type
         assert "mp_int_t x = 10" not in c_code
