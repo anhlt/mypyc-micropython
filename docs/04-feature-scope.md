@@ -88,7 +88,7 @@ This document defines what Python features mypyc-micropython will support, parti
 | `@staticmethod` | ✅ Implemented | Via `mp_rom_obj_static_class_method_t` wrapper |
 | `@classmethod` | ✅ Implemented | Via `mp_rom_obj_static_class_method_t` wrapper |
 | Single inheritance | ✅ Implemented | With vtable-based virtual dispatch |
-| `__str__`/`__repr__` | 📋 Planned | Phase 3 |
+| `__str__`/`__repr__` | ✅ Implemented | Via MicroPython print slot |
 | `__eq__`/`__len__`/`__getitem__`/`__setitem__` | ✅ Implemented | Special methods |
 | `@dataclass` | ✅ Implemented | Auto-generated `__init__` and `__eq__` |
 

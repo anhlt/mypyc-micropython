@@ -177,19 +177,31 @@ build: check-env
 
 flash: check-env
 	@echo "Flashing firmware to $(PORT)..."
-	PATH="/usr/bin:$$PATH" bash -c '. $(ESP_IDF_DIR)/export.sh && \
-		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) PORT=$(PORT) deploy'
+	@bash -c 'source $(ESP_IDF_DIR)/export.sh 2>/dev/null && \
+		cd $(MP_PORT_DIR) && \
+		idf.py -D MICROPY_BOARD=$(BOARD) \
+			-D MICROPY_BOARD_DIR="$$(pwd)/boards/$(BOARD)" \
+			-B build-$(BOARD) \
+			-p $(PORT) flash'
 
 erase: check-env
 	@echo "Erasing flash..."
-	PATH="/usr/bin:$$PATH" bash -c '. $(ESP_IDF_DIR)/export.sh && \
-		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) PORT=$(PORT) erase'
+	@bash -c 'source $(ESP_IDF_DIR)/export.sh 2>/dev/null && \
+		cd $(MP_PORT_DIR) && \
+		idf.py -D MICROPY_BOARD=$(BOARD) \
+			-D MICROPY_BOARD_DIR="$$(pwd)/boards/$(BOARD)" \
+			-B build-$(BOARD) \
+			-p $(PORT) erase_flash'
 
 monitor: check-env
 	@echo "Opening serial monitor on $(PORT)..."
 	@echo "(Press Ctrl+] to exit)"
-	PATH="/usr/bin:$$PATH" bash -c '. $(ESP_IDF_DIR)/export.sh && \
-		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) PORT=$(PORT) monitor'
+	@bash -c 'source $(ESP_IDF_DIR)/export.sh 2>/dev/null && \
+		cd $(MP_PORT_DIR) && \
+		idf.py -D MICROPY_BOARD=$(BOARD) \
+			-D MICROPY_BOARD_DIR="$$(pwd)/boards/$(BOARD)" \
+			-B build-$(BOARD) \
+			-p $(PORT) monitor'
 
 deploy: build flash
 	@sleep 2
@@ -207,16 +219,16 @@ test-device: compile-all build flash run-device-tests
 	@echo "Device testing complete!"
 
 test-device-only:
-	@echo "Running comprehensive device tests..."
-	@python3 run_device_tests.py --port $(PORT)
+	@echo "Running device tests on $(PORT)..."
+	mpremote connect $(PORT) run run_device_tests.py
 
 run-device-tests:
-	@echo "Running comprehensive device tests..."
-	@python3 run_device_tests.py --port $(PORT)
+	@echo "Running device tests on $(PORT)..."
+	mpremote connect $(PORT) run run_device_tests.py
 
 benchmark:
-	@echo "Running benchmarks: Native C vs Vanilla MicroPython..."
-	@python3 run_benchmarks.py --port $(PORT)
+	@echo "Running benchmarks: Native C vs Vanilla MicroPython on $(PORT)..."
+	mpremote connect $(PORT) run run_benchmarks.py
 
 test-factorial:
 	@echo "Testing factorial module on device..."

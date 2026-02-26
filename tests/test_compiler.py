@@ -4833,3 +4833,153 @@ class Counter:
 '''
         result = compile_source(source, "test", type_check=False)
         assert "self->value" in result
+
+
+class TestStrRepr:
+    """Tests for __str__ and __repr__ special method support."""
+
+    def test_repr_only(self):
+        """Class with only __repr__ generates print handler."""
+        source = '''
+class Point:
+    x: int
+    y: int
+
+    def __init__(self, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+
+    def __repr__(self) -> str:
+        return "Point"
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Print handler should exist
+        assert "test_Point_print" in result
+        # Should call __repr__ wrapper
+        assert "test_Point___repr___mp(self_in)" in result
+        # Type definition should have print slot
+        assert "print, test_Point_print" in result
+
+    def test_str_only(self):
+        """Class with only __str__ generates print handler with dispatch."""
+        source = '''
+class Greeting:
+    name: str
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __str__(self) -> str:
+        return "hello"
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Print handler should exist
+        assert "test_Greeting_print" in result
+        # Should dispatch on kind for PRINT_STR
+        assert "kind == PRINT_STR" in result
+        assert "test_Greeting___str___mp(self_in)" in result
+        # Should have fallback for PRINT_REPR
+        assert '<Greeting object>' in result
+        # Type definition should have print slot
+        assert "print, test_Greeting_print" in result
+
+    def test_both_str_and_repr(self):
+        """Class with both __str__ and __repr__ dispatches on kind."""
+        source = '''
+class Item:
+    name: str
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __str__(self) -> str:
+        return "item"
+
+    def __repr__(self) -> str:
+        return "Item()"
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Print handler should dispatch
+        assert "kind == PRINT_STR" in result
+        assert "test_Item___str___mp(self_in)" in result
+        assert "test_Item___repr___mp(self_in)" in result
+        # Both methods should have MP wrappers
+        assert "test_Item___str___mp(mp_obj_t self_in)" in result
+        assert "test_Item___repr___mp(mp_obj_t self_in)" in result
+
+    def test_repr_not_in_locals_dict(self):
+        """__repr__ and __str__ should NOT appear in locals_dict."""
+        source = '''
+class Foo:
+    x: int
+
+    def __init__(self, x: int) -> None:
+        self.x = x
+
+    def __repr__(self) -> str:
+        return "Foo"
+
+    def get_x(self) -> int:
+        return self.x
+'''
+        result = compile_source(source, "test", type_check=False)
+        # get_x should be in locals_dict
+        assert "MP_QSTR_get_x" in result
+        # __repr__ should NOT be in locals_dict
+        assert "MP_QSTR___repr__" not in result
+
+    def test_dataclass_with_user_repr_override(self):
+        """@dataclass with user __repr__ should use user version, not auto-gen."""
+        source = '''
+from dataclasses import dataclass
+
+@dataclass
+class Pair:
+    x: int
+    y: int
+
+    def __repr__(self) -> str:
+        return "Pair"
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should have print handler
+        assert "test_Pair_print" in result
+        # Should call user __repr__ (not auto-gen field dump)
+        assert "test_Pair___repr___mp(self_in)" in result
+        # Should NOT have auto-generated field dump
+        assert 'mp_printf(print, "Pair(")' not in result
+
+    def test_dataclass_without_user_repr_keeps_autogen(self):
+        """@dataclass without user __repr__ should keep auto-generated print."""
+        source = '''
+from dataclasses import dataclass
+
+@dataclass
+class Vec2:
+    x: int
+    y: int
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should have auto-generated print handler
+        assert "test_Vec2_print" in result
+        assert 'mp_printf(print, "Vec2(")' in result
+        # Should NOT have user __repr__ call
+        assert "__repr___mp" not in result
+
+    def test_repr_method_returns_str(self):
+        """__repr__ method should be compiled as returning mp_obj_t (str)."""
+        source = '''
+class Tag:
+    label: str
+
+    def __init__(self, label: str) -> None:
+        self.label = label
+
+    def __repr__(self) -> str:
+        return self.label
+'''
+        result = compile_source(source, "test", type_check=False)
+        # __repr__ wrapper should return mp_obj_t
+        assert "test_Tag___repr___mp(mp_obj_t self_in)" in result
+        # Print handler should use mp_obj_print_helper with PRINT_STR
+        assert "mp_obj_print_helper(print, result, PRINT_STR)" in result

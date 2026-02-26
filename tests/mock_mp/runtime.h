@@ -582,6 +582,7 @@ static inline mp_obj_t mp_binary_op(mp_binary_op_t op, mp_obj_t lhs, mp_obj_t rh
 #define MP_QSTR_RATE    ((qstr)0x200F)
 #define MP_QSTR_LIMIT   ((qstr)0x2010)
 #define MP_QSTR_size    ((qstr)0x2011)
+#define MP_QSTR_text    ((qstr)0x2012)
 #define MP_MOCK_TAG_ITER (0x173A)
 
 typedef struct {
@@ -1225,6 +1226,75 @@ static inline void mp_raise_msg_varg(int *exc_type, const char *fmt, ...) {
     mp_raise_msg(exc_type, buf);
 }
 
+
+/* Print infrastructure for __str__/__repr__ support */
+typedef struct _mp_print_t {
+    void *data;
+    int (*print_strn)(void *data, const char *str, size_t len);
+} mp_print_t;
+
+typedef enum {
+    PRINT_STR = 0,
+    PRINT_REPR = 1,
+} mp_print_kind_t;
+
+/* Simple print implementation that writes to stdout */
+static int mp_mock_print_strn(void *data, const char *str, size_t len) {
+    (void)data;
+    return (int)fwrite(str, 1, len, stdout);
+}
+
+static mp_print_t mp_plat_print __attribute__((unused)) = { NULL, mp_mock_print_strn };
+
+static inline void mp_printf(const mp_print_t *print, const char *fmt, ...) {
+    char buf[1024];
+    va_list args;
+    va_start(args, fmt);
+    int len = vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    if (len > 0 && print->print_strn) {
+        print->print_strn(print->data, buf, (size_t)len);
+    }
+}
+
+static inline void mp_print_str(const mp_print_t *print, const char *str) {
+    if (print->print_strn) {
+        print->print_strn(print->data, str, strlen(str));
+    }
+}
+
+/* Forward declaration needed for recursive print calls */
+static void mp_obj_print_helper(const mp_print_t *print, mp_obj_t obj, mp_print_kind_t kind);
+
+static void mp_obj_print_helper(const mp_print_t *print, mp_obj_t obj, mp_print_kind_t kind) {
+    (void)kind;
+    if (obj == mp_const_none) {
+        mp_print_str(print, "None");
+    } else if (obj == mp_const_true) {
+        mp_print_str(print, "True");
+    } else if (obj == mp_const_false) {
+        mp_print_str(print, "False");
+    } else if (MP_OBJ_IS_SMALL_INT(obj)) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%ld", (long)MP_OBJ_SMALL_INT_VALUE(obj));
+        mp_print_str(print, buf);
+    } else if (!mp_mock_is_special_const(obj)) {
+        mp_obj_str_struct *s = (mp_obj_str_struct *)obj;
+        if (s->tag == MP_MOCK_TAG_STR) {
+            if (kind == PRINT_REPR) {
+                mp_print_str(print, "'");
+                print->print_strn(print->data, s->data, s->len);
+                mp_print_str(print, "'");
+            } else {
+                print->print_strn(print->data, s->data, s->len);
+            }
+        } else {
+            mp_print_str(print, "<object>");
+        }
+    } else {
+        mp_print_str(print, "<unknown>");
+    }
+}
 #define MP_OBJ_FROM_PTR(p) ((mp_obj_t)(p))
 #define MP_OBJ_TO_PTR(o) ((void *)(o))
 

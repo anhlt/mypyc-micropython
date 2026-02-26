@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `__str__` and `__repr__` special method support for user-defined classes
+  - User-defined `__repr__` wired to MicroPython `print` type slot; `str()` falls back to `__repr__` (Python semantics)
+  - User-defined `__str__` dispatches on `PRINT_STR` vs `PRINT_REPR` kind
+  - Both `__str__` and `__repr__` dispatch correctly when both defined
+  - `@dataclass` with user `__repr__` override uses user version instead of auto-generated field dump
+  - `@dataclass` without user override keeps existing auto-generated `repr`
+- 7 unit tests for `__str__`/`__repr__` compilation
+- 4 C runtime tests for `__str__`/`__repr__` execution
+- 5 device tests for `__str__`/`__repr__` on ESP32
+
 - Private method (`__method`) optimization: skip MP wrappers, vtable entries, and `locals_dict` registration for class-internal methods
   - Compile-time enforcement: accessing `__private` methods from outside the class is a compilation error
   - Private methods emit only a native C function -- no boxing/unboxing wrapper
