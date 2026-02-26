@@ -1951,3 +1951,132 @@ int main(void) {
     stdout = compile_and_run(source, "test", test_main_c)
     lines = stdout.strip().splitlines()
     assert lines == ["true", "false"]
+
+
+def test_c_repr_method(compile_and_run):
+    """Test __repr__ method is callable and returns string."""
+    source = '''
+class Tag:
+    name: str
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __repr__(self) -> str:
+        return self.name
+'''
+    test_main_c = '''
+#include <stdio.h>
+extern mp_obj_t test_Tag___repr___mp(mp_obj_t self_in);
+extern mp_obj_t test_Tag_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args);
+int main(void) {
+    mp_obj_t args[] = { mp_obj_new_str("hello", 5) };
+    mp_obj_t obj = test_Tag_make_new(&test_Tag_type, 1, 0, args);
+    mp_obj_t result = test_Tag___repr___mp(obj);
+    mp_obj_print_helper(&mp_plat_print, result, PRINT_STR);
+    printf("\\n");
+    return 0;
+}
+'''
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "hello"
+
+
+def test_c_str_method(compile_and_run):
+    """Test __str__ method is callable and returns string."""
+    source = '''
+class Greeter:
+    name: str
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __str__(self) -> str:
+        return self.name
+'''
+    test_main_c = '''
+#include <stdio.h>
+extern mp_obj_t test_Greeter___str___mp(mp_obj_t self_in);
+extern mp_obj_t test_Greeter_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args);
+int main(void) {
+    mp_obj_t args[] = { mp_obj_new_str("world", 5) };
+    mp_obj_t obj = test_Greeter_make_new(&test_Greeter_type, 1, 0, args);
+    mp_obj_t result = test_Greeter___str___mp(obj);
+    mp_obj_print_helper(&mp_plat_print, result, PRINT_STR);
+    printf("\\n");
+    return 0;
+}
+'''
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "world"
+
+
+def test_c_print_handler_repr_only(compile_and_run):
+    """Test print handler dispatches __repr__ for both str() and repr()."""
+    source = '''
+class Label:
+    text: str
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def __repr__(self) -> str:
+        return self.text
+'''
+    test_main_c = '''
+#include <stdio.h>
+extern void test_Label_print(const mp_print_t *print, mp_obj_t self_in, mp_print_kind_t kind);
+extern mp_obj_t test_Label_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args);
+int main(void) {
+    mp_obj_t args[] = { mp_obj_new_str("my_label", 8) };
+    mp_obj_t obj = test_Label_make_new(&test_Label_type, 1, 0, args);
+    /* repr() call */
+    test_Label_print(&mp_plat_print, obj, PRINT_REPR);
+    printf("\\n");
+    /* str() call - should also use __repr__ */
+    test_Label_print(&mp_plat_print, obj, PRINT_STR);
+    printf("\\n");
+    return 0;
+}
+'''
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().splitlines()
+    assert lines == ["my_label", "my_label"]
+
+
+def test_c_print_handler_both_str_repr(compile_and_run):
+    """Test print handler dispatches correctly when both __str__ and __repr__ defined."""
+    source = '''
+class Item:
+    name: str
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __str__(self) -> str:
+        return self.name
+
+    def __repr__(self) -> str:
+        return self.name
+'''
+    test_main_c = '''
+#include <stdio.h>
+extern void test_Item_print(const mp_print_t *print, mp_obj_t self_in, mp_print_kind_t kind);
+extern mp_obj_t test_Item_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args);
+int main(void) {
+    mp_obj_t str_args[] = { mp_obj_new_str("str_val", 7) };
+    mp_obj_t obj = test_Item_make_new(&test_Item_type, 1, 0, str_args);
+    /* str() call */
+    test_Item_print(&mp_plat_print, obj, PRINT_STR);
+    printf("\\n");
+    /* repr() call */
+    mp_obj_t repr_args[] = { mp_obj_new_str("repr_val", 8) };
+    mp_obj_t obj2 = test_Item_make_new(&test_Item_type, 1, 0, repr_args);
+    test_Item_print(&mp_plat_print, obj2, PRINT_REPR);
+    printf("\\n");
+    return 0;
+}
+'''
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().splitlines()
+    assert lines == ["str_val", "repr_val"]

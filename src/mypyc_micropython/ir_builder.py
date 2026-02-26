@@ -1828,6 +1828,8 @@ class IRBuilder:
             class_ir.has_init = True
         elif method_name == "__repr__":
             class_ir.has_repr = True
+        elif method_name == "__str__":
+            class_ir.has_str = True
         elif method_name == "__eq__":
             class_ir.has_eq = True
 

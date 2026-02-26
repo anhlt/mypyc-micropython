@@ -56,6 +56,9 @@ class Entity:
     def describe(self) -> str:
         return self.name
 
+    def __repr__(self) -> str:
+        return self.name
+
 
 # -- Child class: Sensor(Entity) -------------------------------------------
 # Features: super().__init__(), float field, @property (getter+setter),
@@ -104,6 +107,9 @@ class Sensor(Entity):
     def describe(self) -> str:
         base: str = super().describe()
         return base
+
+    def __str__(self) -> str:
+        return self.name
 
 
 # -- Grandchild class: SmartSensor(Sensor) ---------------------------------

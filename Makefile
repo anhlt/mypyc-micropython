@@ -207,16 +207,16 @@ test-device: compile-all build flash run-device-tests
 	@echo "Device testing complete!"
 
 test-device-only:
-	@echo "Running comprehensive device tests..."
-	@python3 run_device_tests.py --port $(PORT)
+	@echo "Running device tests on $(PORT)..."
+	mpremote connect $(PORT) run run_device_tests.py
 
 run-device-tests:
-	@echo "Running comprehensive device tests..."
-	@python3 run_device_tests.py --port $(PORT)
+	@echo "Running device tests on $(PORT)..."
+	mpremote connect $(PORT) run run_device_tests.py
 
 benchmark:
-	@echo "Running benchmarks: Native C vs Vanilla MicroPython..."
-	@python3 run_benchmarks.py --port $(PORT)
+	@echo "Running benchmarks: Native C vs Vanilla MicroPython on $(PORT)..."
+	mpremote connect $(PORT) run run_benchmarks.py
 
 test-factorial:
 	@echo "Testing factorial module on device..."

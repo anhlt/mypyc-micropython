@@ -393,14 +393,83 @@ class ClassEmitter:
         return lines
 
     def emit_print_handler(self) -> list[str]:
-        if not self.class_ir.is_dataclass:
-            return []
+        has_user_repr = self.class_ir.has_repr
+        has_user_str = self.class_ir.has_str
+        has_dataclass_repr = (
+            self.class_ir.is_dataclass
+            and self.class_ir.dataclass_info
+            and self.class_ir.dataclass_info.repr_
+            and not has_user_repr
+        )
 
-        lines = []
+        # Case 1: User-defined __str__ and/or __repr__
+        if has_user_str or has_user_repr:
+            return self._emit_user_print_handler(has_user_str, has_user_repr)
+
+        # Case 2: Dataclass auto-generated repr (no user override)
+        if has_dataclass_repr:
+            return self._emit_dataclass_print_handler()
+
+        return []
+
+    def _emit_user_print_handler(
+        self, has_str: bool, has_repr: bool
+    ) -> list[str]:
+        """Emit print handler that dispatches to user __str__/__repr__ methods."""
+        lines: list[str] = []
+        repr_c_name = self.class_ir.methods.get("__repr__")
+        str_c_name = self.class_ir.methods.get("__str__")
+
+        lines.append(
+            f"static void {self.c_name}_print(const mp_print_t *print, "
+            f"mp_obj_t self_in, mp_print_kind_t kind) {{"
+        )
+
+        if has_str and has_repr:
+            # Dispatch based on kind
+            assert repr_c_name is not None
+            assert str_c_name is not None
+            lines.append("    mp_obj_t result;")
+            lines.append("    if (kind == PRINT_STR) {")
+            lines.append(f"        result = {str_c_name.c_name}_mp(self_in);")
+            lines.append("    } else {")
+            lines.append(f"        result = {repr_c_name.c_name}_mp(self_in);")
+            lines.append("    }")
+            lines.append("    mp_obj_print_helper(print, result, PRINT_STR);")
+        elif has_repr:
+            # __repr__ only: Python semantics -- str() falls back to repr()
+            assert repr_c_name is not None
+            lines.append("    (void)kind;")
+            lines.append(
+                f"    mp_obj_t result = {repr_c_name.c_name}_mp(self_in);"
+            )
+            lines.append("    mp_obj_print_helper(print, result, PRINT_STR);")
+        else:
+            # __str__ only: use for PRINT_STR, default for PRINT_REPR
+            assert str_c_name is not None
+            lines.append("    if (kind == PRINT_STR) {")
+            lines.append(
+                f"        mp_obj_t result = {str_c_name.c_name}_mp(self_in);"
+            )
+            lines.append("        mp_obj_print_helper(print, result, PRINT_STR);")
+            lines.append("    } else {")
+            lines.append(
+                f'        mp_printf(print, "<{self.class_ir.name} object>");'
+            )
+            lines.append("    }")
+
+        lines.append("}")
+        lines.append("")
+        return lines
+
+    def _emit_dataclass_print_handler(self) -> list[str]:
+        """Emit auto-generated print handler for @dataclass classes."""
+        lines: list[str] = []
         fields_with_path = self.class_ir.get_all_fields_with_path()
 
         lines.append(
-            f"static void {self.c_name}_print(const mp_print_t *print, mp_obj_t self_in, mp_print_kind_t kind) {{"
+            f"static void {self.c_name}_print(const mp_print_t *print, "
+            f"mp_obj_t self_in, mp_print_kind_t kind) {{"
         )
         lines.append(f"    {self.c_name}_obj_t *self = MP_OBJ_TO_PTR(self_in);")
         lines.append("    (void)kind;")
@@ -428,7 +497,6 @@ class ClassEmitter:
         lines.append('    mp_printf(print, ")");')
         lines.append("}")
         lines.append("")
-
         return lines
 
     def emit_binary_op_handler(self) -> list[str]:
@@ -567,10 +635,24 @@ class ClassEmitter:
         if self.class_ir.get_all_fields() or self.class_ir.get_all_properties():
             slots.append(f"    attr, {self.c_name}_attr")
 
-        if self.class_ir.is_dataclass:
+        # Add print slot when we have a print handler
+        has_user_repr = self.class_ir.has_repr
+        has_user_str = self.class_ir.has_str
+        has_dataclass_repr = (
+            self.class_ir.is_dataclass
+            and self.class_ir.dataclass_info
+            and self.class_ir.dataclass_info.repr_
+            and not has_user_repr
+        )
+        if has_user_str or has_user_repr or has_dataclass_repr:
             slots.append(f"    print, {self.c_name}_print")
-            if self.class_ir.dataclass_info and self.class_ir.dataclass_info.eq:
-                slots.append(f"    binary_op, {self.c_name}_binary_op")
+
+        if (
+            self.class_ir.is_dataclass
+            and self.class_ir.dataclass_info
+            and self.class_ir.dataclass_info.eq
+        ):
+            slots.append(f"    binary_op, {self.c_name}_binary_op")
 
         if self.class_ir.base:
             slots.append(f"    parent, &{self.class_ir.base.c_name}_type")

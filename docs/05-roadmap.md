@@ -57,7 +57,7 @@ A 7-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 - Remaining list methods (`extend`, `insert`, `remove`, `count`, `index`, `reverse`, `sort`)
 - List/dict comprehensions
 - Keyword-only arguments, positional-only arguments
-- Remaining class special methods (`__str__`/`__repr__`, `__ne__`/`__lt__`/`__gt__`/`__le__`/`__ge__`, `__hash__`, `__iter__`/`__next__`)
+- Remaining class special methods (`__ne__`/`__lt__`/`__gt__`/`__le__`/`__ge__`, `__hash__`, `__iter__`/`__next__`)
  Custom exception classes
 - Closures and generators
 
@@ -500,7 +500,7 @@ Tasks:
 ### 3.6 Special Methods (Partial)
 
 Tasks:
-- [ ] `__str__` / `__repr__`
+- [x] `__str__` / `__repr__` — user-defined methods wired to MicroPython print slot
 - [x] `__len__` — supported in `locals_dict`
 - [x] `__getitem__` / `__setitem__` — supported in `locals_dict`
 - [x] `__eq__` — auto-generated for `@dataclass`, field-by-field comparison

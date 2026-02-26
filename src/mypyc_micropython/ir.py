@@ -288,6 +288,7 @@ class ClassIR:
     has_init: bool = False
     has_repr: bool = False
     has_eq: bool = False
+    has_str: bool = False
     has_hash: bool = False
 
     # Virtual dispatch
