@@ -335,6 +335,107 @@ This is not a micro-optimization. On a heap full of tiny objects, one pointer fi
 
 Important boundary: `@final` does not mean "not callable". These methods still get MP wrappers and still live in `locals_dict`, because the runtime must be able to call them from normal MicroPython code.
 
+### What about @final classes that inherit?
+
+One question that comes up immediately: what happens when a `@final` class inherits from a non-final parent?
+
+```python
+class Animal:
+    name: str
+    def speak(self) -> str:
+        return self.name
+
+@final
+class Cat(Animal):
+    color: str
+    def speak(self) -> str:
+        return self.name
+    def purr(self) -> str:
+        return self.color
+```
+
+PEP 591 is clear: a `@final` class **can** inherit from a non-final parent. The `@final` decorator only prevents further subclassing of `Cat`, not Cat's own inheritance.
+
+#### What mypy enforces
+
+| Scenario | Allowed? | mypy error |
+|---|---|---|
+| `@final class Cat(Animal)` | YES | None |
+| `class Kitten(Cat)` where Cat is `@final` | NO | `Cannot inherit from final class "Cat"` |
+| Override `@final` method in child | NO | `Cannot override final attribute "locked"` |
+| Call parent's `@final` method from child | YES | None |
+
+Since our compiler runs mypy in strict mode before code generation, all three prohibited cases are caught at the type-checking stage. No additional checks are needed in the IR builder or emitter.
+
+#### What the compiler generates
+
+This is the interesting part. When `Cat` is `@final`, we clear its `virtual_methods` list and mark all its own methods `is_final=True`. But `Cat` inherits from `Animal`, and `Animal` defined a vtable with `speak` in it.
+
+Tracing through the IR:
+
+```
+Animal.virtual_methods = ['speak']
+Animal.get_vtable_entries() = [('speak', Animal.speak)]
+
+Cat.virtual_methods = []            (cleared by @final)
+Cat.get_vtable_entries() = [('speak', Animal.speak)]  (inherited from parent!)
+```
+
+The `get_vtable_entries()` method walks up to the parent first, then adds from the child's `virtual_methods`. Since `Cat`'s list is empty, the parent's entries pass through unchanged.
+
+This means `Cat` still gets a vtable instance in the generated C:
+
+```c
+// Animal defines the vtable layout
+struct _Animal_vtable_t {
+    mp_obj_t (*speak)(Animal_obj_t *self);
+};
+
+struct _Animal_obj_t {
+    mp_obj_base_t base;
+    const Animal_vtable_t *vtable;  // <-- vtable pointer lives here
+    mp_obj_t name;
+};
+
+// Cat embeds Animal (struct inheritance)
+struct _Cat_obj_t {
+    Animal_obj_t super;  // contains base + vtable pointer + name
+    mp_obj_t color;
+};
+
+// Cat MUST populate the vtable (for polymorphism)
+static const Cat_vtable_t Cat_vtable_inst = {
+    .speak = (mp_obj_t (*)(Cat_obj_t *))Cat_speak_native,
+};
+
+// In make_new:
+self->super.vtable = (const Animal_vtable_t *)&Cat_vtable_inst;
+```
+
+#### Why the vtable is still needed
+
+This looks like it contradicts the Tier 2 optimization ("no vtable for `@final` classes"). But it does not. The rule is:
+
+- A `@final` **root** class (no parent) skips the vtable entirely. No vtable struct, no vtable pointer, no vtable instance. This is `FastCounter`.
+- A `@final` **child** class still needs the parent's vtable, because polymorphic code may call `animal.speak()` on a `Cat` instance through the parent type's vtable pointer.
+
+The `@final` child still benefits from the optimization in a different way: **Cat's own new methods (`purr`) are not added to the vtable.** Only the inherited slots are preserved. And no further subclass can extend or override Cat's methods.
+
+```
++---------------------------+     +---------------------------+
+| Animal (non-final)        |     | Cat (@final, child)       |
+|                           |     |                           |
+| vtable: { speak }         |     | vtable: { speak }         |
+| struct: base + vtable +   |     | struct: Animal super +    |
+|         name              |     |         color             |
+| locals_dict: speak        |     | locals_dict: speak, purr  |
++---------------------------+     +---------------------------+
+                                  purr is NOT in vtable
+                                  (Cat is @final, no override possible)
+```
+
+---
+
 ## Tier 3: `Final` Attribute Constant Folding
 
 This tier is about eliminating loads and making generated code more literal.
