@@ -149,12 +149,12 @@ compile-all:
 	@echo "# Auto-generated - include all compiled modules" > $(MODULES_DIR)/micropython.cmake
 	@for f in examples/*.py; do \
 		MOD_NAME=$$(basename "$$f" .py); \
-		echo "include(\$$\{CMAKE_CURRENT_LIST_DIR\}/usermod_$$MOD_NAME/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
+		echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_$$MOD_NAME/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
 	done
 	@for d in examples/*/; do \
 		if [ -f "$${d}__init__.py" ]; then \
 			PKG_NAME=$$(basename "$$d"); \
-			echo "include(\$$\{CMAKE_CURRENT_LIST_DIR\}/usermod_$$PKG_NAME/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
+			echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_$$PKG_NAME/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
 		fi; \
 	done
 	@echo "Done! Ready to build."

@@ -4983,3 +4983,335 @@ class Tag:
         assert "test_Tag___repr___mp(mp_obj_t self_in)" in result
         # Print handler should use mp_obj_print_helper with PRINT_STR
         assert "mp_obj_print_helper(print, result, PRINT_STR)" in result
+
+
+class TestComparisonMethods:
+    """Tests for comparison special methods (__lt__, __le__, __gt__, __ge__, __ne__)."""
+
+    def test_lt_method(self):
+        """__lt__ method should generate binary_op handler with MP_BINARY_OP_LESS."""
+        source = '''
+class Number:
+    value: int
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __lt__(self, other: object) -> bool:
+        return self.value < 10
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should have binary_op handler
+        assert "test_Number_binary_op" in result
+        assert "MP_BINARY_OP_LESS" in result
+        # Should call user's __lt__ method
+        assert "test_Number___lt___mp(lhs_in, rhs_in)" in result
+
+    def test_le_method(self):
+        """__le__ method should generate binary_op handler with MP_BINARY_OP_LESS_EQUAL."""
+        source = '''
+class Number:
+    value: int
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __le__(self, other: object) -> bool:
+        return self.value <= 10
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "test_Number_binary_op" in result
+        assert "MP_BINARY_OP_LESS_EQUAL" in result
+        assert "test_Number___le___mp(lhs_in, rhs_in)" in result
+
+    def test_gt_method(self):
+        """__gt__ method should generate binary_op handler with MP_BINARY_OP_MORE."""
+        source = '''
+class Number:
+    value: int
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __gt__(self, other: object) -> bool:
+        return self.value > 10
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "test_Number_binary_op" in result
+        assert "MP_BINARY_OP_MORE" in result
+        assert "test_Number___gt___mp(lhs_in, rhs_in)" in result
+
+    def test_ge_method(self):
+        """__ge__ method should generate binary_op handler with MP_BINARY_OP_MORE_EQUAL."""
+        source = '''
+class Number:
+    value: int
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __ge__(self, other: object) -> bool:
+        return self.value >= 10
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "test_Number_binary_op" in result
+        assert "MP_BINARY_OP_MORE_EQUAL" in result
+        assert "test_Number___ge___mp(lhs_in, rhs_in)" in result
+
+    def test_ne_method(self):
+        """__ne__ method should generate binary_op handler with MP_BINARY_OP_NOT_EQUAL."""
+        source = '''
+class Number:
+    value: int
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __ne__(self, other: object) -> bool:
+        return self.value != 10
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "test_Number_binary_op" in result
+        assert "MP_BINARY_OP_NOT_EQUAL" in result
+        assert "test_Number___ne___mp(lhs_in, rhs_in)" in result
+
+    def test_eq_method_user_defined(self):
+        """User-defined __eq__ should override dataclass auto-generated one."""
+        source = '''
+class Number:
+    value: int
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __eq__(self, other: object) -> bool:
+        return self.value == 10
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "test_Number_binary_op" in result
+        assert "MP_BINARY_OP_EQUAL" in result
+        assert "test_Number___eq___mp(lhs_in, rhs_in)" in result
+
+    def test_multiple_comparison_methods(self):
+        """Multiple comparison methods should all be dispatched."""
+        source = '''
+class Number:
+    value: int
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __lt__(self, other: object) -> bool:
+        return self.value < 10
+
+    def __eq__(self, other: object) -> bool:
+        return self.value == 10
+
+    def __gt__(self, other: object) -> bool:
+        return self.value > 10
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "test_Number_binary_op" in result
+        assert "MP_BINARY_OP_LESS" in result
+        assert "MP_BINARY_OP_EQUAL" in result
+        assert "MP_BINARY_OP_MORE" in result
+
+
+class TestHashMethod:
+    """Tests for __hash__ special method."""
+
+    def test_hash_method(self):
+        """__hash__ method should generate unary_op handler."""
+        source = '''
+class Point:
+    x: int
+    y: int
+
+    def __init__(self, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+
+    def __hash__(self) -> int:
+        return self.x + self.y
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should have unary_op handler
+        assert "test_Point_unary_op" in result
+        assert "MP_UNARY_OP_HASH" in result
+        # Should call user's __hash__ method
+        assert "test_Point___hash___mp(self_in)" in result
+        # Should register unary_op slot
+        assert "unary_op, test_Point_unary_op" in result
+
+
+class TestIteratorMethods:
+    """Tests for __iter__ and __next__ special methods."""
+
+    def test_iter_method(self):
+        """__iter__ method should generate getiter handler."""
+        source = '''
+class Range:
+    current: int
+    end: int
+
+    def __init__(self, end: int) -> None:
+        self.current = 0
+        self.end = end
+
+    def __iter__(self) -> object:
+        return self
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should have getiter handler
+        assert "test_Range_getiter" in result
+        # Should call user's __iter__ method
+        assert "test_Range___iter___mp(self_in)" in result
+        # Should register iter slot
+        assert "iter, test_Range_getiter" in result
+
+    def test_next_method(self):
+        """__next__ method should generate iternext handler."""
+        source = '''
+class Range:
+    current: int
+    end: int
+
+    def __init__(self, end: int) -> None:
+        self.current = 0
+        self.end = end
+
+    def __next__(self) -> int:
+        if self.current >= self.end:
+            raise StopIteration
+        val: int = self.current
+        self.current += 1
+        return val
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should have iternext handler
+        assert "test_Range_iternext" in result
+        # Should call user's __next__ method
+        assert "test_Range___next___mp(self_in)" in result
+        # Should register iter slot with iternext function (MP_TYPE_FLAG_ITER_IS_ITERNEXT)
+        assert "iter, test_Range_iternext" in result
+        # Should handle StopIteration
+        assert "MP_OBJ_STOP_ITERATION" in result
+
+    def test_iter_and_next_methods(self):
+        """Class with both __iter__ and __next__ should be a full iterator."""
+        source = '''
+class Counter:
+    current: int
+    end: int
+
+    def __init__(self, end: int) -> None:
+        self.current = 0
+        self.end = end
+
+    def __iter__(self) -> object:
+        return self
+
+    def __next__(self) -> int:
+        if self.current >= self.end:
+            raise StopIteration
+        val: int = self.current
+        self.current += 1
+        return val
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Self-iterator: no separate getiter handler
+        assert "test_Counter_getiter" not in result
+        assert "test_Counter_iternext" in result
+        # Should register iter slot with iternext (self-iterator pattern)
+        assert "iter, test_Counter_iternext" in result
+        assert "MP_TYPE_FLAG_ITER_IS_ITERNEXT" in result
+
+
+class TestClassTypedLocalVarAccess:
+    """Tests for class-typed local variable attribute access."""
+
+    def test_local_var_attr_access_in_method(self):
+        """Accessing attribute on class-typed local var in method should use struct access."""
+        source = '''
+class Number:
+    value: int
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __lt__(self, other: Number) -> bool:
+        o: Number = other
+        return self.value < o.value
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should cast o to struct type and access .value
+        assert "test_Number_obj_t *)MP_OBJ_TO_PTR(o))" in result
+        # Should NOT produce mp_const_none for o.value
+        assert "mp_obj_get_int(mp_const_none)" not in result
+
+    def test_local_var_attr_access_string_annotation(self):
+        """String annotation for class type should also work."""
+        source = '''
+class Number:
+    value: int
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def compare(self, other: "Number") -> bool:
+        o: "Number" = other
+        return self.value < o.value
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "test_Number_obj_t *)MP_OBJ_TO_PTR(o))" in result
+
+    def test_param_attr_access_still_works(self):
+        """Direct parameter attribute access should continue working."""
+        source = '''
+class Number:
+    value: int
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def add(self, other: Number) -> int:
+        return self.value + other.value
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Parameter access should use ParamAttrIR pattern
+        assert "MP_OBJ_TO_PTR(other))" in result
+
+    def test_all_comparison_operators_struct_access(self):
+        """All comparison methods should properly access other's fields via struct."""
+        source = '''
+class Number:
+    value: int
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __lt__(self, other: Number) -> bool:
+        o: Number = other
+        return self.value < o.value
+
+    def __le__(self, other: Number) -> bool:
+        o: Number = other
+        return self.value <= o.value
+
+    def __gt__(self, other: Number) -> bool:
+        o: Number = other
+        return self.value > o.value
+
+    def __ge__(self, other: Number) -> bool:
+        o: Number = other
+        return self.value >= o.value
+
+    def __ne__(self, other: object) -> bool:
+        o: Number = other
+        return self.value != o.value
+'''
+        result = compile_source(source, "test", type_check=False)
+        # All methods should have struct access for 'o'
+        assert result.count("MP_OBJ_TO_PTR(o))") >= 5  # one per comparison method
+        # None of them should fall back to mp_const_none
+        assert "mp_obj_get_int(mp_const_none)" not in result

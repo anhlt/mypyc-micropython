@@ -623,6 +623,53 @@ t("Bench public", pm.Benchmark(5).run_public(10), "95")
 t("Bench private", pm.Benchmark(5).run_private(10), "95")
 t("Bench eq", pm.Benchmark(3).run_public(100) == pm.Benchmark(3).run_private(100), "True")
 
+
+# ---- special_methods ----
+suite("special_methods")
+import special_methods as sm
+
+# Number: comparison operators
+n3 = sm.Number(3)
+n5 = sm.Number(5)
+n3b = sm.Number(3)
+t("Number eq T", n3 == n3b, "True")
+t("Number eq F", n3 == n5, "False")
+t("Number ne T", n3 != n5, "True")
+t("Number ne F", n3 != n3b, "False")
+t("Number lt T", n3 < n5, "True")
+t("Number lt F", n5 < n3, "False")
+t("Number le T eq", n3 <= n3b, "True")
+t("Number le T lt", n3 <= n5, "True")
+t("Number le F", n5 <= n3, "False")
+t("Number gt T", n5 > n3, "True")
+t("Number gt F", n3 > n5, "False")
+t("Number ge T eq", n3 >= n3b, "True")
+t("Number ge T gt", n5 >= n3, "True")
+t("Number ge F", n3 >= n5, "False")
+# Number: hash
+t("Number hash", hash(sm.Number(42)), "42")
+t("Number hash 0", hash(sm.Number(0)), "0")
+# Number: get_value
+t("Number get_value", sm.Number(7).get_value(), "7")
+# Counter: iterator protocol
+c = sm.Counter(5)
+vals = []
+for v in c:
+    vals.append(v)
+t("Counter iter", str(vals), "[0, 1, 2, 3, 4]")
+t("Counter current after", c.get_current(), "5")
+# Counter: empty
+c0 = sm.Counter(0)
+vals0 = []
+for v in c0:
+    vals0.append(v)
+t("Counter empty", str(vals0), "[]")
+# Free functions
+t("compare lt", sm.compare_numbers(3, 5), "-1")
+t("compare gt", sm.compare_numbers(5, 3), "1")
+t("compare eq", sm.compare_numbers(4, 4), "0")
+t("sum_counter", sm.sum_counter(5), "10")
+
 # ---- summary ----
 gc.collect()
 print("@D:" + str(_total) + "|" + str(_passed) + "|" + str(_failed))

@@ -678,6 +678,19 @@ class IRBuilder:
             locals_.append(var_name)
         self._var_types[var_name] = c_type
 
+        # Track class-typed local variables for attribute access
+        if stmt.annotation:
+            type_name = None
+            if isinstance(stmt.annotation, ast.Name):
+                type_name = stmt.annotation.id
+            elif isinstance(stmt.annotation, ast.Constant) and isinstance(
+                stmt.annotation.value, str
+            ):
+                # Handle string annotations like "ClassName"
+                type_name = stmt.annotation.value
+            if type_name and type_name in self._known_classes:
+                self._class_typed_params[var_name] = type_name
+
         value: ValueIR | None = None
         prelude: list = []
         if stmt.value is not None:
@@ -1691,6 +1704,10 @@ class IRBuilder:
         if base_name and base_name in self._known_classes:
             class_ir.base = self._known_classes[base_name]
 
+        # Register in known classes BEFORE parsing body
+        # so that methods can recognize class-typed local variables
+        self._known_classes[class_name] = class_ir
+
         # Parse class body
         self._parse_class_body(node, class_ir)
 
@@ -1703,9 +1720,6 @@ class IRBuilder:
 
         if is_dataclass and dataclass_info:
             dataclass_info.fields = list(class_ir.fields)
-
-        # Register in known classes
-        self._known_classes[class_name] = class_ir
 
         return class_ir
 
@@ -1891,6 +1905,22 @@ class IRBuilder:
             class_ir.has_str = True
         elif method_name == "__eq__":
             class_ir.has_eq = True
+        elif method_name == "__ne__":
+            class_ir.has_ne = True
+        elif method_name == "__lt__":
+            class_ir.has_lt = True
+        elif method_name == "__le__":
+            class_ir.has_le = True
+        elif method_name == "__gt__":
+            class_ir.has_gt = True
+        elif method_name == "__ge__":
+            class_ir.has_ge = True
+        elif method_name == "__hash__":
+            class_ir.has_hash = True
+        elif method_name == "__iter__":
+            class_ir.has_iter = True
+        elif method_name == "__next__":
+            class_ir.has_next = True
 
     def build_method_body(
         self, method_ir: MethodIR, class_ir: ClassIR, native: bool = False
@@ -1917,6 +1947,24 @@ class IRBuilder:
         # Set up parameter types
         for param_name, param_type in method_ir.params:
             self._var_types[param_name] = param_type.to_c_type_str()
+
+        # Track class-typed parameters for attribute access
+        self._class_typed_params = {}
+        method_args = method_ir.body_ast.args.args
+        if not method_ir.is_static and not method_ir.is_classmethod:
+            method_args = method_args[1:]  # Skip self
+        for arg in method_args:
+            if arg.annotation:
+                type_name = None
+                if isinstance(arg.annotation, ast.Name):
+                    type_name = arg.annotation.id
+                elif isinstance(arg.annotation, ast.Constant) and isinstance(
+                    arg.annotation.value, str
+                ):
+                    type_name = arg.annotation.value
+                if type_name and type_name in self._known_classes:
+                    self._class_typed_params[arg.arg] = type_name
+
 
         # Track self and params as locals
         local_vars = [p[0] for p in method_ir.params]
@@ -1966,6 +2014,8 @@ class IRBuilder:
             return ContinueIR()
         elif isinstance(stmt, ast.Pass):
             return PassIR()
+        elif isinstance(stmt, ast.Raise):
+            return self._build_method_raise(stmt, locals_, class_ir, native)
         return None
 
     def _build_method_return(
@@ -1976,6 +2026,33 @@ class IRBuilder:
             return ReturnIR(value=None, prelude=[])
         value, prelude = self._build_method_expr(stmt.value, locals_, class_ir, native)
         return ReturnIR(value=value, prelude=prelude)
+
+    def _build_method_raise(
+        self, stmt: ast.Raise, locals_: list[str], class_ir: ClassIR, native: bool
+    ) -> RaiseIR:
+        """Build raise statement in method context."""
+        if stmt.exc is None:
+            return RaiseIR(is_reraise=True)
+
+        exc_type: str | None = None
+        exc_msg: ValueIR | None = None
+        prelude: list = []
+
+        if isinstance(stmt.exc, ast.Call):
+            if isinstance(stmt.exc.func, ast.Name):
+                exc_type = stmt.exc.func.id
+            elif isinstance(stmt.exc.func, ast.Attribute):
+                exc_type = stmt.exc.func.attr
+
+            if stmt.exc.args:
+                exc_msg, prelude = self._build_method_expr(
+                    stmt.exc.args[0], locals_, class_ir, native
+                )
+        elif isinstance(stmt.exc, ast.Name):
+            exc_type = stmt.exc.id
+
+        return RaiseIR(exc_type=exc_type, exc_msg=exc_msg, prelude=prelude)
+
 
     def _build_method_assign(
         self, stmt: ast.Assign, locals_: list[str], class_ir: ClassIR, native: bool
@@ -2064,7 +2141,20 @@ class IRBuilder:
         is_new = var_name not in locals_
         if is_new:
             locals_.append(var_name)
-            self._var_types[var_name] = c_type
+        self._var_types[var_name] = c_type
+
+        # Track class-typed local variables for attribute access
+        if stmt.annotation:
+            type_name = None
+            if isinstance(stmt.annotation, ast.Name):
+                type_name = stmt.annotation.id
+            elif isinstance(stmt.annotation, ast.Constant) and isinstance(
+                stmt.annotation.value, str
+            ):
+                # Handle string annotations like "ClassName"
+                type_name = stmt.annotation.value
+            if type_name and type_name in self._known_classes:
+                self._class_typed_params[var_name] = type_name
 
         return AnnAssignIR(
             target=var_name,
