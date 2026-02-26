@@ -93,3 +93,28 @@ class Benchmark:
         for i in range(n):
             total += self.__private_add(i)
         return total
+
+
+# -- Benchmark: wrapper overhead when public calls private vs public ----------
+# Both call_private and call_public are themselves public (have MP wrappers).
+# call_private internally calls __compute (private, direct C only).
+# call_public internally calls compute_public (public, has its own wrapper too).
+# When called externally from REPL, both go through their own MP wrapper first,
+# then the internal call is a direct native C call in both cases.
+class CallBench:
+    value: int
+
+    def __init__(self, v: int) -> None:
+        self.value = v
+
+    def __compute(self, x: int) -> int:
+        return self.value + x * x
+
+    def compute_public(self, x: int) -> int:
+        return self.value + x * x
+
+    def call_private(self, x: int) -> int:
+        return self.__compute(x)
+
+    def call_public(self, x: int) -> int:
+        return self.compute_public(x)

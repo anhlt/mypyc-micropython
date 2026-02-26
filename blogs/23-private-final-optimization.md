@@ -8,6 +8,13 @@
 
 1. [Part 1: Compiler Theory](#part-1-compiler-theory)
 2. [Part 2: C Background](#part-2-c-background)
+   - [2.1 Vtables are function pointer tables](#21-vtables-are-function-pointer-tables)
+   - [2.2 Native functions vs MP wrapper functions](#22-native-functions-vs-mp-wrapper-functions)
+   - [2.3 The Two Worlds: Native Code vs MicroPython Runtime](#23-the-two-worlds-native-code-vs-micropython-runtime)
+   - [2.4 Boxing and unboxing overhead](#24-boxing-and-unboxing-overhead)
+   - [2.5 What `static` means in C](#25-what-static-means-in-c)
+   - [2.6 What `MP_DEFINE_CONST_FUN_OBJ` does](#26-what-mp_define_const_fun_obj-does)
+   - [2.7 What `locals_dict` is](#27-what-locals_dict-is)
 3. [Part 3: Implementation](#part-3-implementation)
 4. [Benchmarks](#benchmarks)
 5. [Device Testing](#device-testing)
@@ -94,9 +101,93 @@ When this compiler emits C, it often emits two layers for a method:
 - a typed native function, for calls inside compiled code
 - a MicroPython wrapper, so the runtime can call it with `mp_obj_t` arguments
 
+Section 2.3 is the key mental model for why these two layers exist, and which one gets called when.
+
+## 2.3 The Two Worlds: Native Code vs MicroPython Runtime
+
+The crucial insight is that every public method lives in two different worlds.
+
+When you write `def add(self, x): ...` and it is public, the compiler generates two C functions:
+
+- a typed `_native` function that does the real work
+- an `_mp` wrapper that exists only to connect the MicroPython runtime to that native function
+
 The wrapper exists because MicroPython is dynamically typed and represents values as `mp_obj_t`. The wrapper's job is to convert between "Python objects" and "native C values".
 
-## 2.3 Boxing and unboxing overhead
+Here is the architecture in one picture:
+
+```
+For a public method "add":
+
+  MicroPython Runtime World          │    Compiled Native World
+  (REPL, dir(), getattr())          │    (compiled C code calling C code)
+                                     │
+  locals_dict:                       │
+    MP_QSTR_add → add_obj           │
+                    │                │
+                    ▼                │
+  add_mp(mp_obj_t self, mp_obj_t x) │
+    │  unbox: self = MP_OBJ_TO_PTR  │
+    │  unbox: x = mp_obj_get_int    │
+    ▼                                │
+  add_native(self, x)  ◄────────────┼──── other_native(self, x) calls directly
+    │                                │    (no wrapper, no boxing)
+    ▼                                │
+  box: mp_obj_new_int(result)       │
+    │                                │
+    ▼                                │
+  return to REPL                     │
+```
+
+Concrete proof, a class where `double_add` calls `add`, both public:
+
+```c
+// The native function (THE REAL WORK)
+static mp_int_t Calc_add_native(Calc_obj_t *self, mp_int_t x) {
+    return (self->value + x);
+}
+
+// The MP wrapper (BRIDGE TO RUNTIME — only called by REPL/runtime)
+static mp_obj_t Calc_add_mp(mp_obj_t self_in, mp_obj_t arg0_obj) {
+    Calc_obj_t *self = MP_OBJ_TO_PTR(self_in);     // unbox self
+    mp_int_t x = mp_obj_get_int(arg0_obj);          // unbox x
+    return mp_obj_new_int(Calc_add_native(self, x)); // call native, box result
+}
+
+// double_add calls add — BOTH public — but calls _native directly!
+static mp_int_t Calc_double_add_native(Calc_obj_t *self, mp_int_t x) {
+    return (Calc_add_native(self, x) + Calc_add_native(self, x));
+}
+//         ^^^^^^^^^^^^^^^^^^^^^^^^
+//         Direct C call to _native. NOT _mp. NO boxing/unboxing.
+```
+
+This explains the performance story:
+
+- Boxing and unboxing happens exactly once, at the boundary between the runtime and native code.
+- Inside compiled code, everything stays as native C types.
+- Method-to-method calls inside compiled code are typed C function calls. No wrapper, no dict lookup, no boxing.
+
+How the REPL finds and calls a method:
+
+- REPL evaluates `c.add`, runtime calls `mp_load_attr(c, MP_QSTR_add)`, looks in `locals_dict`, finds `add_obj`.
+- REPL evaluates `c.add(42)`, runtime calls `mp_call_function_2(add_obj, self, 42_boxed)`, `add_obj` calls `add_mp`, wrapper unboxes args, calls `add_native`, boxes result, returns to the REPL.
+
+Once you see the two worlds, what "private removes" is obvious:
+
+```
+__compute (private):         add (public):
+  _native function only       _native function
+                              _mp wrapper
+                              MP_DEFINE_CONST_FUN_OBJ
+                              vtable slot
+                              locals_dict entry
+
+  REPL can find it? NO       REPL can find it? YES
+  Compiled code calls? _native   Compiled code calls? _native (same!)
+```
+
+## 2.4 Boxing and unboxing overhead
 
 "Boxing" means turning a C value into an `mp_obj_t`, usually by allocating or tagging it. "Unboxing" means extracting the C value back out.
 
@@ -109,7 +200,7 @@ return mp_obj_new_int(result);            // box
 
 Those conversions are pure overhead when the call is internal to compiled code, because the native types are already known.
 
-## 2.4 What `static` means in C
+## 2.5 What `static` means in C
 
 At file scope, `static` gives internal linkage. The symbol is not exported to the linker as a public name for other translation units.
 
@@ -118,7 +209,7 @@ For this project, `static` is also a statement of intent:
 - `_native` methods are typically `static` because they are internal implementation details
 - MP wrappers and registration objects are also often `static`, but they are still reachable through MicroPython's type tables
 
-## 2.5 What `MP_DEFINE_CONST_FUN_OBJ` does
+## 2.6 What `MP_DEFINE_CONST_FUN_OBJ` does
 
 MicroPython represents callable functions as objects. A C function becomes a MicroPython callable by wrapping it in a function object.
 
@@ -135,7 +226,7 @@ Conceptually:
 
 The object is what gets placed into the type's `locals_dict` so `obj.method(...)` can be resolved and invoked from the runtime.
 
-## 2.6 What `locals_dict` is
+## 2.7 What `locals_dict` is
 
 Every generated type has a dictionary of attributes it exposes to the runtime. That is the type's `locals_dict`.
 
@@ -542,7 +633,7 @@ This explains why Tier 1 matters even though internal performance does not chang
   Speedup (native vs vanilla): 55.9x
 ```
 
-To understand why, look at the generated C for both call paths side by side:
+To understand why, look at the generated C for both call paths side by side. This is the "two worlds" boundary from Section 2.3 in action.
 
 ```c
 // run_public_native calls public_add:
