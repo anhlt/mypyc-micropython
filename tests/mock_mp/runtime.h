@@ -1244,7 +1244,7 @@ static int mp_mock_print_strn(void *data, const char *str, size_t len) {
     return (int)fwrite(str, 1, len, stdout);
 }
 
-static mp_print_t mp_plat_print = { NULL, mp_mock_print_strn };
+static mp_print_t mp_plat_print __attribute__((unused)) = { NULL, mp_mock_print_strn };
 
 static inline void mp_printf(const mp_print_t *print, const char *fmt, ...) {
     char buf[1024];
