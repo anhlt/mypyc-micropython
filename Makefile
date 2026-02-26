@@ -131,17 +131,17 @@ compile-all:
 	@echo "Cleaning old usermod directories..."
 	@rm -rf $(MODULES_DIR)/usermod_*
 	@rm -f $(MODULES_DIR)/micropython.cmake
-	@echo "Compiling all examples..."
-	@for f in examples/*.py; do \
-		MOD_NAME=$$(basename "$$f" .py); \
-		echo "Compiling $$f -> modules/usermod_$$MOD_NAME/"; \
-		mpy-compile "$$f" -o $(MODULES_DIR)/usermod_$$MOD_NAME -v || exit 1; \
-	done
+	@echo "Compiling all examples in parallel..."
+	@printf '%s\n' examples/*.py | xargs -P $$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4) -n1 sh -c '\
+		MOD_NAME=$$(basename "$$1" .py); \
+		echo "Compiling $$1 -> modules/usermod_$$MOD_NAME/"; \
+		mpy-compile "$$1" -o modules/usermod_$$MOD_NAME \
+	' _
 	@for d in examples/*/; do \
 		if [ -f "$${d}__init__.py" ]; then \
 			PKG_NAME=$$(basename "$$d"); \
 			echo "Compiling package $$d -> modules/usermod_$$PKG_NAME/"; \
-			mpy-compile "$$d" -o $(MODULES_DIR)/usermod_$$PKG_NAME -v || exit 1; \
+			mpy-compile "$$d" -o $(MODULES_DIR)/usermod_$$PKG_NAME || exit 1; \
 		fi; \
 	done
 	@echo ""
@@ -149,12 +149,12 @@ compile-all:
 	@echo "# Auto-generated - include all compiled modules" > $(MODULES_DIR)/micropython.cmake
 	@for f in examples/*.py; do \
 		MOD_NAME=$$(basename "$$f" .py); \
-		echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_$$MOD_NAME/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
+		echo "include(\$$\{CMAKE_CURRENT_LIST_DIR\}/usermod_$$MOD_NAME/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
 	done
 	@for d in examples/*/; do \
 		if [ -f "$${d}__init__.py" ]; then \
 			PKG_NAME=$$(basename "$$d"); \
-			echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_$$PKG_NAME/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
+			echo "include(\$$\{CMAKE_CURRENT_LIST_DIR\}/usermod_$$PKG_NAME/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
 		fi; \
 	done
 	@echo "Done! Ready to build."
