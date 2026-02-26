@@ -155,3 +155,26 @@ def sensor_summary(s: Sensor) -> int:
     """Access fields across inheritance: id (Entity) + reading_count (Sensor)."""
     rc: int = s.reading_count()
     return s._id + rc
+
+
+# -- Test classes for __str__/__repr__ print handler coverage ----------------
+class BothStrRepr:
+    """Class with both __str__ and __repr__."""
+    num: int
+
+    def __init__(self, n: int) -> None:
+        self.num = n
+
+    def __str__(self) -> str:
+        return "str:" + str(self.num)
+
+    def __repr__(self) -> str:
+        return "repr:" + str(self.num)
+
+
+class NeitherStrRepr:
+    """Class with neither __str__ nor __repr__ - uses default."""
+    num: int
+
+    def __init__(self, n: int) -> None:
+        self.num = n

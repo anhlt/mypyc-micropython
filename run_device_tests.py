@@ -16,15 +16,15 @@ def t(name, got, expected):
     sg = str(got)
     if expected in sg:
         _passed += 1
+        print("  OK: " + name)
     else:
         _failed += 1
-        print("FAIL:" + name + "|got:" + sg[:200])
+        print("FAIL: " + name + " | got: " + sg[:100])
 
 
 def suite(name):
     gc.collect()
     print("@S:" + name)
-
 
 # ---- factorial ----
 suite("factorial")
@@ -541,11 +541,19 @@ ss6 = cl.Sensor("t", 10, cl.Location(0, 0))
 ss6.record(1, 1.0)
 ss6.record(2, 2.0)
 t("sensor_summary", cl.sensor_summary(ss6), "12")
-# __repr__ and __str__
+# __repr__ and __str__ - all 4 cases
+# Case 1: __repr__ only (Entity) - str() falls back to __repr__
 t("Entity repr", repr(cl.Entity("my_entity", 1)), "my_entity")
 t("Entity str fallback", str(cl.Entity("my_entity", 1)), "my_entity")
+# Case 2: __str__ only (Sensor) - repr() uses default
 t("Sensor str", str(cl.Sensor("my_sensor", 1, cl.Location(0, 0))), "my_sensor")
-
+t("Sensor repr default", repr(cl.Sensor("x", 1, cl.Location(0, 0))), "<Sensor object>")
+# Case 3: both __str__ and __repr__ (BothStrRepr)
+t("BothStrRepr str", str(cl.BothStrRepr(42)), "str:42")
+t("BothStrRepr repr", repr(cl.BothStrRepr(42)), "repr:42")
+# Case 4: neither (NeitherStrRepr) - both use default
+t("NeitherStrRepr str", str(cl.NeitherStrRepr(1)), "<NeitherStrRepr>")
+t("NeitherStrRepr repr", repr(cl.NeitherStrRepr(1)), "<NeitherStrRepr>")
 # ---- math_ops ----
 suite("math_ops")
 import math_ops

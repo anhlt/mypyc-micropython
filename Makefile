@@ -177,19 +177,31 @@ build: check-env
 
 flash: check-env
 	@echo "Flashing firmware to $(PORT)..."
-	PATH="/usr/bin:$$PATH" bash -c '. $(ESP_IDF_DIR)/export.sh && \
-		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) PORT=$(PORT) deploy'
+	@bash -c 'source $(ESP_IDF_DIR)/export.sh 2>/dev/null && \
+		cd $(MP_PORT_DIR) && \
+		idf.py -D MICROPY_BOARD=$(BOARD) \
+			-D MICROPY_BOARD_DIR="$$(pwd)/boards/$(BOARD)" \
+			-B build-$(BOARD) \
+			-p $(PORT) flash'
 
 erase: check-env
 	@echo "Erasing flash..."
-	PATH="/usr/bin:$$PATH" bash -c '. $(ESP_IDF_DIR)/export.sh && \
-		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) PORT=$(PORT) erase'
+	@bash -c 'source $(ESP_IDF_DIR)/export.sh 2>/dev/null && \
+		cd $(MP_PORT_DIR) && \
+		idf.py -D MICROPY_BOARD=$(BOARD) \
+			-D MICROPY_BOARD_DIR="$$(pwd)/boards/$(BOARD)" \
+			-B build-$(BOARD) \
+			-p $(PORT) erase_flash'
 
 monitor: check-env
 	@echo "Opening serial monitor on $(PORT)..."
 	@echo "(Press Ctrl+] to exit)"
-	PATH="/usr/bin:$$PATH" bash -c '. $(ESP_IDF_DIR)/export.sh && \
-		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) PORT=$(PORT) monitor'
+	@bash -c 'source $(ESP_IDF_DIR)/export.sh 2>/dev/null && \
+		cd $(MP_PORT_DIR) && \
+		idf.py -D MICROPY_BOARD=$(BOARD) \
+			-D MICROPY_BOARD_DIR="$$(pwd)/boards/$(BOARD)" \
+			-B build-$(BOARD) \
+			-p $(PORT) monitor'
 
 deploy: build flash
 	@sleep 2

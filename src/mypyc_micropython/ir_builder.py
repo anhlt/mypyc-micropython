@@ -2365,11 +2365,19 @@ class IRBuilder:
                 ast.RShift: ">>",
             }
             c_op = op_map.get(type(expr.op), "+")
-            result_type = (
-                IRType.FLOAT
-                if (left.ir_type == IRType.FLOAT or right.ir_type == IRType.FLOAT)
-                else IRType.INT
-            )
+            # Determine result type: OBJ if either operand is OBJ (e.g., string concat)
+            if left.ir_type == IRType.OBJ or right.ir_type == IRType.OBJ:
+                # Subscript on OBJ still returns INT (list indexing)
+                left_is_subscript = isinstance(left, SubscriptIR)
+                right_is_subscript = isinstance(right, SubscriptIR)
+                if left_is_subscript or right_is_subscript:
+                    result_type = IRType.INT
+                else:
+                    result_type = IRType.OBJ
+            elif left.ir_type == IRType.FLOAT or right.ir_type == IRType.FLOAT:
+                result_type = IRType.FLOAT
+            else:
+                result_type = IRType.INT
             return BinOpIR(
                 ir_type=result_type,
                 left=left,
