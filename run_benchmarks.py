@@ -13,8 +13,10 @@ Reports timing comparison and speedup factor.
 """
 
 import argparse
+import os
 import subprocess
 import sys
+import time
 
 DEFAULT_PORT = "/dev/ttyACM0"
 PORT = DEFAULT_PORT
@@ -1057,640 +1059,6 @@ end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-    # List comprehension benchmarks
-    (
-        "listcomp squares(500) x100",
-        """
-import list_comprehension as lc
-import time
-start = time.ticks_us()
-for _ in range(100):
-    lc.squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def squares(n):
-    return [x * x for x in range(n)]
-start = time.ticks_us()
-for _ in range(100):
-    squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_init x1000",
-        """
-import super_calls
-import time
-start = time.ticks_us()
-for _ in range(1000):
-    super_calls.Dog("Rex", 5)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-start = time.ticks_us()
-for _ in range(1000):
-    Dog("Rex", 5)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "listcomp evens(1000) x100",
-        """
-import list_comprehension as lc
-import time
-start = time.ticks_us()
-for _ in range(100):
-    lc.evens(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def evens(n):
-    return [x for x in range(n) if x % 2 == 0]
-start = time.ticks_us()
-for _ in range(100):
-    evens(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_method x10000",
-        """
-import super_calls
-import time
-dog = super_calls.Dog("Rex", 5)
-start = time.ticks_us()
-for _ in range(10000):
-    dog.describe()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-start = time.ticks_us()
-for _ in range(10000):
-    dog = Dog("Rex", 5)
-    dog.describe()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-    # List comprehension benchmarks
-    (
-        "listcomp squares(500) x100",
-        """
-import list_comprehension as lc
-import time
-start = time.ticks_us()
-for _ in range(100):
-    lc.squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def squares(n):
-    return [x * x for x in range(n)]
-start = time.ticks_us()
-for _ in range(100):
-    squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_init x1000",
-        """
-import super_calls
-import time
-start = time.ticks_us()
-for _ in range(1000):
-    super_calls.Dog("Rex", 5)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-start = time.ticks_us()
-for _ in range(1000):
-    Dog("Rex", 5)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "listcomp evens(1000) x100",
-        """
-import list_comprehension as lc
-import time
-start = time.ticks_us()
-for _ in range(100):
-    lc.evens(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def evens(n):
-    return [x for x in range(n) if x % 2 == 0]
-start = time.ticks_us()
-for _ in range(100):
-    evens(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_method x10000",
-        """
-import super_calls
-import time
-dog = super_calls.Dog("Rex", 5)
-start = time.ticks_us()
-for _ in range(10000):
-    dog.describe()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-start = time.ticks_us()
-for _ in range(10000):
-    dog = Dog("Rex", 5)
-    dog.describe()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-    # List comprehension benchmarks
-    (
-        "listcomp squares(500) x100",
-        """
-import list_comprehension as lc
-import time
-start = time.ticks_us()
-for _ in range(100):
-    lc.squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def squares(n):
-    return [x * x for x in range(n)]
-start = time.ticks_us()
-for _ in range(100):
-    squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_init x1000",
-        """
-import super_calls
-import time
-start = time.ticks_us()
-for _ in range(1000):
-    super_calls.Dog("Rex", 5)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-start = time.ticks_us()
-for _ in range(1000):
-    Dog("Rex", 5)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "listcomp evens(1000) x100",
-        """
-import list_comprehension as lc
-import time
-start = time.ticks_us()
-for _ in range(100):
-    lc.evens(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def evens(n):
-    return [x for x in range(n) if x % 2 == 0]
-start = time.ticks_us()
-for _ in range(100):
-    evens(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_method x10000",
-        """
-import super_calls
-import time
-dog = super_calls.Dog("Rex", 5)
-start = time.ticks_us()
-for _ in range(10000):
-    dog.describe()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-start = time.ticks_us()
-for _ in range(10000):
-    dog = Dog("Rex", 5)
-    dog.describe()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-    # List comprehension benchmarks
-    (
-        "listcomp squares(500) x100",
-        """
-import list_comprehension as lc
-import time
-start = time.ticks_us()
-for _ in range(100):
-    lc.squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def squares(n):
-    return [x * x for x in range(n)]
-start = time.ticks_us()
-for _ in range(100):
-    squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_init x1000",
-        """
-import super_calls
-import time
-start = time.ticks_us()
-for _ in range(1000):
-    super_calls.Dog("Rex", 5)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-start = time.ticks_us()
-for _ in range(1000):
-    Dog("Rex", 5)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "listcomp evens(1000) x100",
-        """
-import list_comprehension as lc
-import time
-start = time.ticks_us()
-for _ in range(100):
-    lc.evens(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def evens(n):
-    return [x for x in range(n) if x % 2 == 0]
-start = time.ticks_us()
-for _ in range(100):
-    evens(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_method x10000",
-        """
-import super_calls
-import time
-dog = super_calls.Dog("Rex", 5)
-start = time.ticks_us()
-for _ in range(10000):
-    dog.describe()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-start = time.ticks_us()
-for _ in range(10000):
-    dog = Dog("Rex", 5)
-    dog.describe()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-    # List comprehension benchmarks
-    (
-        "listcomp squares(500) x100",
-        """
-import list_comprehension as lc
-import time
-start = time.ticks_us()
-for _ in range(100):
-    lc.squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def squares(n):
-    return [x * x for x in range(n)]
-start = time.ticks_us()
-for _ in range(100):
-    squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_init x1000",
-        """
-import super_calls
-import time
-start = time.ticks_us()
-for _ in range(1000):
-    super_calls.Dog("Rex", 5)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-start = time.ticks_us()
-for _ in range(1000):
-    Dog("Rex", 5)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "listcomp evens(1000) x100",
-        """
-import list_comprehension as lc
-import time
-start = time.ticks_us()
-for _ in range(100):
-    lc.evens(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def evens(n):
-    return [x for x in range(n) if x % 2 == 0]
-start = time.ticks_us()
-for _ in range(100):
-    evens(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_method x10000",
-        """
-import super_calls
-import time
-dog = super_calls.Dog("Rex", 5)
-start = time.ticks_us()
-for _ in range(10000):
-    dog.describe()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-start = time.ticks_us()
-for _ in range(10000):
-    dog = Dog("Rex", 5)
-    dog.describe()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
     (
         "super_3level x1000",
         """
@@ -1741,26 +1109,158 @@ end = time.ticks_us()
 print(time.ticks_diff(end, start))
 """,
     ),
+    (
+        "public_work(100) x100",
+        """
+import private_methods as pm
+import time
+b = pm.Benchmark(5)
+start = time.ticks_us()
+for _ in range(100):
+    b.run_public(100)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+class Benchmark:
+    def __init__(self, d):
+        self.data = d
+    def public_work(self, n):
+        total = 0
+        for i in range(n):
+            total += self.data + i
+        return total
+    def run_public(self, n):
+        return self.public_work(n)
+b = Benchmark(5)
+start = time.ticks_us()
+for _ in range(100):
+    b.run_public(100)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "private_work(100) x100",
+        """
+import private_methods as pm
+import time
+b = pm.Benchmark(5)
+start = time.ticks_us()
+for _ in range(100):
+    b.run_private(100)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+class Benchmark:
+    def __init__(self, d):
+        self.data = d
+    def __private_work(self, n):
+        total = 0
+        for i in range(n):
+            total += self.data + i
+        return total
+    def run_private(self, n):
+        return self.__private_work(n)
+b = Benchmark(5)
+start = time.ticks_us()
+for _ in range(100):
+    b.run_private(100)
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
+    (
+        "@final FastCounter x10000",
+        """
+import private_methods as pm
+import time
+fc = pm.FastCounter(1)
+start = time.ticks_us()
+for _ in range(10000):
+    fc.increment()
+    fc.reset()
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+        """
+import time
+class FastCounter:
+    def __init__(self, step):
+        self.count = 0
+        self.step = step
+    def increment(self):
+        self.count += self.step
+        return self.count
+    def reset(self):
+        self.count = 0
+fc = FastCounter(1)
+start = time.ticks_us()
+for _ in range(10000):
+    fc.increment()
+    fc.reset()
+end = time.ticks_us()
+print(time.ticks_diff(end, start))
+""",
+    ),
 ]
 
 
-def run_on_device(code: str, timeout: int = 60) -> tuple[bool, str]:
-    """Execute Python code on device via mpremote."""
-    try:
-        result = subprocess.run(
-            ["mpremote", "connect", PORT, "exec", code],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        if result.returncode == 0:
-            return True, result.stdout.strip()
-        else:
-            return False, result.stderr.strip()
-    except subprocess.TimeoutExpired:
-        return False, "Timeout"
-    except Exception as e:
-        return False, str(e)
+def _wait_for_port(port: str, max_retries: int = 20, interval: float = 0.3) -> bool:
+    """Wait until the serial port is not held by another process."""
+    for _ in range(max_retries):
+        try:
+            result = subprocess.run(
+                ["lsof", "-t", port],
+                capture_output=True, text=True, timeout=3,
+            )
+            if result.returncode != 0:
+                return True
+        except Exception:
+            pass
+        try:
+            fd = os.open(port, os.O_RDWR | os.O_NONBLOCK | os.O_NOCTTY)
+            os.close(fd)
+            return True
+        except OSError:
+            pass
+        time.sleep(interval)
+    return False
+
+
+def run_on_device(code: str, timeout: int = 60, max_retries: int = 3) -> tuple[bool, str]:
+    """Execute Python code on device via mpremote with automatic retry."""
+    last_error = ""
+    for attempt in range(max_retries):
+        _wait_for_port(PORT)
+        try:
+            result = subprocess.run(
+                ["mpremote", "connect", PORT, "exec", code],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if result.returncode == 0:
+                return True, result.stdout.strip()
+            last_error = result.stderr.strip()
+            retryable = (
+                "failed to access" in last_error
+                or "it may be in use" in last_error
+                or "could not enter raw repl" in last_error
+            )
+            if retryable:
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            return False, last_error
+        except subprocess.TimeoutExpired:
+            return False, "Timeout"
+        except Exception as e:
+            last_error = str(e)
+            time.sleep(0.5)
+    return False, last_error
 
 
 def run_benchmark(name: str, native_code: str, python_code: str) -> tuple[int, int] | None:

@@ -954,6 +954,11 @@ class IRBuilder:
             builtin_kind=None,
         ), all_preludes
 
+    @staticmethod
+    def _is_private_name(name: str) -> bool:
+        """Check if name is a private identifier (__name without trailing __)."""
+        return name.startswith("__") and not name.endswith("__")
+
     def _build_method_call(self, expr: ast.Call, locals_: list[str]) -> tuple[ValueIR, list]:
         if not isinstance(expr.func, ast.Attribute):
             return ConstIR(ir_type=IRType.OBJ, value=None), []
@@ -966,6 +971,12 @@ class IRBuilder:
 
         receiver, recv_prelude = self._build_expr(expr.func.value, locals_)
         method_name = expr.func.attr
+
+        # Reject external access to private (__method) members
+        if self._is_private_name(method_name):
+            raise TypeError(
+                f"Cannot access private method '{method_name}' from outside its class"
+            )
 
         args: list[ValueIR] = []
         all_preludes = list(recv_prelude)
@@ -1162,6 +1173,11 @@ class IRBuilder:
 
         attr_name = expr.attr
 
+        # Reject external access to private (__attr) members
+        if self._is_private_name(attr_name):
+            raise TypeError(
+                f"Cannot access private attribute '{attr_name}' from outside its class"
+            )
         if isinstance(expr.value, ast.Name):
             var_name = expr.value.id
             if var_name in self._class_typed_params:
@@ -1571,13 +1587,17 @@ class IRBuilder:
         class_name = node.name
         c_class_name = f"{self.c_name}_{sanitize_name(class_name)}"
 
-        # Check for dataclass decorator
+        # Check for dataclass and @final decorators
         is_dataclass = False
+        is_final_class = False
         dataclass_info = None
         for decorator in node.decorator_list:
-            if isinstance(decorator, ast.Name) and decorator.id == "dataclass":
-                is_dataclass = True
-                dataclass_info = DataclassInfo()
+            if isinstance(decorator, ast.Name):
+                if decorator.id == "dataclass":
+                    is_dataclass = True
+                    dataclass_info = DataclassInfo()
+                elif decorator.id == "final":
+                    is_final_class = True
             elif isinstance(decorator, ast.Call):
                 if isinstance(decorator.func, ast.Name) and decorator.func.id == "dataclass":
                     is_dataclass = True
@@ -1589,7 +1609,6 @@ class IRBuilder:
                             dataclass_info.eq = bool(kw.value.value)
                         elif kw.arg == "repr" and isinstance(kw.value, ast.Constant):
                             dataclass_info.repr_ = bool(kw.value.value)
-
         # Get base class name
         base_name = None
         if node.bases:
@@ -1605,6 +1624,7 @@ class IRBuilder:
             base_name=base_name,
             is_dataclass=is_dataclass,
             dataclass_info=dataclass_info,
+            is_final_class=is_final_class,
             ast_node=node,
         )
 
@@ -1614,6 +1634,13 @@ class IRBuilder:
 
         # Parse class body
         self._parse_class_body(node, class_ir)
+
+        # @final class: devirtualize ALL methods (no vtable needed)
+        if is_final_class:
+            class_ir.virtual_methods.clear()
+            for method_ir in class_ir.methods.values():
+                method_ir.is_virtual = False
+                method_ir.is_final = True
 
         if is_dataclass and dataclass_info:
             dataclass_info.fields = list(class_ir.fields)
@@ -1633,17 +1660,49 @@ class IRBuilder:
         for stmt in node.body:
             if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
                 field_name = stmt.target.id
+
+                # Detect Final[type] or bare Final annotation
+                is_final_field = False
+                inner_annotation = stmt.annotation
+                if isinstance(stmt.annotation, ast.Subscript):
+                    if (
+                        isinstance(stmt.annotation.value, ast.Name)
+                        and stmt.annotation.value.id == "Final"
+                    ):
+                        is_final_field = True
+                        inner_annotation = stmt.annotation.slice
+                elif isinstance(stmt.annotation, ast.Name) and stmt.annotation.id == "Final":
+                    is_final_field = True
+                    inner_annotation = None  # type inferred from value
+
                 if field_name in mypy_field_types:
                     py_type = self._mypy_type_to_py_type(mypy_field_types[field_name])
                     c_type = CType.from_python_type(py_type)
+                elif inner_annotation is not None:
+                    py_type = self._annotation_to_py_type(inner_annotation)
+                    c_type = CType.from_python_type(py_type)
                 else:
-                    py_type = self._annotation_to_py_type(stmt.annotation)
+                    # Bare Final without type -- infer from value
+                    py_type = "object"
+                    if stmt.value and isinstance(stmt.value, ast.Constant):
+                        val = stmt.value.value
+                        if isinstance(val, bool):
+                            py_type = "bool"
+                        elif isinstance(val, int):
+                            py_type = "int"
+                        elif isinstance(val, float):
+                            py_type = "float"
+                        elif isinstance(val, str):
+                            py_type = "str"
                     c_type = CType.from_python_type(py_type)
 
                 has_default = stmt.value is not None
                 default_value = None
+                final_value = None
                 if has_default and isinstance(stmt.value, ast.Constant):
                     default_value = stmt.value.value
+                    if is_final_field:
+                        final_value = stmt.value.value
 
                 field_ir = FieldIR(
                     name=field_name,
@@ -1652,6 +1711,8 @@ class IRBuilder:
                     has_default=has_default,
                     default_value=default_value,
                     default_ast=stmt.value,
+                    is_final=is_final_field,
+                    final_value=final_value,
                 )
                 class_ir.fields.append(field_ir)
 
@@ -1666,6 +1727,7 @@ class IRBuilder:
         is_static = False
         is_classmethod = False
         is_property = False
+        is_final = False
         property_name: str | None = None
         is_property_setter = False
         for decorator in node.decorator_list:
@@ -1676,6 +1738,8 @@ class IRBuilder:
                     is_classmethod = True
                 elif decorator.id == "property":
                     is_property = True
+                elif decorator.id == "final":
+                    is_final = True
             elif (
                 isinstance(decorator, ast.Attribute)
                 and decorator.attr == "setter"
@@ -1685,7 +1749,6 @@ class IRBuilder:
                 is_property_setter = True
                 property_name = decorator.value.id
                 c_method_name = f"{class_ir.c_name}_{sanitize_name(property_name)}_setter"
-
         mypy_method = self._get_mypy_method_type(class_ir.name, method_name)
         mypy_param_types: dict[str, str] = {}
         mypy_return_type: str | None = None
@@ -1720,9 +1783,13 @@ class IRBuilder:
                     return_type = CType.VOID
 
         is_special = method_name.startswith("__") and method_name.endswith("__")
+        is_private = method_name.startswith("__") and not method_name.endswith("__")
         is_virtual = (not is_static and not is_classmethod and not is_property) and (
             not is_special or method_name in ("__len__", "__getitem__", "__setitem__")
         )
+        # Private (__method) or @final methods cannot be overridden => not virtual
+        if is_private or is_final:
+            is_virtual = False
 
         method_ir = MethodIR(
             name=method_name,
@@ -1735,6 +1802,8 @@ class IRBuilder:
             is_classmethod=is_classmethod,
             is_property=is_property,
             is_special=is_special,
+            is_private=is_private,
+            is_final=is_final,
             docstring=ast.get_docstring(node),
         )
 
@@ -2416,6 +2485,14 @@ class IRBuilder:
             )
             method_name = expr.func.attr
 
+            # Allow self.__method() but reject other_obj.__method()
+            is_self_call = (
+                isinstance(expr.func.value, ast.Name) and expr.func.value.id == "self"
+            )
+            if self._is_private_name(method_name) and not is_self_call:
+                raise TypeError(
+                    f"Cannot access private method '{method_name}' from outside its class"
+                )
             args: list[ValueIR] = []
             for arg in expr.args:
                 val, _ = self._build_method_expr(arg, locals_, class_ir, native)

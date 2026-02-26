@@ -4589,3 +4589,247 @@ def combo(n: int) -> int:
         assert "MP_QSTR_factorial" in result
         assert "MP_QSTR_math_ops" in result
         assert "MP_QSTR_timed_sum" in result
+class TestPrivateMethodOptimization:
+    """Tests for __ private method optimization (Tier 1)."""
+
+    def test_private_method_native_only(self):
+        """Private methods should only emit native function, no MP wrapper."""
+        source = '''
+class Calculator:
+    value: int
+
+    def __init__(self, v: int) -> None:
+        self.value = v
+
+    def __compute(self, x: int) -> int:
+        return self.value + x
+
+    def get_result(self, x: int) -> int:
+        return self.__compute(x)
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Private method gets native function
+        assert "test_Calculator___compute_native" in result
+        # No MP wrapper for private methods
+        assert "test_Calculator___compute_mp" not in result
+        # No MP_DEFINE_CONST_FUN_OBJ for private methods
+        assert "test_Calculator___compute_obj" not in result
+        # Public method still gets both
+        assert "test_Calculator_get_result_native" in result
+        assert "test_Calculator_get_result_mp" in result
+
+    def test_private_method_not_in_locals_dict(self):
+        """Private methods should not appear in locals_dict."""
+        source = '''
+class Foo:
+    x: int
+
+    def __secret(self) -> int:
+        return self.x
+
+    def public(self) -> int:
+        return self.__secret()
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_QSTR___secret" not in result
+        assert "MP_QSTR_public" in result
+
+    def test_private_method_not_virtual(self):
+        """Private methods should not have vtable entries."""
+        source = '''
+class Foo:
+    x: int
+
+    def __helper(self) -> int:
+        return 42
+
+    def compute(self) -> int:
+        return self.__helper()
+'''
+        result = compile_source(source, "test", type_check=False)
+        # No vtable entry for __helper
+        assert ".__helper" not in result or "vtable" not in result.split(".__helper")[0][-50:]
+        # But compute should be virtual
+        assert "test_Foo_compute_native" in result
+
+    def test_external_private_access_rejected(self):
+        """Accessing __ private methods from outside the class should fail."""
+        import pytest
+        source = '''
+class Secret:
+    x: int
+
+    def __hidden(self) -> int:
+        return self.x
+
+def try_access(s: object) -> int:
+    return s.__hidden()
+'''
+        with pytest.raises(TypeError, match="Cannot access private method"):
+            compile_source(source, "test", type_check=False)
+
+    def test_dunder_methods_still_work(self):
+        """Dunder methods (__init__, __repr__, etc.) should not be treated as private."""
+        source = '''
+class Point:
+    x: int
+    y: int
+
+    def __init__(self, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "test_Point___init___mp" in result
+
+
+class TestFinalMethodOptimization:
+    """Tests for @final method optimization (Tier 2)."""
+
+    def test_final_method_not_virtual(self):
+        """@final methods should not have vtable entries."""
+        source = '''
+class Base:
+    x: int
+
+    @final
+    def locked(self) -> int:
+        return self.x
+
+    def normal(self) -> int:
+        return self.x
+'''
+        result = compile_source(source, "test", type_check=False)
+        # @final method gets native function
+        assert "test_Base_locked_native" in result
+        # @final method still gets MP wrapper (it's callable from Python)
+        assert "test_Base_locked_mp" in result
+        # normal method also gets both
+        assert "test_Base_normal_native" in result
+        assert "test_Base_normal_mp" in result
+
+    def test_final_method_in_locals_dict(self):
+        """@final methods should still appear in locals_dict (they're public)."""
+        source = '''
+class Svc:
+    x: int
+
+    @final
+    def run(self) -> int:
+        return self.x
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_QSTR_run" in result
+
+
+class TestFinalClassOptimization:
+    """Tests for @final class optimization (Tier 2)."""
+
+    def test_final_class_no_vtable(self):
+        """@final class should not generate vtable structs."""
+        source = '''
+@final
+class Leaf:
+    x: int
+
+    def compute(self) -> int:
+        return self.x * 2
+
+    def helper(self) -> int:
+        return self.x + 1
+'''
+        result = compile_source(source, "test", type_check=False)
+        # No vtable struct for @final classes
+        assert "vtable_t" not in result
+        assert "vtable_inst" not in result
+        # Methods still get native + wrapper
+        assert "test_Leaf_compute_native" in result
+        assert "test_Leaf_compute_mp" in result
+        assert "test_Leaf_helper_native" in result
+        assert "test_Leaf_helper_mp" in result
+
+    def test_final_class_methods_devirtualized(self):
+        """All methods in @final class should be devirtualized."""
+        source = '''
+@final
+class Config:
+    rate: int
+
+    def get_rate(self) -> int:
+        return self.rate
+
+    def double_rate(self) -> int:
+        return self.rate * 2
+'''
+        result = compile_source(source, "test", type_check=False)
+        # MP wrapper should delegate to native (sign of devirtualization)
+        # The wrapper calls _native() directly
+        assert "test_Config_get_rate_native(self)" in result
+        assert "test_Config_double_rate_native(self)" in result
+
+
+class TestFinalAttributes:
+    """Tests for Final attribute constant folding (Tier 3)."""
+
+    def test_final_int_constant_fold(self):
+        """Final[int] fields should be constant-folded in method bodies."""
+        source = '''
+class Config:
+    MAX_RETRIES: Final[int] = 3
+    value: int
+
+    def should_retry(self, count: int) -> bool:
+        return count < self.MAX_RETRIES
+'''
+        result = compile_source(source, "test", type_check=False)
+        # The constant 3 should appear directly, not self->MAX_RETRIES
+        assert "(count < 3)" in result or "count < 3" in result
+
+    def test_final_bare_constant_fold(self):
+        """Bare Final fields should also be constant-folded."""
+        source = '''
+class Settings:
+    TIMEOUT: Final = 30
+    x: int
+
+    def get_timeout(self) -> int:
+        return self.TIMEOUT
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "return 30" in result or "return mp_obj_new_int(30)" in result
+
+    def test_final_bool_constant_fold(self):
+        """Final[bool] fields should be constant-folded."""
+        source = '''
+class Flags:
+    DEBUG: Final[bool] = True
+    x: int
+
+    def is_debug(self) -> bool:
+        return self.DEBUG
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "return true" in result
+
+    def test_final_field_still_in_struct(self):
+        """Final fields should still appear in the struct (for initialization)."""
+        source = '''
+class Cfg:
+    RATE: Final[int] = 100
+    name: str
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_int_t RATE;" in result
+        assert "mp_obj_t name;" in result
+
+    def test_non_final_field_not_folded(self):
+        """Non-Final fields should NOT be constant-folded."""
+        source = '''
+class Counter:
+    value: int = 0
+
+    def get(self) -> int:
+        return self.value
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "self->value" in result

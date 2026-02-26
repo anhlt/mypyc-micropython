@@ -185,6 +185,8 @@ class FieldIR:
     default_value: Any = None  # Literal default value
     default_factory: str | None = None  # For dataclass field(default_factory=...)
     default_ast: ast.expr | None = None  # AST node for default value
+    is_final: bool = False  # typing.Final -- constant, cannot be reassigned
+    final_value: Any = None  # Resolved literal value for Final fields (for constant folding)
 
     def get_c_type_str(self) -> str:
         """Get the C type string for this field."""
@@ -206,6 +208,8 @@ class MethodIR:
     is_property: bool = False  # @property
     vtable_index: int = -1  # Index in vtable (if virtual)
     is_special: bool = False  # __init__, __repr__, etc.
+    is_private: bool = False  # __method (no trailing __) — class-internal only
+    is_final: bool = False  # @final decorator — cannot be overridden
     docstring: str | None = None
     max_temp: int = 0
 
@@ -293,6 +297,9 @@ class ClassIR:
     # Dataclass support
     is_dataclass: bool = False
     dataclass_info: DataclassInfo | None = None
+
+    # @final class -- cannot be subclassed, all methods devirtualized
+    is_final_class: bool = False
 
     # MicroPython slots to emit
     mp_slots: set[str] = field(default_factory=lambda: {"make_new", "attr"})

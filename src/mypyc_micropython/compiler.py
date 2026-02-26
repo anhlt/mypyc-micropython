@@ -304,10 +304,21 @@ def _compile_module_parts(
 
         for method_ir in class_ir.methods.values():
             method_emitter = MethodEmitter(method_ir, class_ir)
+
+            # Private (__method) methods: emit native-only, no MP wrapper.
+            # They are only called internally via direct C calls, so boxing/unboxing
+            # at the MicroPython boundary is unnecessary.
+            if method_ir.is_private:
+                native_body = ir_builder.build_method_body(method_ir, class_ir, native=True)
+                function_code.append(method_emitter.emit_native(native_body))
+                function_code.append("")
+                continue
+
             needs_native = (
                 method_ir.is_static
                 or method_ir.is_classmethod
                 or method_ir.is_property
+                or method_ir.is_final
                 or (method_ir.is_virtual and not method_ir.is_special)
             )
 
