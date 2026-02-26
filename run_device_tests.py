@@ -37,14 +37,17 @@ failed_tests: list[tuple[str, str]] = []
 RGB_LED_GPIO = 8
 
 
-def _wait_for_port(port: str, max_retries: int = 20, interval: float = 0.3) -> bool:
+def _wait_for_port(port: str, max_retries: int = 20, base_delay: float = 0.1, max_delay: float = 5.0) -> bool:
     """Wait until the serial port is not held by another process.
 
-    Uses two strategies:
+    Uses exponential backoff with two strategies:
     1. lsof to check if any process holds the port file
     2. Try opening the port directly as a fallback
+
+    Backoff schedule: base_delay * 2^attempt, capped at max_delay.
     """
     import os
+    import random
     for attempt in range(max_retries):
         # Strategy 1: lsof check
         try:
@@ -65,21 +68,47 @@ def _wait_for_port(port: str, max_retries: int = 20, interval: float = 0.3) -> b
         except OSError:
             pass  # Port busy
 
-        time.sleep(interval)
+        # Exponential backoff with jitter
+        delay = min(base_delay * (2 ** attempt), max_delay)
+        delay *= 0.5 + random.random()  # Add jitter: 50%-150% of delay
+        time.sleep(delay)
     return False
 
 
+def _check_port_lsof(port: str) -> bool:
+    """Check if any process is holding the serial port via lsof.
+
+    Returns True if port is free, False if busy.
+    """
+    try:
+        result = subprocess.run(
+            ["lsof", "-t", port],
+            capture_output=True, text=True, timeout=3,
+        )
+        return result.returncode != 0  # returncode != 0 means no process holds it
+    except Exception:
+        return True  # lsof unavailable, assume free
+
+
 def run_on_device(
-    code: str, port: str = "", timeout: int = 30, max_retries: int = 3,
+    code: str, port: str = "", timeout: int = 30, max_retries: int = 5,
+    base_delay: float = 0.5, max_delay: float = 10.0,
 ) -> tuple[bool, str]:
     """Execute Python code on device via mpremote with automatic retry.
 
-    Waits for port availability before each attempt. Retries on port
-    contention errors (common on macOS USB serial).
+    Uses exponential backoff with jitter on transient failures.
+    Checks lsof port availability before each attempt.
     """
+    import random
     device_port = port if port else PORT
     last_error = ""
     for attempt in range(max_retries):
+        # Check port is free before attempting connection
+        if not _check_port_lsof(device_port):
+            delay = min(base_delay * (2 ** attempt), max_delay)
+            delay *= 0.5 + random.random()
+            time.sleep(delay)
+            continue
         _wait_for_port(device_port)
         try:
             result = subprocess.run(
@@ -98,23 +127,33 @@ def run_on_device(
                 or "could not enter raw repl" in last_error
             )
             if retryable:
-                time.sleep(0.5 * (attempt + 1))  # Backoff
+                delay = min(base_delay * (2 ** attempt), max_delay)
+                delay *= 0.5 + random.random()  # Jitter
+                time.sleep(delay)
                 continue
             return False, last_error
         except subprocess.TimeoutExpired:
-            return False, "Timeout"
+            last_error = "Timeout"
+            delay = min(base_delay * (2 ** attempt), max_delay)
+            delay *= 0.5 + random.random()
+            time.sleep(delay)
         except Exception as e:
             last_error = str(e)
-            time.sleep(0.5)
+            delay = min(base_delay * (2 ** attempt), max_delay)
+            delay *= 0.5 + random.random()
+            time.sleep(delay)
     return False, last_error
 
 
 def led_rgb(r: int, g: int, b: int) -> None:
-    """Set the onboard WS2812 RGB LED to a specific color."""
+    """Set the onboard WS2812 RGB LED to a specific color.
+
+    Note: WS2812 uses GRB byte order, so we swap R and G in the tuple.
+    """
     code = (
         f"from machine import Pin; from neopixel import NeoPixel; "
         f"np = NeoPixel(Pin({RGB_LED_GPIO}, Pin.OUT), 1); "
-        f"np[0] = ({r}, {g}, {b}); np.write()"
+        f"np[0] = ({g}, {r}, {b}); np.write()"
     )
     run_on_device(code)
 
@@ -153,11 +192,15 @@ def test(name: str, code: str, expected: str | Callable[[str], bool]) -> None:
     sys.stdout.write(f"  {name}... ")
     sys.stdout.flush()
 
+    # Ensure port is free before running test
+    if not _check_port_lsof(PORT):
+        _wait_for_port(PORT)
+
     success, output = run_on_device(code)
 
     if not success:
         failed_tests.append((name, f"Execution failed: {output}"))
-        print(f"FAIL")
+        print("FAIL")
         print(f"    Error: {output[:80]}")
         return
 
@@ -171,7 +214,7 @@ def test(name: str, code: str, expected: str | Callable[[str], bool]) -> None:
         print("PASS")
     else:
         failed_tests.append((name, f"Expected: {expected}, Got: {output}"))
-        print(f"FAIL")
+        print("FAIL")
         print(f"    Expected: {expected}")
         print(f"    Got: {output[:80]}")
 

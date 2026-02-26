@@ -1209,9 +1209,17 @@ print(time.ticks_diff(end, start))
 ]
 
 
-def _wait_for_port(port: str, max_retries: int = 20, interval: float = 0.3) -> bool:
-    """Wait until the serial port is not held by another process."""
-    for _ in range(max_retries):
+def _wait_for_port(port: str, max_retries: int = 20, base_delay: float = 0.1, max_delay: float = 5.0) -> bool:
+    """Wait until the serial port is not held by another process.
+
+    Uses exponential backoff with two strategies:
+    1. lsof to check if any process holds the port file
+    2. Try opening the port directly as a fallback
+
+    Backoff schedule: base_delay * 2^attempt, capped at max_delay.
+    """
+    import random
+    for attempt in range(max_retries):
         try:
             result = subprocess.run(
                 ["lsof", "-t", port],
@@ -1227,14 +1235,44 @@ def _wait_for_port(port: str, max_retries: int = 20, interval: float = 0.3) -> b
             return True
         except OSError:
             pass
-        time.sleep(interval)
+        # Exponential backoff with jitter
+        delay = min(base_delay * (2 ** attempt), max_delay)
+        delay *= 0.5 + random.random()  # Add jitter: 50%-150% of delay
+        time.sleep(delay)
     return False
 
 
-def run_on_device(code: str, timeout: int = 60, max_retries: int = 3) -> tuple[bool, str]:
-    """Execute Python code on device via mpremote with automatic retry."""
+def _check_port_lsof(port: str) -> bool:
+    """Check if any process is holding the serial port via lsof.
+
+    Returns True if port is free, False if busy.
+    """
+    try:
+        result = subprocess.run(
+            ["lsof", "-t", port],
+            capture_output=True, text=True, timeout=3,
+        )
+        return result.returncode != 0
+    except Exception:
+        return True  # lsof unavailable, assume free
+
+
+def run_on_device(code: str, timeout: int = 60, max_retries: int = 5,
+                  base_delay: float = 0.5, max_delay: float = 10.0) -> tuple[bool, str]:
+    """Execute Python code on device via mpremote with automatic retry.
+
+    Uses exponential backoff with jitter on transient failures.
+    Checks lsof port availability before each attempt.
+    """
+    import random
     last_error = ""
     for attempt in range(max_retries):
+        # Check port is free before attempting connection
+        if not _check_port_lsof(PORT):
+            delay = min(base_delay * (2 ** attempt), max_delay)
+            delay *= 0.5 + random.random()
+            time.sleep(delay)
+            continue
         _wait_for_port(PORT)
         try:
             result = subprocess.run(
@@ -1252,19 +1290,29 @@ def run_on_device(code: str, timeout: int = 60, max_retries: int = 3) -> tuple[b
                 or "could not enter raw repl" in last_error
             )
             if retryable:
-                time.sleep(0.5 * (attempt + 1))
+                delay = min(base_delay * (2 ** attempt), max_delay)
+                delay *= 0.5 + random.random()  # Jitter
+                time.sleep(delay)
                 continue
             return False, last_error
         except subprocess.TimeoutExpired:
-            return False, "Timeout"
+            last_error = "Timeout"
+            delay = min(base_delay * (2 ** attempt), max_delay)
+            delay *= 0.5 + random.random()
+            time.sleep(delay)
         except Exception as e:
             last_error = str(e)
-            time.sleep(0.5)
+            delay = min(base_delay * (2 ** attempt), max_delay)
+            delay *= 0.5 + random.random()
+            time.sleep(delay)
     return False, last_error
 
 
 def run_benchmark(name: str, native_code: str, python_code: str) -> tuple[int, int] | None:
     """Returns (native_us, python_us) or None on failure."""
+    # Ensure port is free before running benchmark
+    if not _check_port_lsof(PORT):
+        _wait_for_port(PORT)
     success, output = run_on_device(native_code)
     if not success:
         print(f"  Native FAILED: {output}")
@@ -1275,6 +1323,9 @@ def run_benchmark(name: str, native_code: str, python_code: str) -> tuple[int, i
         print(f"  Native parse error: {output}")
         return None
 
+    # Ensure port is free before running python benchmark
+    if not _check_port_lsof(PORT):
+        _wait_for_port(PORT)
     success, output = run_on_device(python_code)
     if not success:
         print(f"  Python FAILED: {output}")
