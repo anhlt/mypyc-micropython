@@ -686,6 +686,17 @@ for v in g.squares(5):
     sq.append(v)
 t("squares", str(sq), "[0, 1, 4, 9, 16]")
 
+# Test new generator patterns: for-iter and range with start
+items_result = []
+for v in g.iter_items([10, 20, 30]):
+    items_result.append(v)
+t("iter_items", str(items_result), "[10, 20, 30]")
+
+range_start_result = []
+for v in g.range_with_start(5):
+    range_start_result.append(v)
+t("range_with_start", str(range_start_result), "[1, 2, 3, 4]")
+
 # ---- summary ----
 gc.collect()
 print("@D:" + str(_total) + "|" + str(_passed) + "|" + str(_failed))
