@@ -1,9 +1,3 @@
-"""LVGL v9 Screen Operations Compatibility Shim
-
-Provides minimal runtime compatibility for LVGL screen operations.
-Pinned to LVGL v9 API names.
-"""
-
 import lvgl
 
 

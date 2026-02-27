@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from ui_widgets import Container, Label, Screen
 
 

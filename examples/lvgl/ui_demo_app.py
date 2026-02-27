@@ -1,10 +1,8 @@
-from __future__ import annotations
-
 from ui_screen_tree import ScreenManager, ScreenNode
 from ui_screens import build_about_screen, build_home_screen, build_settings_screen
 
 
-def build_demo_tree() -> ScreenNode:
+def build_demo_tree():
     return ScreenNode(
         "home",
         build_home_screen,
@@ -20,7 +18,7 @@ def build_demo_tree() -> ScreenNode:
     )
 
 
-def run_demo() -> ScreenManager:
+def run_demo():
     manager = ScreenManager(build_demo_tree())
     manager.start()
     manager.goto("settings")
