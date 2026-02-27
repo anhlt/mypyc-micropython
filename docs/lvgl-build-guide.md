@@ -23,6 +23,12 @@ Before using LVGL targets:
 3. `mpy-compile-c` is available in `PATH`
 4. Device is connected and port is known (`ls /dev/cu.usb*` on macOS)
 
+If you cloned this repository without submodules initialized:
+
+```bash
+git submodule update --init --recursive
+```
+
 Recommended environment setup:
 
 ```bash
@@ -43,6 +49,14 @@ After flashing, run a quick display smoke test:
 ```bash
 make test-lvgl PORT=/dev/cu.usbmodem101
 ```
+
+Run the UI navigation memory test:
+
+```bash
+make test-lvgl-ui PORT=/dev/cu.usbmodem101
+```
+
+This copies `examples/lvgl/ui_*.py` to the device root and runs `ui_device_nav_test.run()`.
 
 ## What `deploy-lvgl` Does
 
