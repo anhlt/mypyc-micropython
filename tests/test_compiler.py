@@ -4264,6 +4264,18 @@ def gen(n: int):
         assert "static mp_obj_t test_gen_gen_iternext" in result
         assert "MP_DEFINE_CONST_OBJ_TYPE" in result
         assert "MP_OBJ_STOP_ITERATION" in result
+    def test_generator_range_with_start_compiles(self):
+        source = """
+def gen(n: int):
+    for i in range(1, n):
+        yield i
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "typedef struct _test_gen_gen_t" in result
+        assert "static mp_obj_t test_gen_gen_iternext" in result
+        assert "self->i = 1" in result  # start value initialized
+
+
 
     def test_yield_from_raises_not_implemented(self):
         source = """
@@ -4275,21 +4287,26 @@ def gen(items: list):
         assert "yield from is not supported" in str(exc_info.value)
         assert "line 3" in str(exc_info.value)
 
-    def test_yield_in_non_range_for_raises_not_implemented(self):
-        source = """
+    def test_generator_for_iter_compiles(self):
+        """Test that for-iter (non-range) loops in generators compile successfully."""
+        source = '''
 def gen(items: list):
     for x in items:
         yield x
-"""
-        with pytest.raises(NotImplementedError) as exc_info:
-            compile_source(source, "test", type_check=False)
-        assert "yield in non-range for loops is not supported" in str(exc_info.value)
-        assert "line 4" in str(exc_info.value)
-
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Check generator struct has iterator field
+        assert "typedef struct _test_gen_gen_t" in result
+        assert "mp_obj_t iter_x;" in result  # iterator object field
+        assert "mp_obj_t x;" in result  # loop variable field
+        # Check iternext uses mp_getiter and mp_iternext
+        assert "mp_getiter" in result
+        assert "mp_iternext" in result
+        assert "MP_OBJ_STOP_ITERATION" in result
     def test_unsupported_generator_range_shape_raises_not_implemented(self):
         source = """
 def gen(n: int):
-    for i in range(1, n):
+    for i in range(0, n, 2):
         yield i
 """
         with pytest.raises(NotImplementedError) as exc_info:

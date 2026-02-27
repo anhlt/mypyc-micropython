@@ -243,19 +243,20 @@ class IRBuilder:
                 if first_yield is None:
                     continue
 
-                if not (
+                # Check if it's a range() call
+                is_range_call = (
                     isinstance(for_node.iter, ast.Call)
                     and isinstance(for_node.iter.func, ast.Name)
                     and for_node.iter.func.id == "range"
-                ):
-                    raise NotImplementedError(
-                        f"yield in non-range for loops is not supported (line {first_yield.lineno})"
-                    )
+                )
 
-                if not self._is_supported_generator_range_call(for_node.iter):
-                    raise NotImplementedError(
-                        f"unsupported generator range(...) loop is not supported (line {for_node.lineno})"
-                    )
+                if is_range_call:
+                    # Validate supported range(...) shapes for generators
+                    if not self._is_supported_generator_range_call(for_node.iter):
+                        raise NotImplementedError(
+                            f"unsupported generator range(...) loop is not supported (line {for_node.lineno})"
+                        )
+                # else: it's a for-iter loop over iterable, which is now allowed
 
         func_name = node.name
         c_func_name = f"{self.c_name}_{sanitize_name(func_name)}"
@@ -2833,11 +2834,11 @@ class IRBuilder:
         if len(args) == 1:
             return _is_int_name_or_int_const(args[0])
         if len(args) == 2:
-            if not (isinstance(args[0], ast.Constant) and args[0].value == 0):
-                return False
-            return _is_int_name_or_int_const(args[1])
+            # Allow range(start, end) where both are int/name
+            return _is_int_name_or_int_const(args[0]) and _is_int_name_or_int_const(args[1])
         if len(args) == 3:
-            if not (isinstance(args[0], ast.Constant) and args[0].value == 0):
+            # Allow range(start, end, step) only if step is constant 1
+            if not _is_int_name_or_int_const(args[0]):
                 return False
             if not _is_int_name_or_int_const(args[1]):
                 return False

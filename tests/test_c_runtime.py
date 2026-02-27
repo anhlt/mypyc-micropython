@@ -104,6 +104,63 @@ int main(void) {
     assert stdout.strip().splitlines() == ["3", "2", "1", "1", "0", "1", "4", "9", "16", "1"]
 
 
+def test_c_generator_for_iter_yields_list_items(compile_and_run):
+    """Test generator with for-iter (list iteration) pattern."""
+    source = '''
+def iter_items(items: list):
+    for x in items:
+        yield x
+
+
+def iter_range_start(n: int):
+    for i in range(1, n):
+        yield i
+'''
+    test_main_c = '''
+#include <stdio.h>
+
+static void drain_iter_items(void) {
+    mp_obj_t items[] = {
+        mp_obj_new_int(10),
+        mp_obj_new_int(20),
+        mp_obj_new_int(30),
+    };
+    mp_obj_t lst = mp_obj_new_list(3, items);
+    mp_obj_t gen = test_iter_items(lst);
+    for (;;) {
+        mp_obj_t item = test_iter_items_gen_iternext(gen);
+        if (item == MP_OBJ_STOP_ITERATION) {
+            break;
+        }
+        printf("%ld\\n", (long)mp_obj_get_int(item));
+    }
+    printf("%d\\n", test_iter_items_gen_iternext(gen) == MP_OBJ_STOP_ITERATION);
+}
+
+static void drain_range_start(mp_int_t n) {
+    mp_obj_t gen = test_iter_range_start(mp_obj_new_int(n));
+    for (;;) {
+        mp_obj_t item = test_iter_range_start_gen_iternext(gen);
+        if (item == MP_OBJ_STOP_ITERATION) {
+            break;
+        }
+        printf("%ld\\n", (long)mp_obj_get_int(item));
+    }
+    printf("%d\\n", test_iter_range_start_gen_iternext(gen) == MP_OBJ_STOP_ITERATION);
+}
+
+int main(void) {
+    drain_iter_items();
+    drain_range_start(5);
+    return 0;
+}
+'''
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    # iter_items: 10, 20, 30, then stop_iteration=1
+    # iter_range_start: 1, 2, 3, 4, then stop_iteration=1
+    assert stdout.strip().splitlines() == ["10", "20", "30", "1", "1", "2", "3", "4", "1"]
+
 def test_c_sum_list_returns_correct_sum(compile_and_run):
     source = """
 def sum_list(lst: list) -> int:

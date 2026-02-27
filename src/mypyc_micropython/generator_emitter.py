@@ -7,6 +7,7 @@ from .ir import (
     AugAssignIR,
     ConstIR,
     CType,
+    ForIterIR,
     ForRangeIR,
     FuncIR,
     NameIR,
@@ -200,6 +201,33 @@ class GeneratorEmitter(BaseEmitter):
         lines.append("    }")
         return lines
 
+    def _emit_for_iter(self, stmt: ForIterIR, native: bool = False) -> list[str]:
+        """Emit for-iter loop for generator (iterate over arbitrary iterable)."""
+        del native
+        lines: list[str] = []
+        lines.extend(self._emit_prelude(stmt.iter_prelude))
+
+        iter_expr, _ = self._emit_expr(stmt.iterable)
+        loop_var = sanitize_name(stmt.c_loop_var)
+        iter_field = f"iter_{loop_var}"
+
+        # Initialize iterator from iterable (NULL = let MicroPython manage buffer)
+        lines.append(f"    self->{iter_field} = mp_getiter({iter_expr}, NULL);")
+
+        # Loop: get next item, check for stop iteration
+        lines.append(f"    while ((self->{loop_var} = mp_iternext(self->{iter_field})) != MP_OBJ_STOP_ITERATION) {{")
+
+        self._loop_depth += 1
+        for s in stmt.body:
+            for line in self._emit_statement(s):
+                lines.append("    " + line)
+        self._loop_depth -= 1
+
+        # Add no-op after body to handle labels at end of block (C99 compatibility)
+        lines.append("        (void)0;")
+        lines.append("    }")
+        return lines
+
     def _emit_assign(self, stmt: AssignIR, native: bool = False) -> list[str]:
         del native
         lines = self._emit_prelude(stmt.prelude)
@@ -261,16 +289,34 @@ class GeneratorEmitter(BaseEmitter):
             safe = sanitize_name(name)
             if safe not in fields:
                 fields[safe] = c_type
+
+        # Add iterator fields for ForIterIR loops
+        def walk_for_iter_fields(stmts: list[StmtIR]) -> None:
+            for stmt in stmts:
+                if isinstance(stmt, ForIterIR):
+                    loop_var = sanitize_name(stmt.c_loop_var)
+                    # Iterator object field
+                    fields[f"iter_{loop_var}"] = CType.MP_OBJ_T
+                    # Loop variable field (current item)
+                    if loop_var not in fields:
+                        fields[loop_var] = CType.MP_OBJ_T
+                # Recurse into nested bodies
+                if hasattr(stmt, "body") and isinstance(getattr(stmt, "body"), list):
+                    walk_for_iter_fields(getattr(stmt, "body"))
+                if hasattr(stmt, "orelse") and isinstance(getattr(stmt, "orelse"), list):
+                    walk_for_iter_fields(getattr(stmt, "orelse"))
+
+        walk_for_iter_fields(self.func_ir.body)
         return fields
 
     def _is_supported_generator_for_range(self, stmt: ForRangeIR) -> bool:
-        if not (
-            stmt.step_is_constant
-            and stmt.step_value == 1
-            and isinstance(stmt.start, ConstIR)
-            and stmt.start.value == 0
-        ):
+        # Allow any constant step=1 range, with any start (const or name)
+        if not (stmt.step_is_constant and stmt.step_value == 1):
             return False
+        # start must be ConstIR or NameIR
+        if not isinstance(stmt.start, (ConstIR, NameIR)):
+            return False
+        # end must be ConstIR or NameIR
         return isinstance(stmt.end, (ConstIR, NameIR))
 
     def _is_param_field(self, field_name: str) -> bool:
