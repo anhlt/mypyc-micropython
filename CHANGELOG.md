@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Simple generator functions (`yield`) compiled into iterator objects with resumable `iternext` state machines
+  - `range(start, end)` patterns in generators (non-zero start value)
+  - `for x in items: yield x` pattern (iterate over arbitrary iterables in generators)
 - `__str__` and `__repr__` special method support for user-defined classes
   - User-defined `__repr__` wired to MicroPython `print` type slot; `str()` falls back to `__repr__` (Python semantics)
   - User-defined `__str__` dispatches on `PRINT_STR` vs `PRINT_REPR` kind

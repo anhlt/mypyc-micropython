@@ -452,6 +452,7 @@ class FuncIR:
     rtuple_types: dict[str, RTuple] = field(default_factory=dict)
     list_vars: dict[str, str | None] = field(default_factory=dict)
     max_temp: int = 0  # Highest temp counter used by IR builder
+    is_generator: bool = False
     # Default arguments: maps param index to DefaultArg
     defaults: dict[int, DefaultArg] = field(default_factory=dict)
     star_args: ParamIR | None = None
@@ -713,6 +714,13 @@ class ReturnIR(StmtIR):
     value: ValueIR | None = None
     # Prelude instructions that must execute before the return
     prelude: list[InstrIR] = field(default_factory=list)
+
+
+@dataclass
+class YieldIR(StmtIR):
+    value: ValueIR | None = None
+    prelude: list[InstrIR] = field(default_factory=list)
+    state_id: int = 0
 
 
 @dataclass
@@ -1055,6 +1063,7 @@ class SuperCallIR(ExprIR):
     # Preludes for args
     arg_preludes: list[list[InstrIR]] = field(default_factory=list)
 
+
 @dataclass
 class ModuleImportIR(InstrIR):
     """Runtime module import: import X or import X as Y.
@@ -1096,6 +1105,7 @@ class ModuleAttrIR(ExprIR):
 
     module_name: str  # Python module name (e.g., 'math')
     attr_name: str  # Attribute name (e.g., 'pi')
+
 
 @dataclass
 class SelfAugAssignIR(StmtIR):

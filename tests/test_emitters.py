@@ -12,6 +12,7 @@ Test naming convention: test_emit_<feature>_<behavior>
 from __future__ import annotations
 
 from mypyc_micropython.function_emitter import FunctionEmitter
+from mypyc_micropython.generator_emitter import GeneratorEmitter
 from mypyc_micropython.ir import (
     AnnAssignIR,
     AssignIR,
@@ -43,6 +44,7 @@ from mypyc_micropython.ir import (
     TupleNewIR,
     UnaryOpIR,
     WhileIR,
+    YieldIR,
 )
 
 # ============================================================================
@@ -1453,3 +1455,50 @@ class TestClassEmitterTypeDefinition:
         assert "MP_DEFINE_CONST_OBJ_TYPE" in type_code
         assert "test_Widget_type" in type_code
         assert "MP_QSTR_Widget" in type_code
+
+
+class TestGeneratorEmitter:
+    def test_emit_generator_while_yield_state_machine(self):
+        func_ir = make_func(
+            name="gen_count",
+            params=[("n", CType.MP_INT_T)],
+            return_type=CType.MP_OBJ_T,
+            body=[
+                AnnAssignIR(
+                    target="i",
+                    c_target="i",
+                    c_type="mp_int_t",
+                    value=make_const_int(0),
+                    is_new_var=True,
+                ),
+                WhileIR(
+                    test=CompareIR(
+                        left=make_name("i"),
+                        ops=["<"],
+                        comparators=[make_name("n")],
+                        ir_type=IRType.BOOL,
+                    ),
+                    body=[
+                        YieldIR(value=make_name("i"), state_id=1),
+                        AugAssignIR(
+                            target="i",
+                            c_target="i",
+                            op="+=",
+                            value=make_const_int(1),
+                            target_c_type="mp_int_t",
+                        ),
+                    ],
+                ),
+                ReturnIR(value=None),
+            ],
+            locals_={"i": CType.MP_INT_T},
+        )
+        func_ir.is_generator = True
+
+        c_code, _ = GeneratorEmitter(func_ir).emit()
+
+        assert "typedef struct _test_gen_count_gen_t" in c_code
+        assert "static mp_obj_t test_gen_count_gen_iternext(mp_obj_t self_in)" in c_code
+        assert "state_1:" in c_code
+        assert "MP_DEFINE_CONST_OBJ_TYPE" in c_code
+        assert "MP_OBJ_STOP_ITERATION" in c_code

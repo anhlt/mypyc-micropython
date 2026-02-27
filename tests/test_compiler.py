@@ -530,10 +530,7 @@ class TestCompilePackage:
         result = compile_package(package_dir, type_check=False)
 
         # Parent's globals table should reference the processing sub-package module
-        assert (
-            "MP_QSTR_processing), MP_ROM_PTR(&sensor_lib_processing_module)"
-            in result.c_code
-        )
+        assert "MP_QSTR_processing), MP_ROM_PTR(&sensor_lib_processing_module)" in result.c_code
 
     def test_nested_subpackage_depth_first_ordering(self):
         """Test that child modules are defined before their parent references them."""
@@ -562,15 +559,9 @@ class TestCompilePackage:
             sub_dir = pkg_dir / "sub"
             sub_dir.mkdir(parents=True)
 
-            (pkg_dir / "__init__.py").write_text(
-                "def pkg_version() -> int:\n    return 1\n"
-            )
-            (pkg_dir / "utils.py").write_text(
-                "def add(a: int, b: int) -> int:\n    return a + b\n"
-            )
-            (sub_dir / "__init__.py").write_text(
-                "def sub_info() -> int:\n    return 42\n"
-            )
+            (pkg_dir / "__init__.py").write_text("def pkg_version() -> int:\n    return 1\n")
+            (pkg_dir / "utils.py").write_text("def add(a: int, b: int) -> int:\n    return a + b\n")
+            (sub_dir / "__init__.py").write_text("def sub_info() -> int:\n    return 42\n")
             (sub_dir / "helper.py").write_text(
                 "def multiply(x: int, y: int) -> int:\n    return x * y\n"
             )
@@ -593,6 +584,7 @@ class TestCompilePackage:
             assert "MP_QSTR_helper), MP_ROM_PTR(&mypkg_sub_helper_module)" in result.c_code
             assert "MP_QSTR_sub), MP_ROM_PTR(&mypkg_sub_module)" in result.c_code
             assert "MP_REGISTER_MODULE(MP_QSTR_mypkg, mypkg_user_cmodule);" in result.c_code
+
 
 class TestArithmeticOperations:
     """Tests for arithmetic operation translation."""
@@ -4258,6 +4250,127 @@ def main(n: int) -> int:
         assert "test_main" in result
 
 
+class TestGeneratorRestrictions:
+    def test_simple_generator_compiles_and_emits_iternext(self):
+        source = """
+def gen(n: int):
+    i: int = 0
+    while i < n:
+        yield i
+        i += 1
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "typedef struct _test_gen_gen_t" in result
+        assert "static mp_obj_t test_gen_gen_iternext" in result
+        assert "MP_DEFINE_CONST_OBJ_TYPE" in result
+        assert "MP_OBJ_STOP_ITERATION" in result
+    def test_generator_range_with_start_compiles(self):
+        source = """
+def gen(n: int):
+    for i in range(1, n):
+        yield i
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "typedef struct _test_gen_gen_t" in result
+        assert "static mp_obj_t test_gen_gen_iternext" in result
+        assert "self->i = 1" in result  # start value initialized
+
+
+
+    def test_yield_from_raises_not_implemented(self):
+        source = """
+def gen(items: list):
+    yield from items
+"""
+        with pytest.raises(NotImplementedError) as exc_info:
+            compile_source(source, "test", type_check=False)
+        assert "yield from is not supported" in str(exc_info.value)
+        assert "line 3" in str(exc_info.value)
+
+    def test_generator_for_iter_compiles(self):
+        """Test that for-iter (non-range) loops in generators compile successfully."""
+        source = '''
+def gen(items: list):
+    for x in items:
+        yield x
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Check generator struct has iterator field
+        assert "typedef struct _test_gen_gen_t" in result
+        assert "mp_obj_t iter_x;" in result  # iterator object field
+        assert "mp_obj_t x;" in result  # loop variable field
+        # Check iternext uses mp_getiter and mp_iternext
+        assert "mp_getiter" in result
+        assert "mp_iternext" in result
+        assert "MP_OBJ_STOP_ITERATION" in result
+    def test_unsupported_generator_range_shape_raises_not_implemented(self):
+        source = """
+def gen(n: int):
+    for i in range(0, n, 2):
+        yield i
+"""
+        with pytest.raises(NotImplementedError) as exc_info:
+            compile_source(source, "test", type_check=False)
+        assert "unsupported generator range(...) loop is not supported" in str(exc_info.value)
+        assert "line 3" in str(exc_info.value)
+
+    def test_yield_as_expression_raises_not_implemented(self):
+        source = """
+def gen() -> object:
+    x = yield 1
+"""
+        with pytest.raises(NotImplementedError) as exc_info:
+            compile_source(source, "test", type_check=False)
+        assert "yield as an expression is not supported" in str(exc_info.value)
+        assert "line 3" in str(exc_info.value)
+
+    def test_try_in_generator_raises_not_implemented(self):
+        source = """
+def gen() -> object:
+    try:
+        yield 1
+    except Exception:
+        yield 2
+"""
+        with pytest.raises(NotImplementedError) as exc_info:
+            compile_source(source, "test", type_check=False)
+        assert "try/with in generator functions is not supported" in str(exc_info.value)
+        assert "line 3" in str(exc_info.value)
+
+    def test_with_in_generator_raises_not_implemented(self):
+        source = """
+def gen() -> object:
+    with open("/tmp/x", "r"):
+        yield 1
+"""
+        with pytest.raises(NotImplementedError) as exc_info:
+            compile_source(source, "test", type_check=False)
+        assert "try/with in generator functions is not supported" in str(exc_info.value)
+        assert "line 3" in str(exc_info.value)
+
+    def test_return_value_in_generator_raises_not_implemented(self):
+        source = """
+def gen() -> object:
+    yield 1
+    return 2
+"""
+        with pytest.raises(NotImplementedError) as exc_info:
+            compile_source(source, "test", type_check=False)
+        assert "return value in generator is not supported" in str(exc_info.value)
+        assert "line 4" in str(exc_info.value)
+
+    def test_generator_method_raises_not_implemented(self):
+        source = """
+class Counter:
+    def values(self) -> object:
+        yield 1
+"""
+        with pytest.raises(NotImplementedError) as exc_info:
+            compile_source(source, "test", type_check=False)
+        assert "generator methods are not supported" in str(exc_info.value)
+        assert "line 4" in str(exc_info.value)
+
+
 class TestExceptionHandling:
     """Tests for exception handling (try/except/finally/raise)."""
 
@@ -4589,12 +4702,14 @@ def combo(n: int) -> int:
         assert "MP_QSTR_factorial" in result
         assert "MP_QSTR_math_ops" in result
         assert "MP_QSTR_timed_sum" in result
+
+
 class TestPrivateMethodOptimization:
     """Tests for __ private method optimization (Tier 1)."""
 
     def test_private_method_native_only(self):
         """Private methods should only emit native function, no MP wrapper."""
-        source = '''
+        source = """
 class Calculator:
     value: int
 
@@ -4606,7 +4721,7 @@ class Calculator:
 
     def get_result(self, x: int) -> int:
         return self.__compute(x)
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Private method gets native function
         assert "test_Calculator___compute_native" in result
@@ -4620,7 +4735,7 @@ class Calculator:
 
     def test_private_method_not_in_locals_dict(self):
         """Private methods should not appear in locals_dict."""
-        source = '''
+        source = """
 class Foo:
     x: int
 
@@ -4629,14 +4744,14 @@ class Foo:
 
     def public(self) -> int:
         return self.__secret()
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "MP_QSTR___secret" not in result
         assert "MP_QSTR_public" in result
 
     def test_private_method_not_virtual(self):
         """Private methods should not have vtable entries."""
-        source = '''
+        source = """
 class Foo:
     x: int
 
@@ -4645,7 +4760,7 @@ class Foo:
 
     def compute(self) -> int:
         return self.__helper()
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # No vtable entry for __helper
         assert ".__helper" not in result or "vtable" not in result.split(".__helper")[0][-50:]
@@ -4655,7 +4770,8 @@ class Foo:
     def test_external_private_access_rejected(self):
         """Accessing __ private methods from outside the class should fail."""
         import pytest
-        source = '''
+
+        source = """
 class Secret:
     x: int
 
@@ -4664,13 +4780,13 @@ class Secret:
 
 def try_access(s: object) -> int:
     return s.__hidden()
-'''
+"""
         with pytest.raises(TypeError, match="Cannot access private method"):
             compile_source(source, "test", type_check=False)
 
     def test_dunder_methods_still_work(self):
         """Dunder methods (__init__, __repr__, etc.) should not be treated as private."""
-        source = '''
+        source = """
 class Point:
     x: int
     y: int
@@ -4678,7 +4794,7 @@ class Point:
     def __init__(self, x: int, y: int) -> None:
         self.x = x
         self.y = y
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "test_Point___init___mp" in result
 
@@ -4688,7 +4804,7 @@ class TestFinalMethodOptimization:
 
     def test_final_method_not_virtual(self):
         """@final methods should not have vtable entries."""
-        source = '''
+        source = """
 class Base:
     x: int
 
@@ -4698,7 +4814,7 @@ class Base:
 
     def normal(self) -> int:
         return self.x
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # @final method gets native function
         assert "test_Base_locked_native" in result
@@ -4710,14 +4826,14 @@ class Base:
 
     def test_final_method_in_locals_dict(self):
         """@final methods should still appear in locals_dict (they're public)."""
-        source = '''
+        source = """
 class Svc:
     x: int
 
     @final
     def run(self) -> int:
         return self.x
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "MP_QSTR_run" in result
 
@@ -4727,7 +4843,7 @@ class TestFinalClassOptimization:
 
     def test_final_class_no_vtable(self):
         """@final class should not generate vtable structs."""
-        source = '''
+        source = """
 @final
 class Leaf:
     x: int
@@ -4737,7 +4853,7 @@ class Leaf:
 
     def helper(self) -> int:
         return self.x + 1
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # No vtable struct for @final classes
         assert "vtable_t" not in result
@@ -4750,7 +4866,7 @@ class Leaf:
 
     def test_final_class_methods_devirtualized(self):
         """All methods in @final class should be devirtualized."""
-        source = '''
+        source = """
 @final
 class Config:
     rate: int
@@ -4760,7 +4876,7 @@ class Config:
 
     def double_rate(self) -> int:
         return self.rate * 2
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # MP wrapper should delegate to native (sign of devirtualization)
         # The wrapper calls _native() directly
@@ -4773,64 +4889,64 @@ class TestFinalAttributes:
 
     def test_final_int_constant_fold(self):
         """Final[int] fields should be constant-folded in method bodies."""
-        source = '''
+        source = """
 class Config:
     MAX_RETRIES: Final[int] = 3
     value: int
 
     def should_retry(self, count: int) -> bool:
         return count < self.MAX_RETRIES
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # The constant 3 should appear directly, not self->MAX_RETRIES
         assert "(count < 3)" in result or "count < 3" in result
 
     def test_final_bare_constant_fold(self):
         """Bare Final fields should also be constant-folded."""
-        source = '''
+        source = """
 class Settings:
     TIMEOUT: Final = 30
     x: int
 
     def get_timeout(self) -> int:
         return self.TIMEOUT
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "return 30" in result or "return mp_obj_new_int(30)" in result
 
     def test_final_bool_constant_fold(self):
         """Final[bool] fields should be constant-folded."""
-        source = '''
+        source = """
 class Flags:
     DEBUG: Final[bool] = True
     x: int
 
     def is_debug(self) -> bool:
         return self.DEBUG
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "return true" in result
 
     def test_final_field_still_in_struct(self):
         """Final fields should still appear in the struct (for initialization)."""
-        source = '''
+        source = """
 class Cfg:
     RATE: Final[int] = 100
     name: str
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "mp_int_t RATE;" in result
         assert "mp_obj_t name;" in result
 
     def test_non_final_field_not_folded(self):
         """Non-Final fields should NOT be constant-folded."""
-        source = '''
+        source = """
 class Counter:
     value: int = 0
 
     def get(self) -> int:
         return self.value
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "self->value" in result
 
@@ -4840,7 +4956,7 @@ class TestStrRepr:
 
     def test_repr_only(self):
         """Class with only __repr__ generates print handler."""
-        source = '''
+        source = """
 class Point:
     x: int
     y: int
@@ -4851,7 +4967,7 @@ class Point:
 
     def __repr__(self) -> str:
         return "Point"
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Print handler should exist
         assert "test_Point_print" in result
@@ -4862,7 +4978,7 @@ class Point:
 
     def test_str_only(self):
         """Class with only __str__ generates print handler with dispatch."""
-        source = '''
+        source = """
 class Greeting:
     name: str
 
@@ -4871,7 +4987,7 @@ class Greeting:
 
     def __str__(self) -> str:
         return "hello"
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Print handler should exist
         assert "test_Greeting_print" in result
@@ -4879,13 +4995,13 @@ class Greeting:
         assert "kind == PRINT_STR" in result
         assert "test_Greeting___str___mp(self_in)" in result
         # Should have fallback for PRINT_REPR
-        assert '<Greeting object>' in result
+        assert "<Greeting object>" in result
         # Type definition should have print slot
         assert "print, test_Greeting_print" in result
 
     def test_both_str_and_repr(self):
         """Class with both __str__ and __repr__ dispatches on kind."""
-        source = '''
+        source = """
 class Item:
     name: str
 
@@ -4897,7 +5013,7 @@ class Item:
 
     def __repr__(self) -> str:
         return "Item()"
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Print handler should dispatch
         assert "kind == PRINT_STR" in result
@@ -4909,7 +5025,7 @@ class Item:
 
     def test_repr_not_in_locals_dict(self):
         """__repr__ and __str__ should NOT appear in locals_dict."""
-        source = '''
+        source = """
 class Foo:
     x: int
 
@@ -4921,7 +5037,7 @@ class Foo:
 
     def get_x(self) -> int:
         return self.x
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # get_x should be in locals_dict
         assert "MP_QSTR_get_x" in result
@@ -4930,7 +5046,7 @@ class Foo:
 
     def test_dataclass_with_user_repr_override(self):
         """@dataclass with user __repr__ should use user version, not auto-gen."""
-        source = '''
+        source = """
 from dataclasses import dataclass
 
 @dataclass
@@ -4940,7 +5056,7 @@ class Pair:
 
     def __repr__(self) -> str:
         return "Pair"
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should have print handler
         assert "test_Pair_print" in result
@@ -4951,14 +5067,14 @@ class Pair:
 
     def test_dataclass_without_user_repr_keeps_autogen(self):
         """@dataclass without user __repr__ should keep auto-generated print."""
-        source = '''
+        source = """
 from dataclasses import dataclass
 
 @dataclass
 class Vec2:
     x: int
     y: int
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should have auto-generated print handler
         assert "test_Vec2_print" in result
@@ -4968,7 +5084,7 @@ class Vec2:
 
     def test_repr_method_returns_str(self):
         """__repr__ method should be compiled as returning mp_obj_t (str)."""
-        source = '''
+        source = """
 class Tag:
     label: str
 
@@ -4977,7 +5093,7 @@ class Tag:
 
     def __repr__(self) -> str:
         return self.label
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # __repr__ wrapper should return mp_obj_t
         assert "test_Tag___repr___mp(mp_obj_t self_in)" in result
@@ -4990,7 +5106,7 @@ class TestComparisonMethods:
 
     def test_lt_method(self):
         """__lt__ method should generate binary_op handler with MP_BINARY_OP_LESS."""
-        source = '''
+        source = """
 class Number:
     value: int
 
@@ -4999,7 +5115,7 @@ class Number:
 
     def __lt__(self, other: object) -> bool:
         return self.value < 10
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should have binary_op handler
         assert "test_Number_binary_op" in result
@@ -5009,7 +5125,7 @@ class Number:
 
     def test_le_method(self):
         """__le__ method should generate binary_op handler with MP_BINARY_OP_LESS_EQUAL."""
-        source = '''
+        source = """
 class Number:
     value: int
 
@@ -5018,7 +5134,7 @@ class Number:
 
     def __le__(self, other: object) -> bool:
         return self.value <= 10
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "test_Number_binary_op" in result
         assert "MP_BINARY_OP_LESS_EQUAL" in result
@@ -5026,7 +5142,7 @@ class Number:
 
     def test_gt_method(self):
         """__gt__ method should generate binary_op handler with MP_BINARY_OP_MORE."""
-        source = '''
+        source = """
 class Number:
     value: int
 
@@ -5035,7 +5151,7 @@ class Number:
 
     def __gt__(self, other: object) -> bool:
         return self.value > 10
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "test_Number_binary_op" in result
         assert "MP_BINARY_OP_MORE" in result
@@ -5043,7 +5159,7 @@ class Number:
 
     def test_ge_method(self):
         """__ge__ method should generate binary_op handler with MP_BINARY_OP_MORE_EQUAL."""
-        source = '''
+        source = """
 class Number:
     value: int
 
@@ -5052,7 +5168,7 @@ class Number:
 
     def __ge__(self, other: object) -> bool:
         return self.value >= 10
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "test_Number_binary_op" in result
         assert "MP_BINARY_OP_MORE_EQUAL" in result
@@ -5060,7 +5176,7 @@ class Number:
 
     def test_ne_method(self):
         """__ne__ method should generate binary_op handler with MP_BINARY_OP_NOT_EQUAL."""
-        source = '''
+        source = """
 class Number:
     value: int
 
@@ -5069,7 +5185,7 @@ class Number:
 
     def __ne__(self, other: object) -> bool:
         return self.value != 10
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "test_Number_binary_op" in result
         assert "MP_BINARY_OP_NOT_EQUAL" in result
@@ -5077,7 +5193,7 @@ class Number:
 
     def test_eq_method_user_defined(self):
         """User-defined __eq__ should override dataclass auto-generated one."""
-        source = '''
+        source = """
 class Number:
     value: int
 
@@ -5086,7 +5202,7 @@ class Number:
 
     def __eq__(self, other: object) -> bool:
         return self.value == 10
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "test_Number_binary_op" in result
         assert "MP_BINARY_OP_EQUAL" in result
@@ -5094,7 +5210,7 @@ class Number:
 
     def test_multiple_comparison_methods(self):
         """Multiple comparison methods should all be dispatched."""
-        source = '''
+        source = """
 class Number:
     value: int
 
@@ -5109,7 +5225,7 @@ class Number:
 
     def __gt__(self, other: object) -> bool:
         return self.value > 10
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "test_Number_binary_op" in result
         assert "MP_BINARY_OP_LESS" in result
@@ -5122,7 +5238,7 @@ class TestHashMethod:
 
     def test_hash_method(self):
         """__hash__ method should generate unary_op handler."""
-        source = '''
+        source = """
 class Point:
     x: int
     y: int
@@ -5133,7 +5249,7 @@ class Point:
 
     def __hash__(self) -> int:
         return self.x + self.y
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should have unary_op handler
         assert "test_Point_unary_op" in result
@@ -5149,7 +5265,7 @@ class TestIteratorMethods:
 
     def test_iter_method(self):
         """__iter__ method should generate getiter handler."""
-        source = '''
+        source = """
 class Range:
     current: int
     end: int
@@ -5160,7 +5276,7 @@ class Range:
 
     def __iter__(self) -> object:
         return self
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should have getiter handler
         assert "test_Range_getiter" in result
@@ -5171,7 +5287,7 @@ class Range:
 
     def test_next_method(self):
         """__next__ method should generate iternext handler."""
-        source = '''
+        source = """
 class Range:
     current: int
     end: int
@@ -5186,7 +5302,7 @@ class Range:
         val: int = self.current
         self.current += 1
         return val
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should have iternext handler
         assert "test_Range_iternext" in result
@@ -5199,7 +5315,7 @@ class Range:
 
     def test_iter_and_next_methods(self):
         """Class with both __iter__ and __next__ should be a full iterator."""
-        source = '''
+        source = """
 class Counter:
     current: int
     end: int
@@ -5217,7 +5333,7 @@ class Counter:
         val: int = self.current
         self.current += 1
         return val
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Self-iterator: no separate getiter handler
         assert "test_Counter_getiter" not in result
@@ -5232,7 +5348,7 @@ class TestClassTypedLocalVarAccess:
 
     def test_local_var_attr_access_in_method(self):
         """Accessing attribute on class-typed local var in method should use struct access."""
-        source = '''
+        source = """
 class Number:
     value: int
 
@@ -5242,7 +5358,7 @@ class Number:
     def __lt__(self, other: Number) -> bool:
         o: Number = other
         return self.value < o.value
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should cast o to struct type and access .value
         assert "test_Number_obj_t *)MP_OBJ_TO_PTR(o))" in result
@@ -5251,7 +5367,7 @@ class Number:
 
     def test_local_var_attr_access_string_annotation(self):
         """String annotation for class type should also work."""
-        source = '''
+        source = """
 class Number:
     value: int
 
@@ -5261,13 +5377,13 @@ class Number:
     def compare(self, other: "Number") -> bool:
         o: "Number" = other
         return self.value < o.value
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "test_Number_obj_t *)MP_OBJ_TO_PTR(o))" in result
 
     def test_param_attr_access_still_works(self):
         """Direct parameter attribute access should continue working."""
-        source = '''
+        source = """
 class Number:
     value: int
 
@@ -5276,14 +5392,14 @@ class Number:
 
     def add(self, other: Number) -> int:
         return self.value + other.value
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Parameter access should use ParamAttrIR pattern
         assert "MP_OBJ_TO_PTR(other))" in result
 
     def test_all_comparison_operators_struct_access(self):
         """All comparison methods should properly access other's fields via struct."""
-        source = '''
+        source = """
 class Number:
     value: int
 
@@ -5309,7 +5425,7 @@ class Number:
     def __ne__(self, other: object) -> bool:
         o: Number = other
         return self.value != o.value
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # All methods should have struct access for 'o'
         assert result.count("MP_OBJ_TO_PTR(o))") >= 5  # one per comparison method

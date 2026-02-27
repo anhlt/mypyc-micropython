@@ -154,31 +154,52 @@ matrix = [[i * j for j in range(5)] for i in range(5)]  # ❌
 pairs = [(x, y) for x in range(3) for y in range(3)]  # ❌
 ```
 
-### Generators ⚠️
+### Generators ✅
 
-**Supported (Phase 5):**
+**Supported:**
 ```python
-# Simple generators
-def countdown(n: int) -> Generator[int, None, None]:
+# While-loop generators
+def countdown(n: int):
     while n > 0:
         yield n
         n -= 1
+
+# For-range generators (all forms)
+def squares(n: int):
+    for i in range(n):
+        yield i * i
+
+def range_with_start(n: int):
+    for i in range(1, n):  # Non-zero start supported
+        yield i
+
+# For-iter generators (iterate over arbitrary iterables)
+def iter_items(items: list[object]):
+    for x in items:
+        yield x
 ```
 
 **NOT Supported:**
 ```python
 # Generator expressions
-gen = (x * x for x in range(10))  # ❌
+gen = (x * x for x in range(10))  # Not supported
 
 # yield from
 def chain(*iterables):
     for it in iterables:
-        yield from it  # ❌
+        yield from it  # Not supported
 
 # Generator with send/throw
 def echo():
     while True:
-        x = yield  # ❌ Receiving values not supported
+        x = yield  # Receiving values not supported
+
+# try/with inside generators
+def gen_with_try():
+    try:
+        yield 1  # Not supported - try in generators
+    finally:
+        pass
 ```
 
 ### Decorators ⚠️
@@ -606,7 +627,7 @@ if (n := len(data)) > 10:
 | **2 (Functions)** | Default args ✅, `*args` ✅, `**kwargs` ✅, `bool()` ✅, `min()`/`max()` ✅, `sum()` ✅, `enumerate()` ✅, `zip()` ✅, `sorted()` ✅ |
 | **3 (Classes)** | Basic classes ✅, methods ✅, @dataclass ✅, single inheritance ✅, @property ✅, @staticmethod ✅, @classmethod ✅ |
 | **4 (Exceptions)** | `try`/`except`/`finally` ✅, `raise` ✅, custom exceptions |
-| **5 (Advanced)** | Simple closures, simple generators, `map()`/`filter()` |
+| **5 (Advanced)** | Simple generators ✅ (while/for-range/for-iter + yield), closures, `map()`/`filter()` |
 | **6 (Polish)** | Full IR pipeline ✅, RTuple optimization ✅ (47x speedup), list access optimization ✅, 504 tests ✅ |
 
 ## See Also

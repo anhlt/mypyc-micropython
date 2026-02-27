@@ -74,6 +74,7 @@ from .ir import (
     UnaryOpIR,
     ValueIR,
     WhileIR,
+    YieldIR,
 )
 
 C_RESERVED_WORDS = {
@@ -162,6 +163,7 @@ class IRBuilder:
         self._uses_list_opt = False
         self._uses_imports = False
         self._loop_depth = 0
+        self._yield_state_counter = 0
         self._class_typed_params: dict[str, str] = {}
         self._mypy_local_types: dict[str, str] = {}
         # Import tracking: alias -> module_name (e.g., 'm' -> 'math')
@@ -200,8 +202,61 @@ class IRBuilder:
         self._uses_print = False
         self._uses_list_opt = False
         self._uses_imports = False
+        self._yield_state_counter = 0
         self._class_typed_params = {}
         self._mypy_local_types = {}
+
+        is_generator = any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(node))
+        if is_generator:
+            yield_from_node = next(
+                (n for n in ast.walk(node) if isinstance(n, ast.YieldFrom)),
+                None,
+            )
+            if yield_from_node is not None:
+                raise NotImplementedError(
+                    f"yield from is not supported (line {yield_from_node.lineno})"
+                )
+
+            unsupported_node = next(
+                (n for n in ast.walk(node) if isinstance(n, (ast.Try, ast.With, ast.AsyncWith))),
+                None,
+            )
+            if unsupported_node is not None:
+                raise NotImplementedError(
+                    f"try/with in generator functions is not supported (line {unsupported_node.lineno})"
+                )
+
+            return_with_value = next(
+                (n for n in ast.walk(node) if isinstance(n, ast.Return) and n.value is not None),
+                None,
+            )
+            if return_with_value is not None:
+                raise NotImplementedError(
+                    f"return value in generator is not supported (line {return_with_value.lineno})"
+                )
+
+            for for_node in (n for n in ast.walk(node) if isinstance(n, ast.For)):
+                first_yield = next(
+                    (x for x in ast.walk(for_node) if isinstance(x, (ast.Yield, ast.YieldFrom))),
+                    None,
+                )
+                if first_yield is None:
+                    continue
+
+                # Check if it's a range() call
+                is_range_call = (
+                    isinstance(for_node.iter, ast.Call)
+                    and isinstance(for_node.iter.func, ast.Name)
+                    and for_node.iter.func.id == "range"
+                )
+
+                if is_range_call:
+                    # Validate supported range(...) shapes for generators
+                    if not self._is_supported_generator_range_call(for_node.iter):
+                        raise NotImplementedError(
+                            f"unsupported generator range(...) loop is not supported (line {for_node.lineno})"
+                        )
+                # else: it's a for-iter loop over iterable, which is now allowed
 
         func_name = node.name
         c_func_name = f"{self.c_name}_{sanitize_name(func_name)}"
@@ -279,6 +334,7 @@ class IRBuilder:
             return_type=return_type,
             body_ast=node,
             body=body_ir,
+            is_generator=is_generator,
             is_method=False,
             class_ir=None,
             locals_={
@@ -333,6 +389,19 @@ class IRBuilder:
         elif isinstance(stmt, ast.Pass):
             return PassIR()
         elif isinstance(stmt, ast.Expr):
+            if isinstance(stmt.value, ast.Yield):
+                if stmt.value.value is None:
+                    return YieldIR(
+                        value=None,
+                        prelude=[],
+                        state_id=self._next_yield_state_id(),
+                    )
+                value, prelude = self._build_expr(stmt.value.value, locals_)
+                return YieldIR(
+                    value=value,
+                    prelude=prelude,
+                    state_id=self._next_yield_state_id(),
+                )
             if isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str):
                 return None
             if (
@@ -581,7 +650,6 @@ class IRBuilder:
             is_new_var=True,
         )
 
-
     def _build_assign(self, stmt: ast.Assign, locals_: list[str]) -> StmtIR | None:
         if len(stmt.targets) != 1:
             return None
@@ -750,6 +818,12 @@ class IRBuilder:
         return PrintIR(args=args, preludes=preludes)
 
     def _build_expr(self, expr: ast.expr, locals_: list[str]) -> tuple[ValueIR, list]:
+        if isinstance(expr, ast.YieldFrom):
+            raise NotImplementedError(f"yield from is not supported (line {expr.lineno})")
+        if isinstance(expr, ast.Yield):
+            raise NotImplementedError(
+                f"yield as an expression is not supported (line {expr.lineno})"
+            )
         if isinstance(expr, ast.Constant):
             return self._build_constant(expr), []
         elif isinstance(expr, ast.Name):
@@ -1046,9 +1120,7 @@ class IRBuilder:
 
         # Reject external access to private (__method) members
         if self._is_private_name(method_name):
-            raise TypeError(
-                f"Cannot access private method '{method_name}' from outside its class"
-            )
+            raise TypeError(f"Cannot access private method '{method_name}' from outside its class")
 
         args: list[ValueIR] = []
         all_preludes = list(recv_prelude)
@@ -1247,9 +1319,7 @@ class IRBuilder:
 
         # Reject external access to private (__attr) members
         if self._is_private_name(attr_name):
-            raise TypeError(
-                f"Cannot access private attribute '{attr_name}' from outside its class"
-            )
+            raise TypeError(f"Cannot access private attribute '{attr_name}' from outside its class")
         if isinstance(expr.value, ast.Name):
             var_name = expr.value.id
             if var_name in self._class_typed_params:
@@ -1943,6 +2013,16 @@ class IRBuilder:
         self._used_rtuples = set()
         self._uses_print = False
         self._uses_list_opt = False
+        self._yield_state_counter = 0
+
+        first_yield = next(
+            (n for n in ast.walk(method_ir.body_ast) if isinstance(n, (ast.Yield, ast.YieldFrom))),
+            None,
+        )
+        if first_yield is not None:
+            raise NotImplementedError(
+                f"generator methods are not supported (line {first_yield.lineno})"
+            )
 
         # Set up parameter types
         for param_name, param_type in method_ir.params:
@@ -1964,7 +2044,6 @@ class IRBuilder:
                     type_name = arg.annotation.value
                 if type_name and type_name in self._known_classes:
                     self._class_typed_params[arg.arg] = type_name
-
 
         # Track self and params as locals
         local_vars = [p[0] for p in method_ir.params]
@@ -1991,6 +2070,10 @@ class IRBuilder:
         self, stmt: ast.stmt, locals_: list[str], class_ir: ClassIR, native: bool
     ) -> StmtIR | None:
         """Build statement IR in method context."""
+        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, (ast.Yield, ast.YieldFrom)):
+            raise NotImplementedError(
+                f"generator methods are not supported (line {stmt.value.lineno})"
+            )
         if isinstance(stmt, ast.Return):
             return self._build_method_return(stmt, locals_, class_ir, native)
         elif isinstance(stmt, ast.Assign):
@@ -2052,7 +2135,6 @@ class IRBuilder:
             exc_type = stmt.exc.id
 
         return RaiseIR(exc_type=exc_type, exc_msg=exc_msg, prelude=prelude)
-
 
     def _build_method_assign(
         self, stmt: ast.Assign, locals_: list[str], class_ir: ClassIR, native: bool
@@ -2360,6 +2442,8 @@ class IRBuilder:
         self, expr: ast.expr, locals_: list[str], class_ir: ClassIR, native: bool
     ) -> tuple[ValueIR, list]:
         """Build expression in method context, handling self.attr and self.method()."""
+        if isinstance(expr, (ast.Yield, ast.YieldFrom)):
+            raise NotImplementedError(f"generator methods are not supported (line {expr.lineno})")
         # Handle self.attr and param.attr for typed class params
         if isinstance(expr, ast.Attribute):
             if isinstance(expr.value, ast.Name):
@@ -2413,9 +2497,7 @@ class IRBuilder:
             # Handle chained attribute access: self.attr1.attr2 or param.attr1.attr2
             if isinstance(expr.value, ast.Attribute):
                 attr_name = expr.attr
-                base_class_name = self._get_method_attr_class_type(
-                    expr.value, class_ir
-                )
+                base_class_name = self._get_method_attr_class_type(expr.value, class_ir)
                 if base_class_name and base_class_name in self._known_classes:
                     base_class_ir = self._known_classes[base_class_name]
                     base_value, base_prelude = self._build_method_expr(
@@ -2650,9 +2732,7 @@ class IRBuilder:
             method_name = expr.func.attr
 
             # Allow self.__method() but reject other_obj.__method()
-            is_self_call = (
-                isinstance(expr.func.value, ast.Name) and expr.func.value.id == "self"
-            )
+            is_self_call = isinstance(expr.func.value, ast.Name) and expr.func.value.id == "self"
             if self._is_private_name(method_name) and not is_self_call:
                 raise TypeError(
                     f"Cannot access private method '{method_name}' from outside its class"
@@ -2734,3 +2814,33 @@ class IRBuilder:
             is_builtin=False,
             builtin_kind=None,
         ), all_preludes
+
+    def _next_yield_state_id(self) -> int:
+        self._yield_state_counter += 1
+        return self._yield_state_counter
+
+    def _is_supported_generator_range_call(self, call: ast.Call) -> bool:
+        if not (
+            isinstance(call.func, ast.Name) and call.func.id == "range" and len(call.keywords) == 0
+        ):
+            return False
+
+        def _is_int_name_or_int_const(arg: ast.expr) -> bool:
+            if isinstance(arg, ast.Name):
+                return True
+            return isinstance(arg, ast.Constant) and isinstance(arg.value, int)
+
+        args = call.args
+        if len(args) == 1:
+            return _is_int_name_or_int_const(args[0])
+        if len(args) == 2:
+            # Allow range(start, end) where both are int/name
+            return _is_int_name_or_int_const(args[0]) and _is_int_name_or_int_const(args[1])
+        if len(args) == 3:
+            # Allow range(start, end, step) only if step is constant 1
+            if not _is_int_name_or_int_const(args[0]):
+                return False
+            if not _is_int_name_or_int_const(args[1]):
+                return False
+            return isinstance(args[2], ast.Constant) and args[2].value == 1
+        return False
