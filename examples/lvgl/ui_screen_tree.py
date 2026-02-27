@@ -18,12 +18,20 @@ class ScreenNode:
 
 
 class ScreenManager:
-    def __init__(self, root: ScreenNode):
+    def __init__(self, root: ScreenNode, nav_core: Any | None = None):
         self._root = root
         self._current = root
         self._parent_by_node: dict[int, ScreenNode | None] = {}
         self._current_root: Any | None = None
         self._started = False
+        self._nav_core = nav_core
+        self._use_nav_core = bool(
+            nav_core is not None
+            and hasattr(nav_core, "register_builder")
+            and hasattr(nav_core, "build_screen")
+        )
+        if self._use_nav_core:
+            self._register_builders(root)
         self._index_tree(root, None)
 
     def start(self) -> Any | None:
@@ -60,10 +68,19 @@ class ScreenManager:
         return new_root
 
     def _load_node(self, node: ScreenNode) -> Any | None:
-        root = node.screen_factory()
+        if self._use_nav_core and self._nav_core is not None:
+            root = self._nav_core.build_screen(node.name)
+        else:
+            root = node.screen_factory()
         if root is not None:
             self._screen_load(root)
         return root
+
+    def _register_builders(self, node: ScreenNode) -> None:
+        if self._nav_core is not None:
+            self._nav_core.register_builder(node.name, node.screen_factory)
+        for child in node.children:
+            self._register_builders(child)
 
     def _screen_load(self, root: Any) -> None:
         from ui_lv_compat import screen_load
