@@ -26,6 +26,7 @@ def suite(name):
     gc.collect()
     print("@S:" + name)
 
+
 # ---- factorial ----
 suite("factorial")
 import factorial
@@ -669,6 +670,21 @@ t("compare lt", sm.compare_numbers(3, 5), "-1")
 t("compare gt", sm.compare_numbers(5, 3), "1")
 t("compare eq", sm.compare_numbers(4, 4), "0")
 t("sum_counter", sm.sum_counter(5), "10")
+
+
+# ---- generators ----
+suite("generators")
+import generators as g
+
+vals = []
+for v in g.countdown(5):
+    vals.append(v)
+t("countdown", str(vals), "[5, 4, 3, 2, 1]")
+
+sq = []
+for v in g.squares(5):
+    sq.append(v)
+t("squares", str(sq), "[0, 1, 4, 9, 16]")
 
 # ---- summary ----
 gc.collect()

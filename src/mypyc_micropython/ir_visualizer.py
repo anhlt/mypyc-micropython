@@ -72,6 +72,7 @@ from .ir import (
     UnboxIR,
     ValueIR,
     WhileIR,
+    YieldIR,
 )
 
 
@@ -227,6 +228,8 @@ class IRPrinter:
     def print_stmt(self, stmt: StmtIR) -> str:
         if isinstance(stmt, ReturnIR):
             return self._print_return(stmt)
+        elif isinstance(stmt, YieldIR):
+            return self._print_yield(stmt)
         elif isinstance(stmt, IfIR):
             return self._print_if(stmt)
         elif isinstance(stmt, WhileIR):
@@ -276,6 +279,18 @@ class IRPrinter:
             self._indent_dec()
         value_str = self.print_value(stmt.value) if stmt.value else "None"
         lines.append(f"{self._i()}return {value_str}")
+        return "\n".join(lines)
+
+    def _print_yield(self, stmt: YieldIR) -> str:
+        lines = []
+        if stmt.prelude:
+            lines.append(f"{self._i()}# prelude:")
+            self._indent_inc()
+            for instr in stmt.prelude:
+                lines.append(self.print_instr(instr))
+            self._indent_dec()
+        value_str = self.print_value(stmt.value) if stmt.value else "None"
+        lines.append(f"{self._i()}yield {value_str} [state_id={stmt.state_id}]")
         return "\n".join(lines)
 
     def _print_if(self, stmt: IfIR) -> str:

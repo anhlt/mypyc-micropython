@@ -55,6 +55,7 @@ class _PackageSubmodule:
     functions: list[FuncIR]
     children: list[_PackageSubmodule] = field(default_factory=list)  # nested sub-packages
 
+
 C_RESERVED_WORDS = {
     "auto",
     "break",
@@ -231,6 +232,7 @@ def _compile_module_parts(
 ) -> _ModuleCompileParts:
     from .class_emitter import ClassEmitter
     from .function_emitter import FunctionEmitter, MethodEmitter
+    from .generator_emitter import GeneratorEmitter
     from .ir_builder import IRBuilder, MypyTypeInfo
 
     mypy_types: MypyTypeInfo | None = None
@@ -274,7 +276,9 @@ def _compile_module_parts(
             function_irs.append(func_ir)
             module_ir.add_function(func_ir)
 
-            emitter = FunctionEmitter(func_ir)
+            emitter = (
+                GeneratorEmitter(func_ir) if func_ir.is_generator else FunctionEmitter(func_ir)
+            )
             code, _ = emitter.emit()
             function_code.append(code)
 

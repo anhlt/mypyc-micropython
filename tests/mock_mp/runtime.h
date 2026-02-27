@@ -595,6 +595,7 @@ static inline mp_obj_t mp_binary_op(mp_binary_op_t op, mp_obj_t lhs, mp_obj_t rh
 #define MP_QSTR_LIMIT   ((qstr)0x2010)
 #define MP_QSTR_size    ((qstr)0x2011)
 #define MP_QSTR_text    ((qstr)0x2012)
+#define MP_QSTR_generator ((qstr)0x2013)
 #define MP_MOCK_TAG_ITER (0x173A)
 
 typedef struct {
@@ -1034,6 +1035,7 @@ static inline mp_obj_t mp_call_function_n_kw(mp_obj_t fun, size_t n_args, size_t
 #define MP_DEFINE_CONST_FUN_OBJ_KW(obj_name, min, fun_name) static const int obj_name = 0
 #define MP_DEFINE_CONST_DICT(dict_name, table_name) const int dict_name = 0
 #define MP_TYPE_FLAG_NONE (0)
+#define MP_TYPE_FLAG_ITER_IS_ITERNEXT (1)
 #define MP_DEFINE_CONST_OBJ_TYPE(obj_name, qstr, flags, ...) const mp_obj_type_t obj_name = {0}
 #define MP_REGISTER_MODULE(qstr, mod)
 
