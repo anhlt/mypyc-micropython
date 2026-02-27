@@ -26,6 +26,8 @@ from .ir import (
     CallIR,
     ClassInstantiationIR,
     ClassIR,
+    CLibCallIR,
+    CLibEnumIR,
     CompareIR,
     ConstIR,
     ContinueIR,
@@ -584,6 +586,11 @@ class IRPrinter:
         elif isinstance(value, CallIR):
             args = ", ".join(self.print_value(a) for a in value.args)
             return f"{value.func_name}({args})"
+        elif isinstance(value, CLibCallIR):
+            args = ", ".join(self.print_value(a) for a in value.args)
+            return f"{value.lib_name}.{value.func_name}({args})"
+        elif isinstance(value, CLibEnumIR):
+            return f"{value.lib_name}.{value.enum_class}.{value.member_name} = {value.c_enum_value}"
         elif isinstance(value, SubscriptIR):
             return f"{self.print_value(value.value)}[{self.print_value(value.slice_)}]"
         elif isinstance(value, IfExprIR):

@@ -7,7 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
 ### Added
+- Cross-module external C library call support (`CLibCallIR`, `CLibEnumIR`)
+  - Compile-time resolution of `import lvgl as lv; lv.func()` to direct C wrapper calls
+  - `CLibCallIR`: direct C wrapper function calls with var_args support (>3 params)
+  - `CLibEnumIR`: compile-time enum constant resolution (e.g., `LvAlign.CENTER` -> `9`)
+  - Import alias tracking in `IRBuilder` for external library detection
+  - Extern declarations in generated module C code
+  - `--public` flag for `mpy-compile-c` to emit non-static wrapper functions
+  - `emit_header_file()` for generating C header files
+- LVGL application example (`examples/lvgl_app.py`)
+  - Cross-module calls from compiled Python to LVGL wrappers
+  - `scripts/compile_lvgl_app.py` compilation script
+  - Device-verified on ESP32-C6: label, slider, alignment all working
+- `compile-lvgl-app` Makefile target for cross-module compilation
+- Blog 24: cross-module C library calls architecture documentation
+- 13 new unit tests for external library call compilation (563 total)
+
+- `.pyi` stub-based C bindings system (`src/mypyc_micropython/c_bindings/`)
+  - `StubParser`: parses `.pyi` files into `CLibraryDef` IR
+  - `CEmitter`: generates MicroPython C wrapper code with proper `mp_c_ptr_t` pointer wrapping
+  - `CMakeEmitter`: generates `micropython.cmake` build files
+  - `CBindingCompiler`: top-level orchestration
+  - `mpy-compile-c` CLI entry point
+- LVGL v9.6 integration for ESP32-C6 with Waveshare ESP32-C6-LCD-1.47 display
+  - 55+ wrapped LVGL functions (label, button, slider, switch, checkbox, bar, arc)
+  - ST7789 display driver with SPI/DMA double-buffered rendering
+  - `lv_conf.h` configuration (48KB RAM, RGB565, 7 widgets)
+  - Custom partition table (2.56MB app) for LVGL firmware
+- Automated LVGL build pipeline (`make deploy-lvgl`)
+  - `compile-lvgl`: generates C from `.pyi` stub, copies driver, patches `lvgl.c`
+  - `build-lvgl`: compiles all modules + LVGL with custom partition table
+  - `flash-lvgl`: flashes firmware with LVGL partition table
+  - `deploy-lvgl`: one-command compile + build + flash
+  - `test-lvgl`: quick smoke test on device
+- `scripts/patch_lvgl_c.py` for auto-patching generated C with driver entries
+- `docs/lvgl-build-guide.md` with complete build workflow documentation
+- `docs/ideas/pyi/05-roadmap.md` for C bindings roadmap
+- Blog posts: 21 (pyi stub system), 22 (display driver), 23 (emitter rewrite)
+
 - Simple generator functions (`yield`) compiled into iterator objects with resumable `iternext` state machines
   - `range(start, end)` patterns in generators (non-zero start value)
   - `for x in items: yield x` pattern (iterate over arbitrary iterables in generators)
@@ -38,12 +77,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 3 benchmarks: public vs private method call, `@final` FastCounter
 - Blog post 23: Private Methods, @final, and Constant Folding
 
-### Fixed
-- Serial port contention in `run_device_tests.py`: added `_wait_for_port()` with retry and backoff
-- Serial port contention in `run_benchmarks.py`: same retry logic
-- Fixed pre-existing corruption (duplicated entries) in `run_benchmarks.py`
-
-### Added
 - Runtime import support for built-in MicroPython modules (`import math`, `import time`, etc.)
   - New IR nodes: `ModuleImportIR`, `ModuleCallIR`, `ModuleAttrIR`
   - Generated C uses `mp_import_name()` + `mp_load_attr()` + `mp_call_function_N()` pattern
@@ -65,7 +98,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `examples/math_ops.py` demonstrating runtime import of `math` and `time` modules
 - ESP-IDF Python version mismatch troubleshooting in AGENTS.md
 
-### Added
 - `@staticmethod` decorator support for class methods
   - Static methods have no `self` parameter and are wrapped in `mp_type_staticmethod`
   - Accessible via both class and instance (e.g., `MyClass.add(1, 2)` or `obj.add(1, 2)`)
@@ -82,8 +114,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Compiler tests for `@staticmethod`, `@classmethod`, and `@property`
 - C runtime tests for static method and property getter execution
 
-### Added
- **Exception handling support**: `try`/`except`/`else`/`finally`/`raise` statements
+- **Exception handling support**: `try`/`except`/`else`/`finally`/`raise` statements
   - `try`/`except ExceptionType:` - catch specific exception types
   - `try`/`except ExceptionType as e:` - catch with variable binding
   - `try`/`except:` - bare except (catch-all)
@@ -96,25 +127,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Nested `try` blocks
   - Uses MicroPython's `nlr_push`/`nlr_pop` for exception handling
   - Supports: `ZeroDivisionError`, `ValueError`, `TypeError`, `RuntimeError`, `KeyError`, `IndexError`, `AttributeError`, `OverflowError`, `MemoryError`, `OSError`, `NotImplementedError`, `AssertionError`
- New IR nodes: `TryIR`, `RaiseIR`, `ExceptHandlerIR`
- IR visualizer support for `TryIR` and `RaiseIR` nodes
- `examples/exception_handling.py` - demonstrating exception handling patterns (10 functions)
- `mp_int_floor_divide_checked()` helper for proper `ZeroDivisionError` in native division
- `mp_int_modulo_checked()` helper for proper `ZeroDivisionError` in native modulo
- 11 unit tests for exception handling compilation
- 4 C runtime tests for exception handling behavior
- 18 device tests for exception_handling module
- Mock runtime support for `nlr_push`/`nlr_pop` and exception types
- Blog post: `16-exception-handling.md` documenting the implementation
- **List comprehensions**: `[expr for x in iterable]` and `[expr for x in iterable if cond]` syntax support
+- New IR nodes: `TryIR`, `RaiseIR`, `ExceptHandlerIR`
+- IR visualizer support for `TryIR` and `RaiseIR` nodes
+- `examples/exception_handling.py` - demonstrating exception handling patterns (10 functions)
+- `mp_int_floor_divide_checked()` helper for proper `ZeroDivisionError` in native division
+- `mp_int_modulo_checked()` helper for proper `ZeroDivisionError` in native modulo
+- 11 unit tests for exception handling compilation
+- 4 C runtime tests for exception handling behavior
+- 18 device tests for exception_handling module
+- Mock runtime support for `nlr_push`/`nlr_pop` and exception types
+- Blog post: `16-exception-handling.md` documenting the implementation
+- **List comprehensions**: `[expr for x in iterable]` and `[expr for x in iterable if cond]` syntax support
   - Range-based: `[x * x for x in range(n)]`, `[x for x in range(n) if x % 2 == 0]`
   - Iterator-based: `[x * 2 for x in items]`, `[x for x in items if x > 0]`
   - `ListCompIR` node for IR representation
   - Inline C code generation with proper temp variable allocation
- `examples/list_comprehension.py` - demonstrating list comprehension patterns (6 functions)
- 6 unit tests for list comprehension compilation
- 3 C runtime tests for list comprehension behavior
- 6 device tests for list_comprehension module
+- `examples/list_comprehension.py` - demonstrating list comprehension patterns (6 functions)
+- 6 unit tests for list comprehension compilation
+- 3 C runtime tests for list comprehension behavior
+- 6 device tests for list_comprehension module
 - **`enumerate()` builtin**: Iterate with index over sequences (e.g., `for i, val in enumerate(lst)`)
   - `enumerate(iterable)` - start from 0
   - `enumerate(iterable, start)` - start from custom index
@@ -215,6 +246,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Update roadmap: mark `print()` as done in builtins table
 
 ### Fixed
+- C emitter pointer wrapping: replaced `MP_OBJ_FROM_PTR` with `mp_c_ptr_t` struct wrapper
+- C emitter GC safety: module-prefixed callback registry with `MP_REGISTER_ROOT_POINTER`
+- C emitter callback trampolines: generic user_data extraction instead of hardcoded LVGL
+- C emitter callback dispatch: match by callback name, not just first callback
+- C emitter argument conversion: unified `CType.to_c_decl()`/`to_mp_unbox()` path
+
+- Serial port contention in `run_device_tests.py`: added `_wait_for_port()` with retry and backoff
+- Serial port contention in `run_benchmarks.py`: same retry logic
+- Fixed pre-existing corruption (duplicated entries) in `run_benchmarks.py`
+
 - `BinOpIR` with `mp_obj_t` operands now correctly uses `mp_binary_op()` instead of native C operators
 - `CompareIR` with `mp_obj_t` operands now correctly uses `mp_binary_op()` + `mp_obj_is_true()` for proper comparison
 - Void functions now properly return `mp_const_none` instead of falling through

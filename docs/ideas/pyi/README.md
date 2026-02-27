@@ -1,12 +1,13 @@
 # C Library Bindings via .pyi Stub Files
 
-> **Status**: Idea / Proof of Concept  
+> **Status**: Implemented (Phases 1-6 complete) -- evolving toward general C binding system  
 > **Author**: Research from Feb 2026  
-> **Novel Approach**: First known use of .pyi as source for C code generation
+> **Novel Approach**: First known use of .pyi as source for C code generation  
+> **Next**: Phase 7 (emitter fixes) -- see [05-roadmap.md](05-roadmap.md)
 
 ## Overview
 
-This proposal describes a novel approach to generating MicroPython C bindings for external C libraries (like LVGL) using Python `.pyi` stub files as the single source of truth.
+This system generates MicroPython C bindings for external C libraries (like LVGL) using Python `.pyi` stub files. It works end-to-end: LVGL runs on ESP32 hardware with 55 auto-generated wrapper functions. See [Blog 21](../../../blogs/21-pyi-stub-c-bindings.md) and [Blog 22](../../../blogs/22-lvgl-display-driver-esp32.md).
 
 ## The Innovation
 
@@ -43,7 +44,8 @@ The same `.pyi` file serves **three purposes**:
 | [02-proof-of-concept.md](02-proof-of-concept.md) | Working prototype code |
 | [03-stub-format.md](03-stub-format.md) | .pyi stub file format specification |
 | [03a-pyi-plus-header.md](03a-pyi-plus-header.md) | How .pyi + .h files combine to generate C |
-| [04-implementation-plan.md](04-implementation-plan.md) | Phased implementation roadmap |
+| [04-implementation-plan.md](04-implementation-plan.md) | Original phased implementation plan (Phases 1-6, all complete) |
+| [05-roadmap.md](05-roadmap.md) | **Roadmap**: completed phases + next phases (7-9) toward general C bindings |
 | [06-direct-c-calls.md](06-direct-c-calls.md) | Optimization: direct C calls from compiled Python |
 
 ## Example
