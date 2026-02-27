@@ -27,7 +27,7 @@ USER_C_MODULES := $(MODULES_DIR)/micropython.cmake
 .PHONY: help setup setup-idf setup-mpy compile build flash monitor clean clean-all \
         test test-device test-device-only run-device-tests benchmark \
         test-factorial test-point test-counter test-sensor test-list test-dict test-all-modules \
-        repl compile-all check-env compile-lvgl compile-lvgl-app build-lvgl flash-lvgl deploy-lvgl test-lvgl \
+        repl compile-all check-env compile-lvgl compile-lvgl-app build-lvgl flash-lvgl deploy-lvgl test-lvgl test-lvgl-ui \
         erase run list-boards info
 
 # Default target
@@ -58,6 +58,7 @@ help:
 	@echo "  make build-lvgl     - Build firmware with LVGL (larger partition)"
 	@echo "  make flash-lvgl     - Flash LVGL firmware to device"
 	@echo "  make test-lvgl      - Quick display test on device"
+	@echo "  make test-lvgl-ui   - Run LVGL UI navigation memory test"
 	@echo ""
 	@echo "TESTING:"
 	@echo "  make test           - Run Python tests locally (pytest)"
@@ -236,26 +237,26 @@ build-lvgl: check-env compile-all compile-lvgl-app
 
 flash: check-env
 	@echo "Flashing firmware to $(PORT)..."
-	PATH="/usr/bin:$$PATH" bash -c '. $(ESP_IDF_DIR)/export.sh && \
+	@bash -c 'source $(ESP_IDF_DIR)/export.sh && \
 		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) PORT=$(PORT) deploy'
 
 flash-lvgl: check-env
 	@echo "Flashing LVGL firmware to $(PORT)..."
 	@cp $(ROOT_DIR)/partitions-lvgl.csv $(MP_PORT_DIR)/partitions-4MiB.csv
-	PATH="/usr/bin:$$PATH" bash -c '. $(ESP_IDF_DIR)/export.sh && \
+	@bash -c 'source $(ESP_IDF_DIR)/export.sh && \
 		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) PORT=$(PORT) deploy'
 	@echo "Restoring original partition table..."
 	@cd $(MICROPYTHON_DIR) && git checkout ports/esp32/partitions-4MiB.csv
 
 erase: check-env
 	@echo "Erasing flash..."
-	PATH="/usr/bin:$$PATH" bash -c '. $(ESP_IDF_DIR)/export.sh && \
+	@bash -c 'source $(ESP_IDF_DIR)/export.sh && \
 		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) PORT=$(PORT) erase'
 
 monitor: check-env
 	@echo "Opening serial monitor on $(PORT)..."
 	@echo "(Press Ctrl+] to exit)"
-	PATH="/usr/bin:$$PATH" bash -c '. $(ESP_IDF_DIR)/export.sh && \
+	@bash -c 'source $(ESP_IDF_DIR)/export.sh && \
 		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) PORT=$(PORT) monitor'
 
 deploy: build flash
@@ -316,6 +317,11 @@ test-dict:
 test-lvgl:
 	@echo "Testing LVGL on device..."
 	@mpremote connect $(PORT) exec "import lvgl, time; lvgl.init_display(); scr = lvgl.lv_screen_active(); lvgl.lv_obj_clean(scr); label = lvgl.lv_label_create(scr); lvgl.lv_obj_center(label); lvgl.lv_label_set_text(label, 'LVGL Test OK'); [lvgl.timer_handler() or time.sleep_ms(10) for _ in range(100)]; print('LVGL test passed')"
+
+test-lvgl-ui:
+	@echo "Running LVGL UI navigation memory test on $(PORT)..."
+	@mpremote connect $(PORT) fs cp examples/lvgl/ui_*.py :
+	@mpremote connect $(PORT) exec "import ui_device_nav_test; ok = ui_device_nav_test.run(); print('PASS' if ok else 'FAIL')"
 
 test-all-modules: test-factorial test-point test-counter test-sensor test-list
 	@echo "All module tests complete!"
