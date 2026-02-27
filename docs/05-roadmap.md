@@ -59,7 +59,7 @@ A 7-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 - Keyword-only arguments, positional-only arguments
 - Remaining class special methods (`__ne__`/`__lt__`/`__gt__`/`__le__`/`__ge__`, `__hash__`, `__iter__`/`__next__`)
  Custom exception classes
-- Closures and generators
+- Closures
 
 ## Phase Overview
 
@@ -79,8 +79,8 @@ Phase 3: Classes                ████████████████
 Phase 4: Exception Handling     ███████████████  ~95% done
   try/except ✅ │ try/finally ✅ │ try/except/else ✅ │ raise ✅ │ custom exceptions
 
-Phase 5: Advanced Features      ░░░░░░░░░░░░░░░  TODO
-  closures │ generators │ list comprehensions │ map/filter
+Phase 5: Advanced Features      ████░░░░░░░░░░░  ~25% done
+  generators ✅ (while/for-range/for-iter + yield) │ closures │ comprehensions │ map/filter
 
 Phase 6: Integration & Polish   █████████████░░  ~85% done
   ESP32 modules ✅ (17 modules on ESP32-C6) │ RTuple optimization ✅ (57x speedup)
@@ -592,20 +592,49 @@ Tasks:
 - [ ] Generate callable closure type
 - [ ] Limit to read-only captures initially
 
-### 5.2 Simple Generators
+### 5.2 Simple Generators ✅ DONE
 
 ```python
-def countdown(n: int) -> Generator[int, None, None]:
+# While-loop generator
+def countdown(n: int):
     while n > 0:
         yield n
         n -= 1
+
+# For-range generator (all forms)
+def squares(n: int):
+    for i in range(n):
+        yield i * i
+
+# For-range with non-zero start
+def range_with_start(n: int):
+    for i in range(1, n):
+        yield i
+
+# For-iter generator (iterate over arbitrary iterables)
+def iter_items(items: list[object]):
+    for x in items:
+        yield x
 ```
 
-Tasks:
-- [ ] Detect generator functions (contain yield)
-- [ ] Transform to state machine
-- [ ] Generate iterator type
-- [ ] Handle `return` in generators
+Implemented:
+- [x] Detect generator functions (contain `yield`)
+- [x] Transform to state machine with `uint16_t state` field
+- [x] Generate custom iterator type with `MP_TYPE_FLAG_ITER_IS_ITERNEXT`
+- [x] Handle `while` loops with yield
+- [x] Handle `for i in range(...)` with yield (all forms: 1-arg, 2-arg, 3-arg)
+- [x] Handle `for x in iterable` with yield (arbitrary iterables via `mp_getiter`/`mp_iternext`)
+- [x] Generator struct stores all local variables and loop state
+- [x] `return` in generator emits `MP_OBJ_STOP_ITERATION`
+
+**Restrictions (raise `NotImplementedError`):**
+- `yield from` not supported
+- `yield` as expression (receiving values) not supported
+- `try`/`with` inside generators not supported
+- Generator methods (classes with `yield`) not supported
+- Generator expressions not supported
+
+See [Blog 24: Generator Implementation](/blogs/24-generator-implementation.md) for detailed C code generation.
 
 ### 5.3 Comprehensions
 
