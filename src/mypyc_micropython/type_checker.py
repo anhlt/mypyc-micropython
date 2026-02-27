@@ -112,6 +112,8 @@ def create_mypy_options(
     options.incremental = False
     options.strict_optional = True
     options.preserve_asts = True  # Keep AST bodies for local type extraction
+    options.ignore_missing_imports = True  # MicroPython/user modules have no stubs
+    options.follow_imports = "skip"  # Don't analyze imported modules (they run on device)
 
     # Annotation requirements
     if check_untyped:
@@ -122,7 +124,7 @@ def create_mypy_options(
     if strict:
         options.warn_redundant_casts = True
         options.warn_unused_ignores = True
-        options.warn_return_any = True
+        options.warn_return_any = False  # Imported modules return Any; don't flag callers
         options.strict_equality = True
         options.disallow_any_generics = True
         options.disallow_subclassing_any = True

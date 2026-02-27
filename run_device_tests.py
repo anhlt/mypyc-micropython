@@ -1,17 +1,6 @@
-#!/usr/bin/env python3
-"""
-Comprehensive test runner for mypyc-micropython on ESP32 device.
+"""Device test runner for mypyc-micropython. Runs directly on MicroPython.
 
-Usage:
-    python run_device_tests.py
-
-This script:
-1. Runs all tests on the connected ESP32 device via mpremote
-2. Tests all compiled modules (factorial, point, counter, sensor, etc.)
-3. Reports pass/fail for each test
-4. Provides overall success rate
-
-Requires: mpremote, ESP32 device connected
+Usage: mpremote connect /dev/cu.usbmodem101 run run_device_tests.py
 """
 
 import argparse
@@ -20,21 +9,16 @@ import sys
 import time
 from typing import Callable
 
-# Default configuration
-DEFAULT_PORT = "/dev/ttyACM0"
-
-# Global port (set from command line args)
-PORT = DEFAULT_PORT
-
-# Test tracking
-total_tests = 0
-passed_tests = 0
-failed_tests: list[tuple[str, str]] = []
-
+_total = 0
+_passed = 0
+_failed = 0
 
 
 # Waveshare ESP32-C6-LCD-1.47 board: RGB LED (WS2812) on GPIO8
 RGB_LED_GPIO = 8
+
+DEFAULT_PORT = "/dev/ttyACM0"
+PORT = DEFAULT_PORT
 
 
 # Number of consecutive connection failures before aborting
@@ -46,13 +30,14 @@ def _flush_serial(port: str) -> None:
     """Flush stale data from serial port to recover from stuck raw REPL."""
     try:
         import serial
+
         s = serial.Serial(port, 115200, timeout=0.5)
         s.reset_input_buffer()
         s.reset_output_buffer()
         # Send Ctrl-C + Ctrl-B to exit raw REPL cleanly
-        s.write(b'\x03\x03')  # Ctrl-C twice to interrupt
+        s.write(b"\x03\x03")  # Ctrl-C twice to interrupt
         time.sleep(0.1)
-        s.write(b'\x02')  # Ctrl-B to exit raw REPL
+        s.write(b"\x02")  # Ctrl-B to exit raw REPL
         time.sleep(0.3)
         s.read(s.in_waiting or 1)  # Drain buffer
         s.close()
@@ -107,8 +92,6 @@ def run_on_device(code: str, port: str = "", timeout: int = 15) -> tuple[bool, s
             return False, str(e)
     _consecutive_failures += 1
     return False, "Failed after retry"
-
-
 
 
 def led_rgb(r: int, g: int, b: int) -> None:
@@ -1683,6 +1666,7 @@ def test_super_calls():
         "10",
     )
 
+
 # Track per-group results for LCD display
 _group_results: list[tuple[str, int, int]] = []  # (name, passed, total)
 
@@ -1718,6 +1702,7 @@ def _update_lcd() -> None:
         "print('ok')"
     )
     run_on_device(code, timeout=10)
+
 
 def run_all_tests():
     """Run all test suites."""
@@ -1757,8 +1742,10 @@ def run_all_tests():
     ]
     for i, suite in enumerate(test_suites):
         if _consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-            print(f"\n[ABORT] Device unresponsive after {MAX_CONSECUTIVE_FAILURES} "
-                   f"consecutive failures. Stopping tests.")
+            print(
+                f"\n[ABORT] Device unresponsive after {MAX_CONSECUTIVE_FAILURES} "
+                f"consecutive failures. Stopping tests."
+            )
             print("         Unplug/replug USB cable and retry.")
             break
         # Check RAM before test group

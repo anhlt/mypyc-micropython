@@ -46,6 +46,9 @@ from .ir import (
     ListNewIR,
     MethodCallIR,
     MethodIR,
+    ModuleAttrIR,
+    ModuleCallIR,
+    ModuleImportIR,
     ModuleIR,
     NameIR,
     ParamAttrIR,
@@ -71,6 +74,7 @@ from .ir import (
     UnboxIR,
     ValueIR,
     WhileIR,
+    YieldIR,
 )
 
 
@@ -125,6 +129,8 @@ class IRPrinter:
         if cls.is_dataclass:
             lines.append(f"{self._i()}@dataclass")
 
+        if cls.is_final_class:
+            lines.append(f"{self._i()}@final")
         if cls.fields:
             lines.append(f"{self._i()}Fields:")
             self._indent_inc()
@@ -146,7 +152,8 @@ class IRPrinter:
         default_str = ""
         if field.has_default:
             default_str = f" = {field.default_value}"
-        return f"{self._i()}{field.name}: {field.py_type} ({field.c_type.name}){default_str}"
+        final_str = " [Final]" if field.is_final else ""
+        return f"{self._i()}{field.name}: {field.py_type} ({field.c_type.name}){default_str}{final_str}"
 
     def print_method(self, method: MethodIR) -> str:
         params = ", ".join(f"{name}: {ctype.name}" for name, ctype in method.params)
@@ -157,9 +164,40 @@ class IRPrinter:
             decorators.append("@classmethod")
         if method.is_property:
             decorators.append("@property")
-
+        if method.is_final:
+            decorators.append("@final")
+        if method.is_private:
+            decorators.append("[private]")
         dec_str = " ".join(decorators) + " " if decorators else ""
         return f"{self._i()}{dec_str}def {method.name}({params}) -> {method.return_type.name}"
+
+    def print_method_detail(self, method: MethodIR) -> str:
+        """Print detailed method info (used when MethodIR is dumped standalone)."""
+        lines = []
+        params = ", ".join(f"{name}: {ctype.name}" for name, ctype in method.params)
+        decorators = []
+        if method.is_static:
+            decorators.append("@staticmethod")
+        if method.is_classmethod:
+            decorators.append("@classmethod")
+        if method.is_property:
+            decorators.append("@property")
+        if method.is_final:
+            decorators.append("@final")
+        if method.is_private:
+            decorators.append("[private]")
+        for dec in decorators:
+            lines.append(f"{self._i()}{dec}")
+        lines.append(f"{self._i()}def {method.name}({params}) -> {method.return_type.name}:")
+        lines.append(f"{self._i()}  c_name: {method.c_name}")
+        lines.append(f"{self._i()}  max_temp: {method.max_temp}")
+        if method.is_virtual:
+            vtable_str = f", vtable_index={method.vtable_index}" if method.vtable_index >= 0 else ""
+            lines.append(f"{self._i()}  virtual: True{vtable_str}")
+        if method.is_special:
+            lines.append(f"{self._i()}  special: True")
+        lines.append(f"{self._i()}  (body from AST -- use cli to build full FuncIR)")
+        return "\n".join(lines)
 
     def print_function(self, func: FuncIR) -> str:
         lines = []
@@ -192,6 +230,8 @@ class IRPrinter:
     def print_stmt(self, stmt: StmtIR) -> str:
         if isinstance(stmt, ReturnIR):
             return self._print_return(stmt)
+        elif isinstance(stmt, YieldIR):
+            return self._print_yield(stmt)
         elif isinstance(stmt, IfIR):
             return self._print_if(stmt)
         elif isinstance(stmt, WhileIR):
@@ -241,6 +281,18 @@ class IRPrinter:
             self._indent_dec()
         value_str = self.print_value(stmt.value) if stmt.value else "None"
         lines.append(f"{self._i()}return {value_str}")
+        return "\n".join(lines)
+
+    def _print_yield(self, stmt: YieldIR) -> str:
+        lines = []
+        if stmt.prelude:
+            lines.append(f"{self._i()}# prelude:")
+            self._indent_inc()
+            for instr in stmt.prelude:
+                lines.append(self.print_instr(instr))
+            self._indent_dec()
+        value_str = self.print_value(stmt.value) if stmt.value else "None"
+        lines.append(f"{self._i()}yield {value_str} [state_id={stmt.state_id}]")
         return "\n".join(lines)
 
     def _print_if(self, stmt: IfIR) -> str:
@@ -502,6 +554,8 @@ class IRPrinter:
         elif isinstance(instr, ListCompIR):
             filter_str = f" if {self.print_value(instr.condition)}" if instr.condition else ""
             return f"{self._i()}{instr.result.name} = [{self.print_value(instr.element)} for {instr.loop_var} in {self.print_value(instr.iterable)}{filter_str}]"
+        elif isinstance(instr, ModuleImportIR):
+            return f"{self._i()}{instr.result.name} = import {instr.module_name}"
         else:
             return f"{self._i()}/* unknown instr: {type(instr).__name__} */"
 
@@ -559,6 +613,11 @@ class IRPrinter:
             upper = self.print_value(value.upper) if value.upper else ""
             step = f":{self.print_value(value.step)}" if value.step else ""
             return f"{lower}:{upper}{step}"
+        elif isinstance(value, ModuleCallIR):
+            args = ", ".join(self.print_value(a) for a in value.args)
+            return f"{value.module_name}.{value.func_name}({args})"
+        elif isinstance(value, ModuleAttrIR):
+            return f"{value.module_name}.{value.attr_name}"
         else:
             return f"<{type(value).__name__}>"
 
@@ -711,6 +770,8 @@ def dump_ir(ir_node: Any, format: str = "text") -> str:
             return printer.print_value(ir_node)
         elif isinstance(ir_node, InstrIR):
             return printer.print_instr(ir_node)
+        elif isinstance(ir_node, MethodIR):
+            return printer.print_method_detail(ir_node)
         else:
             return f"<unsupported: {type(ir_node).__name__}>"
     elif format == "tree":

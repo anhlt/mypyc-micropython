@@ -49,11 +49,14 @@ from .ir import (
     ListNewIR,
     MethodCallIR,
     MethodIR,
+    ModuleAttrIR,
+    ModuleCallIR,
     NameIR,
     ParamAttrIR,
     ParamIR,
     PassIR,
     PrintIR,
+    PropertyInfo,
     RaiseIR,
     ReturnIR,
     RTuple,
@@ -73,6 +76,7 @@ from .ir import (
     UnaryOpIR,
     ValueIR,
     WhileIR,
+    YieldIR,
 )
 
 C_RESERVED_WORDS = {
@@ -160,27 +164,37 @@ class IRBuilder:
         self._used_rtuples: set[RTuple] = set()
         self._uses_print = False
         self._uses_list_opt = False
+        self._uses_imports = False
         self._loop_depth = 0
+        self._yield_state_counter = 0
         self._class_typed_params: dict[str, str] = {}
         self._mypy_local_types: dict[str, str] = {}
         self._external_libs: dict[str, CLibraryDef] = external_libs or {}
         self._import_aliases: dict[str, str] = {}
+        self._imported_modules: set[str] = set()
         self._uses_external_libs: set[str] = set()
-
-    def register_import(self, node: ast.Import | ast.ImportFrom) -> None:
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                module_name = alias.name
-                local_name = alias.asname or alias.name
-                if module_name in self._external_libs:
-                    self._import_aliases[local_name] = module_name
-        elif isinstance(node, ast.ImportFrom):
-            if node.module and node.module in self._external_libs:
-                self._import_aliases[node.module] = node.module
 
     def _fresh_temp(self) -> str:
         self._temp_counter += 1
         return f"_tmp{self._temp_counter}"
+
+    def register_import(self, node: ast.Import | ast.ImportFrom) -> None:
+        """Register import statements for later resolution of module.func() calls."""
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                module_name = alias.name
+                local_name = alias.asname or alias.name
+                self._import_aliases[local_name] = module_name
+                self._imported_modules.add(module_name)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            # from X import Y -- track the module
+            self._import_aliases[node.module] = node.module
+            self._imported_modules.add(node.module)
+
+    @property
+    def imported_modules(self) -> set[str]:
+        """Set of module names that have been imported."""
+        return self._imported_modules
 
     def build_function(self, node: ast.FunctionDef) -> FuncIR:
         self._temp_counter = 0
@@ -191,8 +205,62 @@ class IRBuilder:
         self._used_rtuples = set()
         self._uses_print = False
         self._uses_list_opt = False
+        self._uses_imports = False
+        self._yield_state_counter = 0
         self._class_typed_params = {}
         self._mypy_local_types = {}
+
+        is_generator = any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(node))
+        if is_generator:
+            yield_from_node = next(
+                (n for n in ast.walk(node) if isinstance(n, ast.YieldFrom)),
+                None,
+            )
+            if yield_from_node is not None:
+                raise NotImplementedError(
+                    f"yield from is not supported (line {yield_from_node.lineno})"
+                )
+
+            unsupported_node = next(
+                (n for n in ast.walk(node) if isinstance(n, (ast.Try, ast.With, ast.AsyncWith))),
+                None,
+            )
+            if unsupported_node is not None:
+                raise NotImplementedError(
+                    f"try/with in generator functions is not supported (line {unsupported_node.lineno})"
+                )
+
+            return_with_value = next(
+                (n for n in ast.walk(node) if isinstance(n, ast.Return) and n.value is not None),
+                None,
+            )
+            if return_with_value is not None:
+                raise NotImplementedError(
+                    f"return value in generator is not supported (line {return_with_value.lineno})"
+                )
+
+            for for_node in (n for n in ast.walk(node) if isinstance(n, ast.For)):
+                first_yield = next(
+                    (x for x in ast.walk(for_node) if isinstance(x, (ast.Yield, ast.YieldFrom))),
+                    None,
+                )
+                if first_yield is None:
+                    continue
+
+                # Check if it's a range() call
+                is_range_call = (
+                    isinstance(for_node.iter, ast.Call)
+                    and isinstance(for_node.iter.func, ast.Name)
+                    and for_node.iter.func.id == "range"
+                )
+
+                if is_range_call:
+                    # Validate supported range(...) shapes for generators
+                    if not self._is_supported_generator_range_call(for_node.iter):
+                        raise NotImplementedError(
+                            f"unsupported generator range(...) loop is not supported (line {for_node.lineno})"
+                        )
+                # else: it's a for-iter loop over iterable, which is now allowed
 
         func_name = node.name
         c_func_name = f"{self.c_name}_{sanitize_name(func_name)}"
@@ -270,6 +338,7 @@ class IRBuilder:
             return_type=return_type,
             body_ast=node,
             body=body_ir,
+            is_generator=is_generator,
             is_method=False,
             class_ir=None,
             locals_={
@@ -282,6 +351,7 @@ class IRBuilder:
             arg_types=arg_types,
             uses_print=self._uses_print,
             uses_list_opt=self._uses_list_opt,
+            uses_imports=self._uses_imports,
             used_rtuples=set(self._used_rtuples),
             rtuple_types=dict(self._rtuple_types),
             list_vars=dict(self._list_vars),
@@ -323,6 +393,19 @@ class IRBuilder:
         elif isinstance(stmt, ast.Pass):
             return PassIR()
         elif isinstance(stmt, ast.Expr):
+            if isinstance(stmt.value, ast.Yield):
+                if stmt.value.value is None:
+                    return YieldIR(
+                        value=None,
+                        prelude=[],
+                        state_id=self._next_yield_state_id(),
+                    )
+                value, prelude = self._build_expr(stmt.value.value, locals_)
+                return YieldIR(
+                    value=value,
+                    prelude=prelude,
+                    state_id=self._next_yield_state_id(),
+                )
             if isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str):
                 return None
             if (
@@ -419,6 +502,10 @@ class IRBuilder:
         return RaiseIR(exc_type=exc_type, exc_msg=exc_msg, prelude=prelude)
 
     def _build_for(self, stmt: ast.For, locals_: list[str]) -> ForRangeIR | ForIterIR:
+        # Handle tuple unpacking: for k, v in items
+        if isinstance(stmt.target, ast.Tuple):
+            return self._build_for_tuple_unpack(stmt, locals_)
+
         if not isinstance(stmt.target, ast.Name):
             raise ValueError("Unsupported for loop target")
 
@@ -512,6 +599,59 @@ class IRBuilder:
             body=body,
             iter_prelude=iter_prelude,
             is_new_var=is_new_var,
+        )
+
+    def _build_for_tuple_unpack(self, stmt: ast.For, locals_: list[str]) -> ForIterIR:
+        """Build for loop with tuple unpacking: for k, v in items."""
+        assert isinstance(stmt.target, ast.Tuple)
+
+        # Generate a temp variable to hold each iteration item
+        item_var = f"_item_{self._temp_counter}"
+        self._temp_counter += 1
+        c_item_var = item_var
+
+        # Item var is always new
+        locals_.append(item_var)
+        self._var_types[item_var] = "mp_obj_t"
+
+        # Build tuple unpack targets
+        unpack_targets: list[tuple[str, str, bool, str]] = []
+        for elt in stmt.target.elts:
+            if isinstance(elt, ast.Name):
+                var_name = elt.id
+                c_var_name = sanitize_name(var_name)
+                is_new = var_name not in locals_
+                if is_new:
+                    locals_.append(var_name)
+                    self._var_types[var_name] = "mp_obj_t"
+                unpack_targets.append((var_name, c_var_name, is_new, "mp_obj_t"))
+
+        # Create tuple unpack IR to prepend to body
+        unpack_ir = TupleUnpackIR(
+            targets=unpack_targets,
+            value=NameIR(py_name=item_var, c_name=c_item_var, ir_type=IRType.OBJ),
+            prelude=[],
+        )
+
+        # Build iterable expression
+        iterable, iter_prelude = self._build_expr(stmt.iter, locals_)
+
+        # Build loop body with unpack prepended
+        self._loop_depth += 1
+        body_stmts = [self._build_statement(s, locals_) for s in stmt.body]
+        body_stmts = [s for s in body_stmts if s is not None]
+        self._loop_depth -= 1
+
+        # Prepend tuple unpack to body
+        body = [unpack_ir] + body_stmts
+
+        return ForIterIR(
+            loop_var=item_var,
+            c_loop_var=c_item_var,
+            iterable=iterable,
+            body=body,
+            iter_prelude=iter_prelude,
+            is_new_var=True,
         )
 
     def _build_assign(self, stmt: ast.Assign, locals_: list[str]) -> StmtIR | None:
@@ -610,6 +750,19 @@ class IRBuilder:
             locals_.append(var_name)
         self._var_types[var_name] = c_type
 
+        # Track class-typed local variables for attribute access
+        if stmt.annotation:
+            type_name = None
+            if isinstance(stmt.annotation, ast.Name):
+                type_name = stmt.annotation.id
+            elif isinstance(stmt.annotation, ast.Constant) and isinstance(
+                stmt.annotation.value, str
+            ):
+                # Handle string annotations like "ClassName"
+                type_name = stmt.annotation.value
+            if type_name and type_name in self._known_classes:
+                self._class_typed_params[var_name] = type_name
+
         value: ValueIR | None = None
         prelude: list = []
         if stmt.value is not None:
@@ -637,6 +790,7 @@ class IRBuilder:
             ast.Sub: "-=",
             ast.Mult: "*=",
             ast.Div: "/=",
+            ast.FloorDiv: "//=",
             ast.Mod: "%=",
             ast.BitAnd: "&=",
             ast.BitOr: "|=",
@@ -668,6 +822,12 @@ class IRBuilder:
         return PrintIR(args=args, preludes=preludes)
 
     def _build_expr(self, expr: ast.expr, locals_: list[str]) -> tuple[ValueIR, list]:
+        if isinstance(expr, ast.YieldFrom):
+            raise NotImplementedError(f"yield from is not supported (line {expr.lineno})")
+        if isinstance(expr, ast.Yield):
+            raise NotImplementedError(
+                f"yield as an expression is not supported (line {expr.lineno})"
+            )
         if isinstance(expr, ast.Constant):
             return self._build_constant(expr), []
         elif isinstance(expr, ast.Name):
@@ -944,6 +1104,11 @@ class IRBuilder:
             builtin_kind=None,
         ), all_preludes
 
+    @staticmethod
+    def _is_private_name(name: str) -> bool:
+        """Check if name is a private identifier (__name without trailing __)."""
+        return name.startswith("__") and not name.endswith("__")
+
     def _build_method_call(self, expr: ast.Call, locals_: list[str]) -> tuple[ValueIR, list]:
         if not isinstance(expr.func, ast.Attribute):
             return ConstIR(ir_type=IRType.OBJ, value=None), []
@@ -951,10 +1116,17 @@ class IRBuilder:
         if isinstance(expr.func.value, ast.Name):
             var_name = expr.func.value.id
             if var_name in self._import_aliases:
-                return self._build_clib_call(expr, var_name, locals_)
+                module_name = self._import_aliases[var_name]
+                if module_name in self._external_libs:
+                    return self._build_clib_call(expr, var_name, locals_)
+                return self._build_module_call(expr, var_name, locals_)
 
         receiver, recv_prelude = self._build_expr(expr.func.value, locals_)
         method_name = expr.func.attr
+
+        # Reject external access to private (__method) members
+        if self._is_private_name(method_name):
+            raise TypeError(f"Cannot access private method '{method_name}' from outside its class")
 
         args: list[ValueIR] = []
         all_preludes = list(recv_prelude)
@@ -1014,6 +1186,33 @@ class IRBuilder:
             arg_preludes=arg_preludes,
             is_void=is_void,
             uses_var_args=uses_var_args,
+        ), all_preludes
+
+    def _build_module_call(
+        self, expr: ast.Call, alias: str, locals_: list[str]
+    ) -> tuple[ValueIR, list]:
+        """Build IR for a call on an imported module: module.func(args)."""
+        if not isinstance(expr.func, ast.Attribute):
+            return ConstIR(ir_type=IRType.OBJ, value=None), []
+
+        module_name = self._import_aliases[alias]
+        func_name = expr.func.attr
+        self._uses_imports = True
+
+        args: list[ValueIR] = []
+        arg_preludes: list[list] = []
+        for arg in expr.args:
+            val, prelude = self._build_expr(arg, locals_)
+            args.append(val)
+            arg_preludes.append(prelude)
+        all_preludes = [p for pl in arg_preludes for p in pl]
+
+        return ModuleCallIR(
+            ir_type=IRType.OBJ,
+            module_name=module_name,
+            func_name=func_name,
+            args=args,
+            arg_preludes=arg_preludes,
         ), all_preludes
 
     def _build_class_instantiation(
@@ -1160,25 +1359,37 @@ class IRBuilder:
         if isinstance(expr.value, ast.Attribute) and isinstance(expr.value.value, ast.Name):
             module_alias = expr.value.value.id
             if module_alias in self._import_aliases:
-                return self._build_clib_enum(expr, module_alias, locals_)
+                lib_name = self._import_aliases[module_alias]
+                if lib_name in self._external_libs:
+                    return self._build_clib_enum(expr, module_alias, locals_)
 
         if isinstance(expr.value, ast.Name):
             var_name = expr.value.id
             if var_name in self._import_aliases:
-                lib_name = self._import_aliases[var_name]
-                lib_def = self._external_libs[lib_name]
-                if expr.attr in lib_def.enums:
-                    pass
+                module_name = self._import_aliases[var_name]
+                if module_name in self._external_libs:
+                    lib_def = self._external_libs[module_name]
+                    if expr.attr in lib_def.enums:
+                        return ConstIR(ir_type=IRType.OBJ, value=None), []
+                self._uses_imports = True
+                return ModuleAttrIR(
+                    ir_type=IRType.OBJ,
+                    module_name=module_name,
+                    attr_name=expr.attr,
+                ), []
 
         attr_name = expr.attr
 
+        # Reject external access to private (__attr) members
+        if self._is_private_name(attr_name):
+            raise TypeError(f"Cannot access private attribute '{attr_name}' from outside its class")
         if isinstance(expr.value, ast.Name):
             var_name = expr.value.id
             if var_name in self._class_typed_params:
                 class_name = self._class_typed_params[var_name]
                 class_ir = self._known_classes[class_name]
 
-                for fld in class_ir.get_all_fields():
+                for fld, path in class_ir.get_all_fields_with_path():
                     if fld.name == attr_name:
                         result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
                         return ParamAttrIR(
@@ -1186,6 +1397,7 @@ class IRBuilder:
                             param_name=var_name,
                             c_param_name=sanitize_name(var_name),
                             attr_name=attr_name,
+                            attr_path=path,
                             class_c_name=class_ir.c_name,
                             result_type=result_type,
                         ), []
@@ -1195,6 +1407,7 @@ class IRBuilder:
                     param_name=var_name,
                     c_param_name=sanitize_name(var_name),
                     attr_name=attr_name,
+                    attr_path=attr_name,
                     class_c_name=class_ir.c_name,
                     result_type=IRType.OBJ,
                 ), []
@@ -1358,6 +1571,30 @@ class IRBuilder:
             if parent_class and parent_class in self._known_classes:
                 class_ir = self._known_classes[parent_class]
                 for fld in class_ir.get_all_fields():
+                    if fld.name == expr.attr:
+                        return fld.py_type
+        return None
+
+    def _get_method_attr_class_type(self, expr: ast.Attribute, class_ir: ClassIR) -> str | None:
+        """Get the class type name of an attribute in method context (handles self.attr)."""
+        if isinstance(expr.value, ast.Name):
+            var_name = expr.value.id
+            if var_name == "self":
+                for fld in class_ir.get_all_fields():
+                    if fld.name == expr.attr:
+                        return fld.py_type
+            elif var_name in self._class_typed_params:
+                param_class_name = self._class_typed_params[var_name]
+                if param_class_name in self._known_classes:
+                    param_class_ir = self._known_classes[param_class_name]
+                    for fld in param_class_ir.get_all_fields():
+                        if fld.name == expr.attr:
+                            return fld.py_type
+        elif isinstance(expr.value, ast.Attribute):
+            parent_type = self._get_method_attr_class_type(expr.value, class_ir)
+            if parent_type and parent_type in self._known_classes:
+                parent_ir = self._known_classes[parent_type]
+                for fld in parent_ir.get_all_fields():
                     if fld.name == expr.attr:
                         return fld.py_type
         return None
@@ -1588,13 +1825,17 @@ class IRBuilder:
         class_name = node.name
         c_class_name = f"{self.c_name}_{sanitize_name(class_name)}"
 
-        # Check for dataclass decorator
+        # Check for dataclass and @final decorators
         is_dataclass = False
+        is_final_class = False
         dataclass_info = None
         for decorator in node.decorator_list:
-            if isinstance(decorator, ast.Name) and decorator.id == "dataclass":
-                is_dataclass = True
-                dataclass_info = DataclassInfo()
+            if isinstance(decorator, ast.Name):
+                if decorator.id == "dataclass":
+                    is_dataclass = True
+                    dataclass_info = DataclassInfo()
+                elif decorator.id == "final":
+                    is_final_class = True
             elif isinstance(decorator, ast.Call):
                 if isinstance(decorator.func, ast.Name) and decorator.func.id == "dataclass":
                     is_dataclass = True
@@ -1606,7 +1847,6 @@ class IRBuilder:
                             dataclass_info.eq = bool(kw.value.value)
                         elif kw.arg == "repr" and isinstance(kw.value, ast.Constant):
                             dataclass_info.repr_ = bool(kw.value.value)
-
         # Get base class name
         base_name = None
         if node.bases:
@@ -1622,6 +1862,7 @@ class IRBuilder:
             base_name=base_name,
             is_dataclass=is_dataclass,
             dataclass_info=dataclass_info,
+            is_final_class=is_final_class,
             ast_node=node,
         )
 
@@ -1629,14 +1870,22 @@ class IRBuilder:
         if base_name and base_name in self._known_classes:
             class_ir.base = self._known_classes[base_name]
 
+        # Register in known classes BEFORE parsing body
+        # so that methods can recognize class-typed local variables
+        self._known_classes[class_name] = class_ir
+
         # Parse class body
         self._parse_class_body(node, class_ir)
 
+        # @final class: devirtualize ALL methods (no vtable needed)
+        if is_final_class:
+            class_ir.virtual_methods.clear()
+            for method_ir in class_ir.methods.values():
+                method_ir.is_virtual = False
+                method_ir.is_final = True
+
         if is_dataclass and dataclass_info:
             dataclass_info.fields = list(class_ir.fields)
-
-        # Register in known classes
-        self._known_classes[class_name] = class_ir
 
         return class_ir
 
@@ -1650,17 +1899,49 @@ class IRBuilder:
         for stmt in node.body:
             if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
                 field_name = stmt.target.id
+
+                # Detect Final[type] or bare Final annotation
+                is_final_field = False
+                inner_annotation = stmt.annotation
+                if isinstance(stmt.annotation, ast.Subscript):
+                    if (
+                        isinstance(stmt.annotation.value, ast.Name)
+                        and stmt.annotation.value.id == "Final"
+                    ):
+                        is_final_field = True
+                        inner_annotation = stmt.annotation.slice
+                elif isinstance(stmt.annotation, ast.Name) and stmt.annotation.id == "Final":
+                    is_final_field = True
+                    inner_annotation = None  # type inferred from value
+
                 if field_name in mypy_field_types:
                     py_type = self._mypy_type_to_py_type(mypy_field_types[field_name])
                     c_type = CType.from_python_type(py_type)
+                elif inner_annotation is not None:
+                    py_type = self._annotation_to_py_type(inner_annotation)
+                    c_type = CType.from_python_type(py_type)
                 else:
-                    py_type = self._annotation_to_py_type(stmt.annotation)
+                    # Bare Final without type -- infer from value
+                    py_type = "object"
+                    if stmt.value and isinstance(stmt.value, ast.Constant):
+                        val = stmt.value.value
+                        if isinstance(val, bool):
+                            py_type = "bool"
+                        elif isinstance(val, int):
+                            py_type = "int"
+                        elif isinstance(val, float):
+                            py_type = "float"
+                        elif isinstance(val, str):
+                            py_type = "str"
                     c_type = CType.from_python_type(py_type)
 
                 has_default = stmt.value is not None
                 default_value = None
+                final_value = None
                 if has_default and isinstance(stmt.value, ast.Constant):
                     default_value = stmt.value.value
+                    if is_final_field:
+                        final_value = stmt.value.value
 
                 field_ir = FieldIR(
                     name=field_name,
@@ -1669,6 +1950,8 @@ class IRBuilder:
                     has_default=has_default,
                     default_value=default_value,
                     default_ast=stmt.value,
+                    is_final=is_final_field,
+                    final_value=final_value,
                 )
                 class_ir.fields.append(field_ir)
 
@@ -1680,6 +1963,31 @@ class IRBuilder:
         method_name = node.name
         c_method_name = f"{class_ir.c_name}_{sanitize_name(method_name)}"
 
+        is_static = False
+        is_classmethod = False
+        is_property = False
+        is_final = False
+        property_name: str | None = None
+        is_property_setter = False
+        for decorator in node.decorator_list:
+            if isinstance(decorator, ast.Name):
+                if decorator.id == "staticmethod":
+                    is_static = True
+                elif decorator.id == "classmethod":
+                    is_classmethod = True
+                elif decorator.id == "property":
+                    is_property = True
+                elif decorator.id == "final":
+                    is_final = True
+            elif (
+                isinstance(decorator, ast.Attribute)
+                and decorator.attr == "setter"
+                and isinstance(decorator.value, ast.Name)
+            ):
+                is_property = True
+                is_property_setter = True
+                property_name = decorator.value.id
+                c_method_name = f"{class_ir.c_name}_{sanitize_name(property_name)}_setter"
         mypy_method = self._get_mypy_method_type(class_ir.name, method_name)
         mypy_param_types: dict[str, str] = {}
         mypy_return_type: str | None = None
@@ -1688,7 +1996,8 @@ class IRBuilder:
             mypy_return_type = mypy_method.return_type
 
         params: list[tuple[str, CType]] = []
-        for arg in node.args.args[1:]:
+        method_args = node.args.args if (is_static or is_classmethod) else node.args.args[1:]
+        for arg in method_args:
             if arg.arg in mypy_param_types:
                 py_type = self._mypy_type_to_py_type(mypy_param_types[arg.arg])
                 c_type = CType.from_python_type(py_type)
@@ -1713,7 +2022,13 @@ class IRBuilder:
                     return_type = CType.VOID
 
         is_special = method_name.startswith("__") and method_name.endswith("__")
-        is_virtual = not is_special or method_name in ("__len__", "__getitem__", "__setitem__")
+        is_private = method_name.startswith("__") and not method_name.endswith("__")
+        is_virtual = (not is_static and not is_classmethod and not is_property) and (
+            not is_special or method_name in ("__len__", "__getitem__", "__setitem__")
+        )
+        # Private (__method) or @final methods cannot be overridden => not virtual
+        if is_private or is_final:
+            is_virtual = False
 
         method_ir = MethodIR(
             name=method_name,
@@ -1722,11 +2037,28 @@ class IRBuilder:
             return_type=return_type,
             body_ast=node,
             is_virtual=is_virtual,
+            is_static=is_static,
+            is_classmethod=is_classmethod,
+            is_property=is_property,
             is_special=is_special,
+            is_private=is_private,
+            is_final=is_final,
             docstring=ast.get_docstring(node),
         )
 
-        class_ir.methods[method_name] = method_ir
+        if is_property and is_property_setter and property_name is not None:
+            class_ir.methods[f"_prop_{property_name}_setter"] = method_ir
+            if property_name in class_ir.properties:
+                class_ir.properties[property_name].setter = method_ir
+        else:
+            class_ir.methods[method_name] = method_ir
+            if is_property:
+                if method_name in class_ir.properties:
+                    class_ir.properties[method_name].getter = method_ir
+                else:
+                    class_ir.properties[method_name] = PropertyInfo(
+                        name=method_name, getter=method_ir
+                    )
 
         if is_virtual and not is_special:
             class_ir.virtual_methods.append(method_name)
@@ -1735,8 +2067,26 @@ class IRBuilder:
             class_ir.has_init = True
         elif method_name == "__repr__":
             class_ir.has_repr = True
+        elif method_name == "__str__":
+            class_ir.has_str = True
         elif method_name == "__eq__":
             class_ir.has_eq = True
+        elif method_name == "__ne__":
+            class_ir.has_ne = True
+        elif method_name == "__lt__":
+            class_ir.has_lt = True
+        elif method_name == "__le__":
+            class_ir.has_le = True
+        elif method_name == "__gt__":
+            class_ir.has_gt = True
+        elif method_name == "__ge__":
+            class_ir.has_ge = True
+        elif method_name == "__hash__":
+            class_ir.has_hash = True
+        elif method_name == "__iter__":
+            class_ir.has_iter = True
+        elif method_name == "__next__":
+            class_ir.has_next = True
 
     def build_method_body(
         self, method_ir: MethodIR, class_ir: ClassIR, native: bool = False
@@ -1759,13 +2109,42 @@ class IRBuilder:
         self._used_rtuples = set()
         self._uses_print = False
         self._uses_list_opt = False
+        self._yield_state_counter = 0
+
+        first_yield = next(
+            (n for n in ast.walk(method_ir.body_ast) if isinstance(n, (ast.Yield, ast.YieldFrom))),
+            None,
+        )
+        if first_yield is not None:
+            raise NotImplementedError(
+                f"generator methods are not supported (line {first_yield.lineno})"
+            )
 
         # Set up parameter types
         for param_name, param_type in method_ir.params:
             self._var_types[param_name] = param_type.to_c_type_str()
 
+        # Track class-typed parameters for attribute access
+        self._class_typed_params = {}
+        method_args = method_ir.body_ast.args.args
+        if not method_ir.is_static and not method_ir.is_classmethod:
+            method_args = method_args[1:]  # Skip self
+        for arg in method_args:
+            if arg.annotation:
+                type_name = None
+                if isinstance(arg.annotation, ast.Name):
+                    type_name = arg.annotation.id
+                elif isinstance(arg.annotation, ast.Constant) and isinstance(
+                    arg.annotation.value, str
+                ):
+                    type_name = arg.annotation.value
+                if type_name and type_name in self._known_classes:
+                    self._class_typed_params[arg.arg] = type_name
+
         # Track self and params as locals
-        local_vars = ["self"] + [p[0] for p in method_ir.params]
+        local_vars = [p[0] for p in method_ir.params]
+        if not method_ir.is_static and not method_ir.is_classmethod:
+            local_vars.insert(0, "self")
 
         body_ir: list[StmtIR] = []
         for stmt in method_ir.body_ast.body:
@@ -1787,6 +2166,10 @@ class IRBuilder:
         self, stmt: ast.stmt, locals_: list[str], class_ir: ClassIR, native: bool
     ) -> StmtIR | None:
         """Build statement IR in method context."""
+        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, (ast.Yield, ast.YieldFrom)):
+            raise NotImplementedError(
+                f"generator methods are not supported (line {stmt.value.lineno})"
+            )
         if isinstance(stmt, ast.Return):
             return self._build_method_return(stmt, locals_, class_ir, native)
         elif isinstance(stmt, ast.Assign):
@@ -1810,6 +2193,8 @@ class IRBuilder:
             return ContinueIR()
         elif isinstance(stmt, ast.Pass):
             return PassIR()
+        elif isinstance(stmt, ast.Raise):
+            return self._build_method_raise(stmt, locals_, class_ir, native)
         return None
 
     def _build_method_return(
@@ -1820,6 +2205,32 @@ class IRBuilder:
             return ReturnIR(value=None, prelude=[])
         value, prelude = self._build_method_expr(stmt.value, locals_, class_ir, native)
         return ReturnIR(value=value, prelude=prelude)
+
+    def _build_method_raise(
+        self, stmt: ast.Raise, locals_: list[str], class_ir: ClassIR, native: bool
+    ) -> RaiseIR:
+        """Build raise statement in method context."""
+        if stmt.exc is None:
+            return RaiseIR(is_reraise=True)
+
+        exc_type: str | None = None
+        exc_msg: ValueIR | None = None
+        prelude: list = []
+
+        if isinstance(stmt.exc, ast.Call):
+            if isinstance(stmt.exc.func, ast.Name):
+                exc_type = stmt.exc.func.id
+            elif isinstance(stmt.exc.func, ast.Attribute):
+                exc_type = stmt.exc.func.attr
+
+            if stmt.exc.args:
+                exc_msg, prelude = self._build_method_expr(
+                    stmt.exc.args[0], locals_, class_ir, native
+                )
+        elif isinstance(stmt.exc, ast.Name):
+            exc_type = stmt.exc.id
+
+        return RaiseIR(exc_type=exc_type, exc_msg=exc_msg, prelude=prelude)
 
     def _build_method_assign(
         self, stmt: ast.Assign, locals_: list[str], class_ir: ClassIR, native: bool
@@ -1908,7 +2319,20 @@ class IRBuilder:
         is_new = var_name not in locals_
         if is_new:
             locals_.append(var_name)
-            self._var_types[var_name] = c_type
+        self._var_types[var_name] = c_type
+
+        # Track class-typed local variables for attribute access
+        if stmt.annotation:
+            type_name = None
+            if isinstance(stmt.annotation, ast.Name):
+                type_name = stmt.annotation.id
+            elif isinstance(stmt.annotation, ast.Constant) and isinstance(
+                stmt.annotation.value, str
+            ):
+                # Handle string annotations like "ClassName"
+                type_name = stmt.annotation.value
+            if type_name and type_name in self._known_classes:
+                self._class_typed_params[var_name] = type_name
 
         return AnnAssignIR(
             target=var_name,
@@ -1928,6 +2352,7 @@ class IRBuilder:
             ast.Sub: "-=",
             ast.Mult: "*=",
             ast.Div: "/=",
+            ast.FloorDiv: "//=",
             ast.Mod: "%=",
             ast.BitAnd: "&=",
             ast.BitOr: "|=",
@@ -1991,6 +2416,10 @@ class IRBuilder:
         self, stmt: ast.For, locals_: list[str], class_ir: ClassIR, native: bool
     ) -> ForRangeIR | ForIterIR:
         """Build for statement in method context."""
+        # Handle tuple unpacking: for k, v in items
+        if isinstance(stmt.target, ast.Tuple):
+            return self._build_method_for_tuple_unpack(stmt, locals_, class_ir, native)
+
         if not isinstance(stmt.target, ast.Name):
             raise ValueError("Unsupported for loop target")
 
@@ -2109,6 +2538,8 @@ class IRBuilder:
         self, expr: ast.expr, locals_: list[str], class_ir: ClassIR, native: bool
     ) -> tuple[ValueIR, list]:
         """Build expression in method context, handling self.attr and self.method()."""
+        if isinstance(expr, (ast.Yield, ast.YieldFrom)):
+            raise NotImplementedError(f"generator methods are not supported (line {expr.lineno})")
         # Handle self.attr and param.attr for typed class params
         if isinstance(expr, ast.Attribute):
             if isinstance(expr.value, ast.Name):
@@ -2136,7 +2567,7 @@ class IRBuilder:
                     param_class_name = self._class_typed_params[var_name]
                     param_class_ir = self._known_classes[param_class_name]
 
-                    for fld in param_class_ir.get_all_fields():
+                    for fld, path in param_class_ir.get_all_fields_with_path():
                         if fld.name == attr_name:
                             result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
                             return ParamAttrIR(
@@ -2144,6 +2575,7 @@ class IRBuilder:
                                 param_name=var_name,
                                 c_param_name=sanitize_name(var_name),
                                 attr_name=attr_name,
+                                attr_path=path,
                                 class_c_name=param_class_ir.c_name,
                                 result_type=result_type,
                             ), []
@@ -2153,9 +2585,33 @@ class IRBuilder:
                         param_name=var_name,
                         c_param_name=sanitize_name(var_name),
                         attr_name=attr_name,
+                        attr_path=attr_name,
                         class_c_name=param_class_ir.c_name,
                         result_type=IRType.OBJ,
                     ), []
+
+            # Handle chained attribute access: self.attr1.attr2 or param.attr1.attr2
+            if isinstance(expr.value, ast.Attribute):
+                attr_name = expr.attr
+                base_class_name = self._get_method_attr_class_type(expr.value, class_ir)
+                if base_class_name and base_class_name in self._known_classes:
+                    base_class_ir = self._known_classes[base_class_name]
+                    base_value, base_prelude = self._build_method_expr(
+                        expr.value, locals_, class_ir, native
+                    )
+                    for fld in base_class_ir.get_all_fields():
+                        if fld.name == attr_name:
+                            result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
+                            temp_name = self._fresh_temp()
+                            result_temp = TempIR(ir_type=result_type, name=temp_name)
+                            attr_access = AttrAccessIR(
+                                result=result_temp,
+                                obj=base_value,
+                                attr_name=attr_name,
+                                class_c_name=base_class_ir.c_name,
+                                result_type=result_type,
+                            )
+                            return result_temp, base_prelude + [attr_access]
 
         if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute):
             if (
@@ -2241,11 +2697,19 @@ class IRBuilder:
                 ast.RShift: ">>",
             }
             c_op = op_map.get(type(expr.op), "+")
-            result_type = (
-                IRType.FLOAT
-                if (left.ir_type == IRType.FLOAT or right.ir_type == IRType.FLOAT)
-                else IRType.INT
-            )
+            # Determine result type: OBJ if either operand is OBJ (e.g., string concat)
+            if left.ir_type == IRType.OBJ or right.ir_type == IRType.OBJ:
+                # Subscript on OBJ still returns INT (list indexing)
+                left_is_subscript = isinstance(left, SubscriptIR)
+                right_is_subscript = isinstance(right, SubscriptIR)
+                if left_is_subscript or right_is_subscript:
+                    result_type = IRType.INT
+                else:
+                    result_type = IRType.OBJ
+            elif left.ir_type == IRType.FLOAT or right.ir_type == IRType.FLOAT:
+                result_type = IRType.FLOAT
+            else:
+                result_type = IRType.INT
             return BinOpIR(
                 ir_type=result_type,
                 left=left,
@@ -2363,6 +2827,12 @@ class IRBuilder:
             )
             method_name = expr.func.attr
 
+            # Allow self.__method() but reject other_obj.__method()
+            is_self_call = isinstance(expr.func.value, ast.Name) and expr.func.value.id == "self"
+            if self._is_private_name(method_name) and not is_self_call:
+                raise TypeError(
+                    f"Cannot access private method '{method_name}' from outside its class"
+                )
             args: list[ValueIR] = []
             for arg in expr.args:
                 val, _ = self._build_method_expr(arg, locals_, class_ir, native)
@@ -2440,3 +2910,33 @@ class IRBuilder:
             is_builtin=False,
             builtin_kind=None,
         ), all_preludes
+
+    def _next_yield_state_id(self) -> int:
+        self._yield_state_counter += 1
+        return self._yield_state_counter
+
+    def _is_supported_generator_range_call(self, call: ast.Call) -> bool:
+        if not (
+            isinstance(call.func, ast.Name) and call.func.id == "range" and len(call.keywords) == 0
+        ):
+            return False
+
+        def _is_int_name_or_int_const(arg: ast.expr) -> bool:
+            if isinstance(arg, ast.Name):
+                return True
+            return isinstance(arg, ast.Constant) and isinstance(arg.value, int)
+
+        args = call.args
+        if len(args) == 1:
+            return _is_int_name_or_int_const(args[0])
+        if len(args) == 2:
+            # Allow range(start, end) where both are int/name
+            return _is_int_name_or_int_const(args[0]) and _is_int_name_or_int_const(args[1])
+        if len(args) == 3:
+            # Allow range(start, end, step) only if step is constant 1
+            if not _is_int_name_or_int_const(args[0]):
+                return False
+            if not _is_int_name_or_int_const(args[1]):
+                return False
+            return isinstance(args[2], ast.Constant) and args[2].value == 1
+        return False

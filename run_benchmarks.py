@@ -1,1852 +1,73 @@
-#!/usr/bin/env python3
 """
-Benchmark runner comparing native compiled modules vs vanilla MicroPython.
+MicroPython benchmark runner - runs directly on device.
 
 Usage:
-    python run_benchmarks.py --port /dev/cu.usbmodem2101
+    mpremote connect /dev/cu.usbmodem2101 run run_benchmarks.py
+    # or via Makefile:
+    make benchmark PORT=/dev/cu.usbmodem2101
 
-This script runs identical algorithms as both:
-1. Native C modules (compiled with mypyc-micropython)
-2. Pure Python executed by MicroPython interpreter
-
-Reports timing comparison and speedup factor.
+Compares native compiled modules vs vanilla MicroPython interpreter.
 """
 
-import argparse
-import subprocess
-import sys
+import gc
+import time
 
-DEFAULT_PORT = "/dev/ttyACM0"
-PORT = DEFAULT_PORT
-
-# Benchmark definitions: (name, native_code, python_code, iterations)
-BENCHMARKS = [
-    (
-        "sum_range(1000) x100",
-        """
-import list_operations
-import time
-start = time.ticks_us()
-for _ in range(100):
-    list_operations.sum_range(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def sum_range(n):
-    total = 0
-    for i in range(n):
-        total += i
-    return total
-start = time.ticks_us()
-for _ in range(100):
-    sum_range(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "build_squares(500) x100",
-        """
-import list_operations
-import time
-start = time.ticks_us()
-for _ in range(100):
-    list_operations.build_squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def build_squares(n):
-    result = []
-    for i in range(n):
-        result.append(i * i)
-    return result
-start = time.ticks_us()
-for _ in range(100):
-    build_squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "matrix_sum(50,50) x100",
-        """
-import list_operations
-import time
-start = time.ticks_us()
-for _ in range(100):
-    list_operations.matrix_sum(50, 50)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def matrix_sum(rows, cols):
-    total = 0
-    for i in range(rows):
-        for j in range(cols):
-            total += i + j
-    return total
-start = time.ticks_us()
-for _ in range(100):
-    matrix_sum(50, 50)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "reverse_sum(1000) x100",
-        """
-import list_operations
-import time
-start = time.ticks_us()
-for _ in range(100):
-    list_operations.reverse_sum(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def reverse_sum(n):
-    total = 0
-    for i in range(n, 0, -1):
-        total += i
-    return total
-start = time.ticks_us()
-for _ in range(100):
-    reverse_sum(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "factorial(12) x1000",
-        """
-import factorial
-import time
-start = time.ticks_us()
-for _ in range(1000):
-    factorial.factorial(12)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def factorial(n):
-    if n <= 1:
-        return 1
-    return n * factorial(n - 1)
-start = time.ticks_us()
-for _ in range(1000):
-    factorial(12)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "fib(20) x100",
-        """
-import factorial
-import time
-start = time.ticks_us()
-for _ in range(100):
-    factorial.fib(20)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def fib(n):
-    if n <= 1:
-        return n
-    return fib(n - 2) + fib(n - 1)
-start = time.ticks_us()
-for _ in range(100):
-    fib(20)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "is_prime(9973) x1000",
-        """
-import algorithms
-import time
-start = time.ticks_us()
-for _ in range(1000):
-    algorithms.is_prime(9973)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def is_prime(n):
-    if n < 2:
-        return False
-    if n == 2:
-        return True
-    if n % 2 == 0:
-        return False
-    i = 3
-    while i * i <= n:
-        if n % i == 0:
-            return False
-        i += 2
-    return True
-start = time.ticks_us()
-for _ in range(1000):
-    is_prime(9973)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "gcd(46368, 28657) x10000",
-        """
-import algorithms
-import time
-start = time.ticks_us()
-for _ in range(10000):
-    algorithms.gcd(46368, 28657)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def gcd(a, b):
-    while b:
-        a, b = b, a % b
-    return a
-start = time.ticks_us()
-for _ in range(10000):
-    gcd(46368, 28657)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "sum_list([1..100]) x1000",
-        """
-import list_operations
-import time
-lst = list(range(100))
-start = time.ticks_us()
-for _ in range(1000):
-    list_operations.sum_list(lst)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def sum_list(lst):
-    total = 0
-    for x in lst:
-        total += x
-    return total
-lst = list(range(100))
-start = time.ticks_us()
-for _ in range(1000):
-    sum_list(lst)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "tuple ops x10000",
-        """
-import tuple_operations as t
-import time
-start = time.ticks_us()
-for _ in range(10000):
-    p = t.make_point()
-    t.unpack_pair(p)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def make_point():
-    return (10, 20)
-def unpack_pair(t):
-    a, b = t
-    return a + b
-start = time.ticks_us()
-for _ in range(10000):
-    p = make_point()
-    unpack_pair(p)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "rtuple ops x10000",
-        """
-import tuple_operations as t
-import time
-start = time.ticks_us()
-for _ in range(10000):
-    t.rtuple_sum_fields()
-    t.rtuple_distance_squared(0, 0, 3, 4)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def sum_fields():
-    point = (15, 25)
-    return point[0] + point[1]
-def distance_squared(x1, y1, x2, y2):
-    p1 = (x1, y1)
-    p2 = (x2, y2)
-    dx = p2[0] - p1[0]
-    dy = p2[1] - p1[1]
-    return dx * dx + dy * dy
-start = time.ticks_us()
-for _ in range(10000):
-    sum_fields()
-    distance_squared(0, 0, 3, 4)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "rtuple internal x100",
-        """
-import tuple_operations as t
-import time
-start = time.ticks_us()
-for _ in range(100):
-    t.rtuple_benchmark_internal(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def benchmark_internal(n):
-    total = 0
-    i = 0
-    while i < n:
-        point = (i, i * 2)
-        total += point[0] + point[1]
-        i += 1
-    return total
-start = time.ticks_us()
-for _ in range(100):
-    benchmark_internal(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "list[tuple] x500",
-        """
-import tuple_operations as t
-import time
-points = [(i, i * 2, i * 3) for i in range(100)]
-start = time.ticks_us()
-for _ in range(500):
-    t.sum_points_list(points, 100)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def sum_points_list(points, count):
-    total = 0
-    i = 0
-    while i < count:
-        p = points[i]
-        total = total + p[0] + p[1] + p[2]
-        i = i + 1
-    return total
-points = [(i, i * 2, i * 3) for i in range(100)]
-start = time.ticks_us()
-for _ in range(500):
-    sum_points_list(points, 100)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "set build+check x1000",
-        """
-import set_operations as s
-import time
-start = time.ticks_us()
-for _ in range(1000):
-    s.build_set_incremental(50)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def build_set_incremental(n):
-    s = set()
-    for i in range(n):
-        s.add(i % 10)
-    return len(s)
-start = time.ticks_us()
-for _ in range(1000):
-    build_set_incremental(50)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "Point class x10000",
-        """
-import point
-import time
-start = time.ticks_us()
-for _ in range(10000):
-    p = point.Point(3, 4)
-    p.distance_squared()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Point:
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
-    def distance_squared(self):
-        return self.x * self.x + self.y * self.y
-start = time.ticks_us()
-for _ in range(10000):
-    p = Point(3, 4)
-    p.distance_squared()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "count_ones(0x7FFFFFFF) x10000",
-        """
-import bitwise
-import time
-start = time.ticks_us()
-for _ in range(10000):
-    bitwise.count_ones(0x7FFFFFFF)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def count_ones(n):
-    count = 0
-    while n:
-        count += n & 1
-        n >>= 1
-    return count
-start = time.ticks_us()
-for _ in range(10000):
-    count_ones(0x7FFFFFFF)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "sum_builtin(1000) x1000",
-        """
-import builtins_demo
-import time
-lst = list(range(1000))
-start = time.ticks_us()
-for _ in range(1000):
-    builtins_demo.sum_list(lst)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-lst = list(range(1000))
-start = time.ticks_us()
-for _ in range(1000):
-    sum(lst)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "sum_typed_list(1000) x1000",
-        """
-import builtins_demo
-import time
-lst = list(range(1000))
-start = time.ticks_us()
-for _ in range(1000):
-    builtins_demo.sum_int_list(lst)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-lst = list(range(1000))
-start = time.ticks_us()
-for _ in range(1000):
-    sum(lst)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "clamp_list(200) x1000",
-        """
-import builtins_demo
-import time
-values = list(range(-100, 100))
-start = time.ticks_us()
-for _ in range(1000):
-    builtins_demo.clamp_list(values, 0, 50)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def clamp_list(values, low, high):
-    result = []
-    for v in values:
-        clamped = max(low, min(v, high))
-        result.append(clamped)
-    return result
-values = list(range(-100, 100))
-start = time.ticks_us()
-for _ in range(1000):
-    clamp_list(values, 0, 50)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "find_extremes(1000) x1000",
-        """
-import builtins_demo
-import time
-lst = list(range(1, 1001))
-start = time.ticks_us()
-for _ in range(1000):
-    builtins_demo.find_extremes_sum(lst)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def find_extremes(lst):
-    return min(lst) + max(lst)
-lst = list(range(1, 1001))
-start = time.ticks_us()
-for _ in range(1000):
-    find_extremes(lst)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "sum_all(*100) x1000",
-        """
-import star_args
-import time
-args = tuple(range(100))
-start = time.ticks_us()
-for _ in range(1000):
-    star_args.sum_all(*args)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def sum_all(*numbers):
-    total = 0
-    for x in numbers:
-        total += x
-    return total
-args = tuple(range(100))
-start = time.ticks_us()
-for _ in range(1000):
-    sum_all(*args)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "max_of_args(*50) x1000",
-        """
-import star_args
-import time
-args = tuple(range(50))
-start = time.ticks_us()
-for _ in range(1000):
-    star_args.max_of_args(*args)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def max_of_args(*nums):
-    result = 0
-    first = True
-    for n in nums:
-        if first:
-            result = n
-            first = False
-        elif n > result:
-            result = n
-    return result
-args = tuple(range(50))
-start = time.ticks_us()
-for _ in range(1000):
-    max_of_args(*args)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "chained_attr x10000",
-        """
-import chained_attr as ca
-import time
-tl = ca.Point(0, 0)
-br = ca.Point(100, 50)
-rect = ca.Rectangle(tl, br)
-start = time.ticks_us()
-for _ in range(10000):
-    ca.get_width(rect)
-    ca.get_height(rect)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Point:
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
-class Rectangle:
-    def __init__(self, tl, br):
-        self.top_left = tl
-        self.bottom_right = br
-def get_width(r):
-    return r.bottom_right.x - r.top_left.x
-def get_height(r):
-    return r.bottom_right.y - r.top_left.y
-tl = Point(0, 0)
-br = Point(100, 50)
-rect = Rectangle(tl, br)
-start = time.ticks_us()
-for _ in range(10000):
-    get_width(rect)
-    get_height(rect)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "container_attr x10000",
-        """
-import container_attrs as ca
-import time
-inner = ca.Inner([0, 1, 2], {'key': 42})
-outer = ca.Outer(inner, 'test')
-start = time.ticks_us()
-for _ in range(10000):
-    ca.benchmark_inner_list_update(outer, 1)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Inner:
-    def __init__(self, items, data):
-        self.items = items
-        self.data = data
-class Outer:
-    def __init__(self, inner, name):
-        self.inner = inner
-        self.name = name
-def benchmark(o, n):
-    i = 0
-    while i < n:
-        o.inner.items[0] = i
-        i += 1
-    return o.inner.items[0]
-inner = Inner([0, 1, 2], {'key': 42})
-outer = Outer(inner, 'test')
-start = time.ticks_us()
-for _ in range(10000):
-    benchmark(outer, 1)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "inner_list_update(10000) x10",
-        """
-import container_attrs as ca
-import time
-inner = ca.Inner([0, 1, 2], {})
-outer = ca.Outer(inner, 'test')
-start = time.ticks_us()
-for _ in range(10):
-    ca.benchmark_inner_list_update(outer, 10000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Inner:
-    def __init__(self, items, data):
-        self.items = items
-        self.data = data
-class Outer:
-    def __init__(self, inner, name):
-        self.inner = inner
-        self.name = name
-def benchmark(o, n):
-    i = 0
-    while i < n:
-        o.inner.items[0] = i
-        i += 1
-    return o.inner.items[0]
-inner = Inner([0, 1, 2], {})
-outer = Outer(inner, 'test')
-start = time.ticks_us()
-for _ in range(10):
-    benchmark(outer, 10000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "str.upper() x10000",
-        """
-import string_operations as s
-import time
-text = "hello world"
-start = time.ticks_us()
-for _ in range(10000):
-    s.to_upper(text)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-text = "hello world"
-start = time.ticks_us()
-for _ in range(10000):
-    text.upper()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "str.replace() x10000",
-        """
-import string_operations as s
-import time
-text = "hello world hello"
-start = time.ticks_us()
-for _ in range(10000):
-    s.replace_string(text, "hello", "hi")
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-text = "hello world hello"
-start = time.ticks_us()
-for _ in range(10000):
-    text.replace("hello", "hi")
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "str.find() x10000",
-        """
-import string_operations as s
-import time
-text = "hello world hello world"
-start = time.ticks_us()
-for _ in range(10000):
-    s.find_substring(text, "world")
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-text = "hello world hello world"
-start = time.ticks_us()
-for _ in range(10000):
-    text.find("world")
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "str.split() x5000",
-        """
-import string_operations as s
-import time
-text = "a,b,c,d,e,f,g,h,i,j"
-start = time.ticks_us()
-for _ in range(5000):
-    s.split_on_sep(text, ",")
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-text = "a,b,c,d,e,f,g,h,i,j"
-start = time.ticks_us()
-for _ in range(5000):
-    text.split(",")
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "str.join() x5000",
-        """
-import string_operations as s
-import time
-items = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]
-start = time.ticks_us()
-for _ in range(5000):
-    s.join_strings(",", items)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-items = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]
-start = time.ticks_us()
-for _ in range(5000):
-    ",".join(items)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "str.strip() x10000",
-        """
-import string_operations as s
-import time
-text = "  hello world  "
-start = time.ticks_us()
-for _ in range(10000):
-    s.strip_string(text)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-text = "  hello world  "
-start = time.ticks_us()
-for _ in range(10000):
-    text.strip()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "str concat x10000",
-        """
-import string_operations as s
-import time
-a = "hello"
-b = " world"
-start = time.ticks_us()
-for _ in range(10000):
-    s.concat_strings(a, b)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-a = "hello"
-b = " world"
-start = time.ticks_us()
-for _ in range(10000):
-    a + b
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "normalize_text x1000",
-        """
-import string_operations as s
-import time
-text = "  Hello   World  "
-start = time.ticks_us()
-for _ in range(1000):
-    s.normalize_text(text)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def normalize_text(text):
-    s = text.lower()
-    s = s.strip()
-    while "  " in s:
-        s = s.replace("  ", " ")
-    return s
-text = "  Hello   World  "
-start = time.ticks_us()
-for _ in range(1000):
-    normalize_text(text)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "sum_3_points x1000",
-        """
-import class_param as cp
-import time
-p1 = cp.Point(1, 2)
-p2 = cp.Point(3, 4)
-p3 = cp.Point(5, 6)
-start = time.ticks_us()
-for _ in range(1000):
-    cp.sum_three_points(p1, p2, p3)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Point:
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
-def sum_three_points(p1, p2, p3):
-    return p1.x + p1.y + p2.x + p2.y + p3.x + p3.y
-p1 = Point(1, 2)
-p2 = Point(3, 4)
-p3 = Point(5, 6)
-start = time.ticks_us()
-for _ in range(1000):
-    sum_three_points(p1, p2, p3)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    # List comprehension benchmarks
-    (
-        "listcomp squares(500) x100",
-        """
-import list_comprehension as lc
-import time
-start = time.ticks_us()
-for _ in range(100):
-    lc.squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def squares(n):
-    return [x * x for x in range(n)]
-start = time.ticks_us()
-for _ in range(100):
-    squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_init x1000",
-        """
-import super_calls
-import time
-start = time.ticks_us()
-for _ in range(1000):
-    super_calls.Dog("Rex", 5)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-start = time.ticks_us()
-for _ in range(1000):
-    Dog("Rex", 5)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "listcomp evens(1000) x100",
-        """
-import list_comprehension as lc
-import time
-start = time.ticks_us()
-for _ in range(100):
-    lc.evens(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def evens(n):
-    return [x for x in range(n) if x % 2 == 0]
-start = time.ticks_us()
-for _ in range(100):
-    evens(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_method x10000",
-        """
-import super_calls
-import time
-dog = super_calls.Dog("Rex", 5)
-start = time.ticks_us()
-for _ in range(10000):
-    dog.describe()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-start = time.ticks_us()
-for _ in range(10000):
-    dog = Dog("Rex", 5)
-    dog.describe()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-    # List comprehension benchmarks
-    (
-        "listcomp squares(500) x100",
-        """
-import list_comprehension as lc
-import time
-start = time.ticks_us()
-for _ in range(100):
-    lc.squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def squares(n):
-    return [x * x for x in range(n)]
-start = time.ticks_us()
-for _ in range(100):
-    squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_init x1000",
-        """
-import super_calls
-import time
-start = time.ticks_us()
-for _ in range(1000):
-    super_calls.Dog("Rex", 5)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-start = time.ticks_us()
-for _ in range(1000):
-    Dog("Rex", 5)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "listcomp evens(1000) x100",
-        """
-import list_comprehension as lc
-import time
-start = time.ticks_us()
-for _ in range(100):
-    lc.evens(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def evens(n):
-    return [x for x in range(n) if x % 2 == 0]
-start = time.ticks_us()
-for _ in range(100):
-    evens(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_method x10000",
-        """
-import super_calls
-import time
-dog = super_calls.Dog("Rex", 5)
-start = time.ticks_us()
-for _ in range(10000):
-    dog.describe()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-start = time.ticks_us()
-for _ in range(10000):
-    dog = Dog("Rex", 5)
-    dog.describe()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-    # List comprehension benchmarks
-    (
-        "listcomp squares(500) x100",
-        """
-import list_comprehension as lc
-import time
-start = time.ticks_us()
-for _ in range(100):
-    lc.squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def squares(n):
-    return [x * x for x in range(n)]
-start = time.ticks_us()
-for _ in range(100):
-    squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_init x1000",
-        """
-import super_calls
-import time
-start = time.ticks_us()
-for _ in range(1000):
-    super_calls.Dog("Rex", 5)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-start = time.ticks_us()
-for _ in range(1000):
-    Dog("Rex", 5)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "listcomp evens(1000) x100",
-        """
-import list_comprehension as lc
-import time
-start = time.ticks_us()
-for _ in range(100):
-    lc.evens(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def evens(n):
-    return [x for x in range(n) if x % 2 == 0]
-start = time.ticks_us()
-for _ in range(100):
-    evens(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_method x10000",
-        """
-import super_calls
-import time
-dog = super_calls.Dog("Rex", 5)
-start = time.ticks_us()
-for _ in range(10000):
-    dog.describe()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-start = time.ticks_us()
-for _ in range(10000):
-    dog = Dog("Rex", 5)
-    dog.describe()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-    # List comprehension benchmarks
-    (
-        "listcomp squares(500) x100",
-        """
-import list_comprehension as lc
-import time
-start = time.ticks_us()
-for _ in range(100):
-    lc.squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def squares(n):
-    return [x * x for x in range(n)]
-start = time.ticks_us()
-for _ in range(100):
-    squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_init x1000",
-        """
-import super_calls
-import time
-start = time.ticks_us()
-for _ in range(1000):
-    super_calls.Dog("Rex", 5)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-start = time.ticks_us()
-for _ in range(1000):
-    Dog("Rex", 5)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "listcomp evens(1000) x100",
-        """
-import list_comprehension as lc
-import time
-start = time.ticks_us()
-for _ in range(100):
-    lc.evens(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def evens(n):
-    return [x for x in range(n) if x % 2 == 0]
-start = time.ticks_us()
-for _ in range(100):
-    evens(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_method x10000",
-        """
-import super_calls
-import time
-dog = super_calls.Dog("Rex", 5)
-start = time.ticks_us()
-for _ in range(10000):
-    dog.describe()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-start = time.ticks_us()
-for _ in range(10000):
-    dog = Dog("Rex", 5)
-    dog.describe()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-    # List comprehension benchmarks
-    (
-        "listcomp squares(500) x100",
-        """
-import list_comprehension as lc
-import time
-start = time.ticks_us()
-for _ in range(100):
-    lc.squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def squares(n):
-    return [x * x for x in range(n)]
-start = time.ticks_us()
-for _ in range(100):
-    squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_init x1000",
-        """
-import super_calls
-import time
-start = time.ticks_us()
-for _ in range(1000):
-    super_calls.Dog("Rex", 5)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-start = time.ticks_us()
-for _ in range(1000):
-    Dog("Rex", 5)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "listcomp evens(1000) x100",
-        """
-import list_comprehension as lc
-import time
-start = time.ticks_us()
-for _ in range(100):
-    lc.evens(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def evens(n):
-    return [x for x in range(n) if x % 2 == 0]
-start = time.ticks_us()
-for _ in range(100):
-    evens(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_method x10000",
-        """
-import super_calls
-import time
-dog = super_calls.Dog("Rex", 5)
-start = time.ticks_us()
-for _ in range(10000):
-    dog.describe()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-start = time.ticks_us()
-for _ in range(10000):
-    dog = Dog("Rex", 5)
-    dog.describe()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-    # List comprehension benchmarks
-    (
-        "listcomp squares(500) x100",
-        """
-import list_comprehension as lc
-import time
-start = time.ticks_us()
-for _ in range(100):
-    lc.squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def squares(n):
-    return [x * x for x in range(n)]
-start = time.ticks_us()
-for _ in range(100):
-    squares(500)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_init x1000",
-        """
-import super_calls
-import time
-start = time.ticks_us()
-for _ in range(1000):
-    super_calls.Dog("Rex", 5)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-start = time.ticks_us()
-for _ in range(1000):
-    Dog("Rex", 5)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "listcomp evens(1000) x100",
-        """
-import list_comprehension as lc
-import time
-start = time.ticks_us()
-for _ in range(100):
-    lc.evens(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-def evens(n):
-    return [x for x in range(n) if x % 2 == 0]
-start = time.ticks_us()
-for _ in range(100):
-    evens(1000)
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_method x10000",
-        """
-import super_calls
-import time
-dog = super_calls.Dog("Rex", 5)
-start = time.ticks_us()
-for _ in range(10000):
-    dog.describe()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-start = time.ticks_us()
-for _ in range(10000):
-    dog = Dog("Rex", 5)
-    dog.describe()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-    (
-        "super_3level x1000",
-        """
-import super_calls
-import time
-start = time.ticks_us()
-for _ in range(1000):
-    sd = super_calls.ShowDog("Bella", 10, 3)
-    sd.describe()
-    sd.get_total_score()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-        """
-import time
-class Animal:
-    def __init__(self, name, sound):
-        self.name = name
-        self.sound = sound
-    def speak(self):
-        return self.sound
-    def describe(self):
-        return self.name
-class Dog(Animal):
-    def __init__(self, name, tricks):
-        super().__init__(name, "Woof")
-        self.tricks = tricks
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_tricks(self):
-        return self.tricks
-class ShowDog(Dog):
-    def __init__(self, name, tricks, awards):
-        super().__init__(name, tricks)
-        self.awards = awards
-    def describe(self):
-        base = super().describe()
-        return base
-    def get_total_score(self):
-        return self.tricks + self.awards
-start = time.ticks_us()
-for _ in range(1000):
-    sd = ShowDog("Bella", 10, 3)
-    sd.describe()
-    sd.get_total_score()
-end = time.ticks_us()
-print(time.ticks_diff(end, start))
-""",
-    ),
-]
+# Results tracking
+_results = []
+_total_native = 0
+_total_python = 0
 
 
-def run_on_device(code: str, timeout: int = 60) -> tuple[bool, str]:
-    """Execute Python code on device via mpremote."""
-    try:
-        result = subprocess.run(
-            ["mpremote", "connect", PORT, "exec", code],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        if result.returncode == 0:
-            return True, result.stdout.strip()
-        else:
-            return False, result.stderr.strip()
-    except subprocess.TimeoutExpired:
-        return False, "Timeout"
-    except Exception as e:
-        return False, str(e)
+def b(name, native_fn, python_fn, iterations=100):
+    """Run a single benchmark comparing native vs python implementation."""
+    global _total_native, _total_python
+    gc.collect()
+
+    # Time native implementation
+    start = time.ticks_us()
+    for _ in range(iterations):
+        native_fn()
+    native_us = time.ticks_diff(time.ticks_us(), start)
+
+    # Time python implementation
+    gc.collect()
+    start = time.ticks_us()
+    for _ in range(iterations):
+        python_fn()
+    python_us = time.ticks_diff(time.ticks_us(), start)
+
+    # Calculate speedup
+    speedup = python_us / native_us if native_us > 0 else 0
+
+    # Track totals
+    _total_native += native_us
+    _total_python += python_us
+    _results.append((name, native_us, python_us, speedup))
+
+    # Print result
+    print(f"{name:<40} {native_us:>10}us {python_us:>10}us {speedup:>8.2f}x")
 
 
-def run_benchmark(name: str, native_code: str, python_code: str) -> tuple[int, int] | None:
-    """Returns (native_us, python_us) or None on failure."""
-    success, output = run_on_device(native_code)
-    if not success:
-        print(f"  Native FAILED: {output}")
-        return None
-    try:
-        native_us = int(output.split("\n")[-1])
-    except (ValueError, IndexError):
-        print(f"  Native parse error: {output}")
-        return None
-
-    success, output = run_on_device(python_code)
-    if not success:
-        print(f"  Python FAILED: {output}")
-        return None
-    try:
-        python_us = int(output.split("\n")[-1])
-    except (ValueError, IndexError):
-        print(f"  Python parse error: {output}")
-        return None
-
-    return native_us, python_us
-
-
-def main():
-    global PORT
-
-    parser = argparse.ArgumentParser(description="Benchmark native modules vs vanilla MicroPython")
-    parser.add_argument(
-        "--port",
-        default=DEFAULT_PORT,
-        help=f"Serial port for ESP32 device (default: {DEFAULT_PORT})",
-    )
-    args = parser.parse_args()
-    PORT = args.port
-
+def print_header():
     print("=" * 70)
     print("mypyc-micropython Benchmark: Native C vs Vanilla MicroPython")
     print("=" * 70)
-    print(f"Device port: {PORT}")
     print()
-
-    print("Checking device connection...")
-    success, output = run_on_device("print('ready')")
-    if not success:
-        print(f"FAILED: Cannot connect to device: {output}")
-        sys.exit(1)
-    print("Device connected.\n")
-
-    results = []
-    total_native = 0
-    total_python = 0
-
-    print(f"{'Benchmark':<30} {'Native':>12} {'Python':>12} {'Speedup':>10}")
+    print(f"{'Benchmark':<40} {'Native':>12} {'Python':>12} {'Speedup':>10}")
     print("-" * 70)
 
-    for name, native_code, python_code in BENCHMARKS:
-        result = run_benchmark(name, native_code, python_code)
-        if result:
-            native_us, python_us = result
-            speedup = python_us / native_us if native_us > 0 else 0
-            results.append((name, native_us, python_us, speedup))
-            total_native += native_us
-            total_python += python_us
-            print(f"{name:<30} {native_us:>10}us {python_us:>10}us {speedup:>9.2f}x")
-        else:
-            print(f"{name:<30} {'FAILED':>12} {'FAILED':>12} {'N/A':>10}")
 
+def print_summary():
     print("-" * 70)
-
-    if results:
-        avg_speedup = sum(r[3] for r in results) / len(results)
-        overall_speedup = total_python / total_native if total_native > 0 else 0
-        print(f"{'TOTAL':<30} {total_native:>10}us {total_python:>10}us {overall_speedup:>9.2f}x")
+    if _results:
+        avg_speedup = sum(r[3] for r in _results) / len(_results)
+        overall_speedup = _total_python / _total_native if _total_native > 0 else 0
+        print(f"{'TOTAL':<40} {_total_native:>10}us {_total_python:>10}us {overall_speedup:>8.2f}x")
         print()
+        print(f"Benchmarks run: {len(_results)}")
         print(f"Average speedup: {avg_speedup:.2f}x")
         print(f"Overall speedup: {overall_speedup:.2f}x")
-
-        # Performance summary
         print()
-        print("=" * 70)
-        print("SUMMARY")
-        print("=" * 70)
         if avg_speedup >= 5:
             print(f"Excellent! Native code is {avg_speedup:.1f}x faster on average.")
         elif avg_speedup >= 2:
@@ -1855,10 +76,818 @@ def main():
             print(f"Native code is {avg_speedup:.1f}x faster on average.")
         else:
             print(f"Warning: Native code is slower ({avg_speedup:.1f}x). Check implementation.")
-
     print("=" * 70)
-    return 0 if results else 1
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+# =============================================================================
+# BENCHMARKS - List Operations
+# =============================================================================
+
+
+def bench_list_operations():
+    import list_operations
+
+    # sum_range
+    def native_sum_range():
+        list_operations.sum_range(1000)
+
+    def python_sum_range():
+        total = 0
+        for i in range(1000):
+            total += i
+        return total
+
+    b("sum_range(1000) x100", native_sum_range, python_sum_range, 100)
+
+    # build_squares
+    def native_build_squares():
+        list_operations.build_squares(500)
+
+    def python_build_squares():
+        result = []
+        for i in range(500):
+            result.append(i * i)
+        return result
+
+    b("build_squares(500) x100", native_build_squares, python_build_squares, 100)
+
+    # matrix_sum
+    def native_matrix_sum():
+        list_operations.matrix_sum(50, 50)
+
+    def python_matrix_sum():
+        total = 0
+        for i in range(50):
+            for j in range(50):
+                total += i + j
+        return total
+
+    b("matrix_sum(50,50) x100", native_matrix_sum, python_matrix_sum, 100)
+
+    # reverse_sum
+    def native_reverse_sum():
+        list_operations.reverse_sum(1000)
+
+    def python_reverse_sum():
+        total = 0
+        for i in range(1000, 0, -1):
+            total += i
+        return total
+
+    b("reverse_sum(1000) x100", native_reverse_sum, python_reverse_sum, 100)
+
+    # sum_list with iteration
+    lst = list(range(100))
+
+    def native_sum_list():
+        list_operations.sum_list(lst)
+
+    def python_sum_list():
+        total = 0
+        for x in lst:
+            total += x
+        return total
+
+    b("sum_list([1..100]) x1000", native_sum_list, python_sum_list, 1000)
+    gc.collect()
+
+
+# =============================================================================
+# BENCHMARKS - Factorial / Fibonacci
+# =============================================================================
+
+
+def bench_factorial():
+    import factorial
+
+    def native_factorial():
+        factorial.factorial(12)
+
+    def python_factorial(n=12):
+        if n <= 1:
+            return 1
+        return n * python_factorial(n - 1)
+
+    b("factorial(12) x1000", native_factorial, lambda: python_factorial(12), 1000)
+
+    def native_fib():
+        factorial.fib(20)
+
+    def python_fib(n=20):
+        if n <= 1:
+            return n
+        return python_fib(n - 2) + python_fib(n - 1)
+
+    b("fib(20) x100", native_fib, lambda: python_fib(20), 100)
+    gc.collect()
+
+
+# =============================================================================
+# BENCHMARKS - Algorithms
+# =============================================================================
+
+
+def bench_algorithms():
+    import algorithms
+
+    # is_prime
+    def native_is_prime():
+        algorithms.is_prime(9973)
+
+    def python_is_prime():
+        n = 9973
+        if n < 2:
+            return False
+        if n == 2:
+            return True
+        if n % 2 == 0:
+            return False
+        i = 3
+        while i * i <= n:
+            if n % i == 0:
+                return False
+            i += 2
+        return True
+
+    b("is_prime(9973) x1000", native_is_prime, python_is_prime, 1000)
+
+    # gcd
+    def native_gcd():
+        algorithms.gcd(46368, 28657)
+
+    def python_gcd():
+        a, b = 46368, 28657
+        while b:
+            a, b = b, a % b
+        return a
+
+    b("gcd(46368, 28657) x10000", native_gcd, python_gcd, 10000)
+    gc.collect()
+
+
+# =============================================================================
+# BENCHMARKS - Tuple Operations
+# =============================================================================
+
+
+def bench_tuple_operations():
+    import tuple_operations as t
+
+    # make_point + unpack
+    def native_tuple_ops():
+        p = t.make_point()
+        t.unpack_pair(p)
+
+    def python_tuple_ops():
+        p = (10, 20)
+        a, b = p
+        return a + b
+
+    b("tuple ops x10000", native_tuple_ops, python_tuple_ops, 10000)
+
+    # rtuple ops
+    def native_rtuple_ops():
+        t.rtuple_sum_fields()
+        t.rtuple_distance_squared(0, 0, 3, 4)
+
+    def python_rtuple_ops():
+        point = (15, 25)
+        _ = point[0] + point[1]
+        p1 = (0, 0)
+        p2 = (3, 4)
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        return dx * dx + dy * dy
+
+    b("rtuple ops x10000", native_rtuple_ops, python_rtuple_ops, 10000)
+
+    # rtuple internal benchmark
+    def native_rtuple_internal():
+        t.rtuple_benchmark_internal(1000)
+
+    def python_rtuple_internal():
+        total = 0
+        i = 0
+        while i < 1000:
+            point = (i, i * 2)
+            total += point[0] + point[1]
+            i += 1
+        return total
+
+    b("rtuple internal x100", native_rtuple_internal, python_rtuple_internal, 100)
+
+    # list[tuple] sum
+    points = [(i, i * 2, i * 3) for i in range(100)]
+
+    def native_list_tuple():
+        t.sum_points_list(points, 100)
+
+    def python_list_tuple():
+        total = 0
+        i = 0
+        while i < 100:
+            p = points[i]
+            total = total + p[0] + p[1] + p[2]
+            i = i + 1
+        return total
+
+    b("list[tuple] x500", native_list_tuple, python_list_tuple, 500)
+    gc.collect()
+
+
+# =============================================================================
+# BENCHMARKS - Set Operations
+# =============================================================================
+
+
+def bench_set_operations():
+    import set_operations as s
+
+    def native_set_build():
+        s.build_set_incremental(50)
+
+    def python_set_build():
+        st = set()
+        for i in range(50):
+            st.add(i % 10)
+        return len(st)
+
+    b("set build+check x1000", native_set_build, python_set_build, 1000)
+    gc.collect()
+
+
+# =============================================================================
+# BENCHMARKS - Point Class
+# =============================================================================
+
+
+def bench_point_class():
+    import point
+
+    def native_point():
+        p = point.Point(3, 4)
+        p.distance_squared()
+
+    class PyPoint:
+        def __init__(self, x, y):
+            self.x = x
+            self.y = y
+
+        def distance_squared(self):
+            return self.x * self.x + self.y * self.y
+
+    def python_point():
+        p = PyPoint(3, 4)
+        p.distance_squared()
+
+    b("Point class x10000", native_point, python_point, 10000)
+    gc.collect()
+
+
+# =============================================================================
+# BENCHMARKS - Bitwise Operations
+# =============================================================================
+
+
+def bench_bitwise():
+    import bitwise
+
+    def native_count_ones():
+        bitwise.count_ones(0x7FFFFFFF)
+
+    def python_count_ones():
+        n = 0x7FFFFFFF
+        count = 0
+        while n:
+            count += n & 1
+            n >>= 1
+        return count
+
+    b("count_ones(0x7FFFFFFF) x10000", native_count_ones, python_count_ones, 10000)
+    gc.collect()
+
+
+# =============================================================================
+# BENCHMARKS - Builtins (sum, min, max, abs)
+# =============================================================================
+
+
+def bench_builtins():
+    import builtins_demo
+
+    lst = list(range(1000))
+
+    # sum_list
+    def native_sum_list():
+        builtins_demo.sum_list(lst)
+
+    def python_sum_list():
+        return sum(lst)
+
+    b("sum_builtin(1000) x1000", native_sum_list, python_sum_list, 1000)
+
+    # sum_int_list (typed)
+    def native_sum_int_list():
+        builtins_demo.sum_int_list(lst)
+
+    b("sum_typed_list(1000) x1000", native_sum_int_list, python_sum_list, 1000)
+
+    # clamp_list
+    values = list(range(-100, 100))
+
+    def native_clamp_list():
+        builtins_demo.clamp_list(values, 0, 50)
+
+    def python_clamp_list():
+        result = []
+        for v in values:
+            clamped = max(0, min(v, 50))
+            result.append(clamped)
+        return result
+
+    b("clamp_list(200) x1000", native_clamp_list, python_clamp_list, 1000)
+
+    # find_extremes_sum
+    lst2 = list(range(1, 1001))
+
+    def native_find_extremes():
+        builtins_demo.find_extremes_sum(lst2)
+
+    def python_find_extremes():
+        return min(lst2) + max(lst2)
+
+    b("find_extremes(1000) x1000", native_find_extremes, python_find_extremes, 1000)
+    gc.collect()
+
+
+# =============================================================================
+# BENCHMARKS - Star Args
+# =============================================================================
+
+
+def bench_star_args():
+    import star_args
+
+    args100 = tuple(range(100))
+    args50 = tuple(range(50))
+
+    def native_sum_all():
+        star_args.sum_all(*args100)
+
+    def python_sum_all(*numbers):
+        total = 0
+        for x in numbers:
+            total += x
+        return total
+
+    b("sum_all(*100) x1000", native_sum_all, lambda: python_sum_all(*args100), 1000)
+
+    def native_max_of_args():
+        star_args.max_of_args(*args50)
+
+    def python_max_of_args(*nums):
+        result = 0
+        first = True
+        for n in nums:
+            if first:
+                result = n
+                first = False
+            elif n > result:
+                result = n
+        return result
+
+    b("max_of_args(*50) x1000", native_max_of_args, lambda: python_max_of_args(*args50), 1000)
+    gc.collect()
+
+
+# =============================================================================
+# BENCHMARKS - Chained Attribute Access
+# =============================================================================
+
+
+def bench_chained_attr():
+    import chained_attr as ca
+
+    tl = ca.Point(0, 0)
+    br = ca.Point(100, 50)
+    rect = ca.Rectangle(tl, br)
+
+    def native_chained():
+        ca.get_width(rect)
+        ca.get_height(rect)
+
+    class PyPoint:
+        def __init__(self, x, y):
+            self.x = x
+            self.y = y
+
+    class PyRectangle:
+        def __init__(self, tl, br):
+            self.top_left = tl
+            self.bottom_right = br
+
+    py_tl = PyPoint(0, 0)
+    py_br = PyPoint(100, 50)
+    py_rect = PyRectangle(py_tl, py_br)
+
+    def python_chained():
+        _ = py_rect.bottom_right.x - py_rect.top_left.x
+        _ = py_rect.bottom_right.y - py_rect.top_left.y
+
+    b("chained_attr x10000", native_chained, python_chained, 10000)
+    gc.collect()
+
+
+# =============================================================================
+# BENCHMARKS - Container Attributes
+# =============================================================================
+
+
+def bench_container_attrs():
+    import container_attrs as ca
+
+    inner = ca.Inner([0, 1, 2], {"key": 42})
+    outer = ca.Outer(inner, "test")
+
+    def native_container():
+        ca.benchmark_inner_list_update(outer, 1)
+
+    class PyInner:
+        def __init__(self, items, data):
+            self.items = items
+            self.data = data
+
+    class PyOuter:
+        def __init__(self, inner, name):
+            self.inner = inner
+            self.name = name
+
+    py_inner = PyInner([0, 1, 2], {"key": 42})
+    py_outer = PyOuter(py_inner, "test")
+
+    def python_container():
+        i = 0
+        while i < 1:
+            py_outer.inner.items[0] = i
+            i += 1
+        return py_outer.inner.items[0]
+
+    b("container_attr x10000", native_container, python_container, 10000)
+
+    # inner_list_update with more iterations
+    inner2 = ca.Inner([0, 1, 2], {})
+    outer2 = ca.Outer(inner2, "test")
+
+    def native_inner_list():
+        ca.benchmark_inner_list_update(outer2, 10000)
+
+    py_inner2 = PyInner([0, 1, 2], {})
+    py_outer2 = PyOuter(py_inner2, "test")
+
+    def python_inner_list():
+        i = 0
+        while i < 10000:
+            py_outer2.inner.items[0] = i
+            i += 1
+        return py_outer2.inner.items[0]
+
+    b("inner_list_update(10000) x10", native_inner_list, python_inner_list, 10)
+    gc.collect()
+
+
+# =============================================================================
+# BENCHMARKS - String Operations
+# =============================================================================
+
+
+def bench_string_operations():
+    import string_operations as s
+
+    text = "hello world"
+
+    def native_upper():
+        s.to_upper(text)
+
+    def python_upper():
+        return text.upper()
+
+    b("str.upper() x10000", native_upper, python_upper, 10000)
+
+    text2 = "hello world hello"
+
+    def native_replace():
+        s.replace_string(text2, "hello", "hi")
+
+    def python_replace():
+        return text2.replace("hello", "hi")
+
+    b("str.replace() x10000", native_replace, python_replace, 10000)
+
+    text3 = "hello world hello world"
+
+    def native_find():
+        s.find_substring(text3, "world")
+
+    def python_find():
+        return text3.find("world")
+
+    b("str.find() x10000", native_find, python_find, 10000)
+
+    text4 = "a,b,c,d,e,f,g,h,i,j"
+
+    def native_split():
+        s.split_on_sep(text4, ",")
+
+    def python_split():
+        return text4.split(",")
+
+    b("str.split() x5000", native_split, python_split, 5000)
+
+    items = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]
+
+    def native_join():
+        s.join_strings(",", items)
+
+    def python_join():
+        return ",".join(items)
+
+    b("str.join() x5000", native_join, python_join, 5000)
+
+    text5 = "  hello world  "
+
+    def native_strip():
+        s.strip_string(text5)
+
+    def python_strip():
+        return text5.strip()
+
+    b("str.strip() x10000", native_strip, python_strip, 10000)
+
+    a, c = "hello", " world"
+
+    def native_concat():
+        s.concat_strings(a, c)
+
+    def python_concat():
+        return a + c
+
+    b("str concat x10000", native_concat, python_concat, 10000)
+
+    text6 = "  Hello   World  "
+
+    def native_normalize():
+        s.normalize_text(text6)
+
+    def python_normalize():
+        st = text6.lower()
+        st = st.strip()
+        while "  " in st:
+            st = st.replace("  ", " ")
+        return st
+
+    b("normalize_text x1000", native_normalize, python_normalize, 1000)
+    gc.collect()
+
+
+# =============================================================================
+# BENCHMARKS - Class Parameter Access
+# =============================================================================
+
+
+def bench_class_param():
+    import class_param as cp
+
+    p1 = cp.Point(1, 2)
+    p2 = cp.Point(3, 4)
+    p3 = cp.Point(5, 6)
+
+    def native_sum_3_points():
+        cp.sum_three_points(p1, p2, p3)
+
+    class PyPoint:
+        def __init__(self, x, y):
+            self.x = x
+            self.y = y
+
+    py_p1 = PyPoint(1, 2)
+    py_p2 = PyPoint(3, 4)
+    py_p3 = PyPoint(5, 6)
+
+    def python_sum_3_points():
+        return py_p1.x + py_p1.y + py_p2.x + py_p2.y + py_p3.x + py_p3.y
+
+    b("sum_3_points x1000", native_sum_3_points, python_sum_3_points, 1000)
+    gc.collect()
+
+
+# =============================================================================
+# BENCHMARKS - List Comprehension
+# =============================================================================
+
+
+def bench_list_comprehension():
+    import list_comprehension as lc
+
+    def native_squares():
+        lc.squares(500)
+
+    def python_squares():
+        return [x * x for x in range(500)]
+
+    b("listcomp squares(500) x100", native_squares, python_squares, 100)
+
+    def native_evens():
+        lc.evens(1000)
+
+    def python_evens():
+        return [x for x in range(1000) if x % 2 == 0]
+
+    b("listcomp evens(1000) x100", native_evens, python_evens, 100)
+    gc.collect()
+
+
+# =============================================================================
+# BENCHMARKS - Super Calls
+# =============================================================================
+
+
+def bench_super_calls():
+    import super_calls
+
+    def native_super_init():
+        super_calls.Dog("Rex", 5)
+
+    class PyAnimal:
+        def __init__(self, name, sound):
+            self.name = name
+            self.sound = sound
+
+        def speak(self):
+            return self.sound
+
+        def describe(self):
+            return self.name
+
+    class PyDog(PyAnimal):
+        def __init__(self, name, tricks):
+            super().__init__(name, "Woof")
+            self.tricks = tricks
+
+        def describe(self):
+            base = super().describe()
+            return base
+
+        def get_tricks(self):
+            return self.tricks
+
+    def python_super_init():
+        PyDog("Rex", 5)
+
+    b("super_init x1000", native_super_init, python_super_init, 1000)
+
+    dog = super_calls.Dog("Rex", 5)
+
+    def native_super_method():
+        dog.describe()
+
+    py_dog = PyDog("Rex", 5)
+
+    def python_super_method():
+        py_dog.describe()
+
+    b("super_method x10000", native_super_method, python_super_method, 10000)
+
+    class PyShowDog(PyDog):
+        def __init__(self, name, tricks, awards):
+            super().__init__(name, tricks)
+            self.awards = awards
+
+        def describe(self):
+            base = super().describe()
+            return base
+
+        def get_total_score(self):
+            return self.tricks + self.awards
+
+    def native_super_3level():
+        sd = super_calls.ShowDog("Bella", 10, 3)
+        sd.describe()
+        sd.get_total_score()
+
+    def python_super_3level():
+        sd = PyShowDog("Bella", 10, 3)
+        sd.describe()
+        sd.get_total_score()
+
+    b("super_3level x1000", native_super_3level, python_super_3level, 1000)
+    gc.collect()
+
+
+# =============================================================================
+# BENCHMARKS - Private Methods
+# =============================================================================
+
+
+def bench_private_methods():
+    import private_methods as pm
+
+    native_b = pm.Benchmark(5)
+
+    def native_public_work():
+        native_b.run_public(100)
+
+    class PyBenchmark:
+        def __init__(self, d):
+            self.data = d
+
+        def public_work(self, n):
+            total = 0
+            for i in range(n):
+                total += self.data + i
+            return total
+
+        def _PyBenchmark__private_work(self, n):
+            total = 0
+            for i in range(n):
+                total += self.data + i
+            return total
+
+        def run_public(self, n):
+            return self.public_work(n)
+
+        def run_private(self, n):
+            return self._PyBenchmark__private_work(n)
+
+    py_b = PyBenchmark(5)
+
+    def python_public_work():
+        py_b.run_public(100)
+
+    b("public_work(100) x100", native_public_work, python_public_work, 100)
+
+    def native_private_work():
+        native_b.run_private(100)
+
+    def python_private_work():
+        py_b.run_private(100)
+
+    b("private_work(100) x100", native_private_work, python_private_work, 100)
+
+    fc = pm.FastCounter(1)
+
+    def native_fast_counter():
+        fc.increment()
+        fc.reset()
+
+    class PyFastCounter:
+        def __init__(self, step):
+            self.count = 0
+            self.step = step
+
+        def increment(self):
+            self.count += self.step
+            return self.count
+
+        def reset(self):
+            self.count = 0
+
+    py_fc = PyFastCounter(1)
+
+    def python_fast_counter():
+        py_fc.increment()
+        py_fc.reset()
+
+    b("@final FastCounter x10000", native_fast_counter, python_fast_counter, 10000)
+    gc.collect()
+
+
+# =============================================================================
+# MAIN
+# =============================================================================
+
+
+def run_all_benchmarks():
+    print_header()
+
+    bench_list_operations()
+    bench_factorial()
+    bench_algorithms()
+    bench_tuple_operations()
+    bench_set_operations()
+    bench_point_class()
+    bench_bitwise()
+    bench_builtins()
+    bench_star_args()
+    bench_chained_attr()
+    bench_container_attrs()
+    bench_string_operations()
+    bench_class_param()
+    bench_list_comprehension()
+    bench_super_calls()
+    bench_private_methods()
+
+    print_summary()
+
+
+# Run benchmarks when executed
+run_all_benchmarks()

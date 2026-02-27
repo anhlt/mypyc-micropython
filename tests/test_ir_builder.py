@@ -785,3 +785,416 @@ def f(lst: list) -> int:
         ret = func_ir.body[0]
         assert isinstance(ret.value, BinOpIR)
         assert isinstance(ret.value.left, CallIR)
+
+
+class TestBuildDict:
+    """Tests for dict IR building."""
+
+    def test_empty_dict_literal(self):
+        source = """
+def f():
+    d: dict = {}
+    return d
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        # Empty dict uses ConstIR with empty dict value
+        ann_assign = func_ir.body[0]
+        assert isinstance(ann_assign, AnnAssignIR)
+        assert isinstance(ann_assign.value, ConstIR)
+        assert ann_assign.value.value == {}
+
+    def test_dict_with_entries(self):
+        source = """
+def f():
+    d: dict = {"a": 1, "b": 2}
+    return d
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ann_assign = func_ir.body[0]
+        # Dict with entries creates DictNewIR in prelude
+        from mypyc_micropython.ir import DictNewIR
+        assert len(ann_assign.prelude) >= 1
+        assert isinstance(ann_assign.prelude[0], DictNewIR)
+        assert len(ann_assign.prelude[0].entries) == 2
+
+
+class TestBuildSubscriptAssign:
+    """Tests for subscript assignment IR building."""
+
+    def test_list_subscript_assign(self):
+        source = """
+def f(lst: list, i: int, val: int) -> None:
+    lst[i] = val
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        from mypyc_micropython.ir import SubscriptAssignIR
+        subscript_assign = func_ir.body[0]
+        assert isinstance(subscript_assign, SubscriptAssignIR)
+        assert isinstance(subscript_assign.container, NameIR)
+        assert subscript_assign.container.py_name == "lst"
+
+    def test_dict_subscript_assign(self):
+        source = """
+def f(d: dict, key: str, val: int) -> None:
+    d[key] = val
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        from mypyc_micropython.ir import SubscriptAssignIR
+        subscript_assign = func_ir.body[0]
+        assert isinstance(subscript_assign, SubscriptAssignIR)
+
+
+class TestBuildTupleUnpack:
+    """Tests for tuple unpacking IR building."""
+
+    def test_simple_tuple_unpack(self):
+        source = """
+def f():
+    t = (1, 2)
+    x, y = t
+    return x
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        from mypyc_micropython.ir import TupleUnpackIR
+        # Second statement should be TupleUnpackIR
+        unpack = func_ir.body[1]
+        assert isinstance(unpack, TupleUnpackIR)
+        assert len(unpack.targets) == 2
+
+    def test_tuple_unpack_in_for(self):
+        source = '''
+def f(items: list[tuple[str, int]]) -> None:
+    for k, v in items:
+        pass
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        # For loop with tuple unpacking should work
+        assert len(func_ir.body) >= 1
+
+class TestBuildSlice:
+    """Tests for slice IR building."""
+
+    def test_simple_slice(self):
+        source = """
+def f(lst: list):
+    return lst[1:3]
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        # Slice creates SubscriptIR with SliceIR as index
+        from mypyc_micropython.ir import SliceIR
+        assert isinstance(ret.value, SubscriptIR)
+        assert isinstance(ret.value.slice_, SliceIR)
+
+    def test_slice_with_step(self):
+        source = """
+def f(lst: list):
+    return lst[::2]
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        from mypyc_micropython.ir import SliceIR
+        assert isinstance(ret.value.slice_, SliceIR)
+        # Step should be ConstIR(2)
+        assert ret.value.slice_.step is not None
+
+
+class TestBuildListComp:
+    """Tests for list comprehension IR building."""
+
+    def test_simple_list_comp(self):
+        source = """
+def f(n: int) -> list:
+    return [i * 2 for i in range(n)]
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        from mypyc_micropython.ir import ListCompIR
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        # List comp should create ListCompIR in prelude
+        assert len(ret.prelude) >= 1
+        assert isinstance(ret.prelude[0], ListCompIR)
+
+    def test_list_comp_with_condition(self):
+        source = """
+def f(n: int) -> list:
+    return [i for i in range(n) if i % 2 == 0]
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        from mypyc_micropython.ir import ListCompIR
+        ret = func_ir.body[0]
+        assert len(ret.prelude) >= 1
+        listcomp = ret.prelude[0]
+        assert isinstance(listcomp, ListCompIR)
+        assert listcomp.condition is not None
+
+
+class TestBuildForLoop:
+    """Additional tests for for loop IR building."""
+
+    def test_for_range_start_stop(self):
+        source = """
+def f():
+    for i in range(5, 10):
+        pass
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        for_stmt = func_ir.body[0]
+        assert isinstance(for_stmt, ForRangeIR)
+        assert isinstance(for_stmt.start, ConstIR)
+        assert for_stmt.start.value == 5
+        assert isinstance(for_stmt.end, ConstIR)
+        assert for_stmt.end.value == 10
+
+    def test_for_range_with_step(self):
+        source = """
+def f():
+    for i in range(0, 10, 2):
+        pass
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        for_stmt = func_ir.body[0]
+        assert isinstance(for_stmt, ForRangeIR)
+        assert for_stmt.step_is_constant is True
+        assert for_stmt.step_value == 2
+
+    def test_for_iter_over_dict_keys(self):
+        source = """
+def f(d: dict):
+    for k in d.keys():
+        pass
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        for_stmt = func_ir.body[0]
+        assert isinstance(for_stmt, ForIterIR)
+
+    def test_for_iter_over_dict_values(self):
+        source = """
+def f(d: dict):
+    for v in d.values():
+        pass
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        for_stmt = func_ir.body[0]
+        assert isinstance(for_stmt, ForIterIR)
+
+    def test_for_iter_over_dict_items(self):
+        source = '''
+def f(d: dict[str, int]) -> None:
+    for k, v in d.items():
+        pass
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        # Items iteration with unpacking
+        assert len(func_ir.body) >= 1
+
+class TestBuildWhileLoop:
+    """Additional tests for while loop IR building."""
+
+    def test_while_with_break(self):
+        source = """
+def f():
+    while True:
+        break
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        while_stmt = func_ir.body[0]
+        assert isinstance(while_stmt, WhileIR)
+        assert len(while_stmt.body) >= 1
+        assert isinstance(while_stmt.body[0], BreakIR)
+
+    def test_while_with_continue(self):
+        source = """
+def f():
+    i: int = 0
+    while i < 10:
+        i += 1
+        continue
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        while_stmt = func_ir.body[1]
+        assert isinstance(while_stmt, WhileIR)
+        # Should have continue in body
+        has_continue = any(isinstance(s, ContinueIR) for s in while_stmt.body)
+        assert has_continue
+
+
+class TestBuildAugAssign:
+    """Additional tests for augmented assignment IR building."""
+
+    def test_aug_assign_multiply(self):
+        source = """
+def f(x: int) -> int:
+    x *= 2
+    return x
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        aug = func_ir.body[0]
+        assert isinstance(aug, AugAssignIR)
+        assert aug.op == "*="
+
+    def test_aug_assign_divide(self):
+        """Floor division augmented assignment: x //= 2."""
+        source = """
+def f(x: int) -> int:
+    x //= 2
+    return x
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        aug = func_ir.body[0]
+        assert isinstance(aug, AugAssignIR)
+        assert aug.op == "//="
+
+    def test_aug_assign_modulo(self):
+        source = """
+def f(x: int) -> int:
+    x %= 3
+    return x
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        aug = func_ir.body[0]
+        assert isinstance(aug, AugAssignIR)
+        assert aug.op == "%="
+
+
+class TestBuildBitwiseOps:
+    """Tests for bitwise operation IR building."""
+
+    def test_bitwise_and(self):
+        source = """
+def f(a: int, b: int) -> int:
+    return a & b
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret.value, BinOpIR)
+        assert ret.value.op == "&"
+
+    def test_bitwise_or(self):
+        source = """
+def f(a: int, b: int) -> int:
+    return a | b
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret.value, BinOpIR)
+        assert ret.value.op == "|"
+
+    def test_bitwise_xor(self):
+        source = """
+def f(a: int, b: int) -> int:
+    return a ^ b
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret.value, BinOpIR)
+        assert ret.value.op == "^"
+
+    def test_left_shift(self):
+        source = """
+def f(a: int, b: int) -> int:
+    return a << b
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret.value, BinOpIR)
+        assert ret.value.op == "<<"
+
+    def test_right_shift(self):
+        source = """
+def f(a: int, b: int) -> int:
+    return a >> b
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret.value, BinOpIR)
+        assert ret.value.op == ">>"
+
+    def test_bitwise_not(self):
+        source = """
+def f(a: int) -> int:
+    return ~a
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret.value, UnaryOpIR)
+        assert ret.value.op == "~"

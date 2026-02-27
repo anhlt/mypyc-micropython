@@ -7,7 +7,7 @@ including structs, vtables, constructors, and method wrappers.
 
 from __future__ import annotations
 
-from .ir import ClassIR, CType
+from .ir import ClassIR, CType, PropertyInfo
 
 
 class ClassEmitter:
@@ -112,6 +112,7 @@ class ClassEmitter:
 
     def emit_attr_handler(self) -> list[str]:
         all_fields = self.class_ir.get_all_fields()
+        all_properties = self.class_ir.get_all_properties()
         if not all_fields:
             return self._emit_simple_attr_handler()
 
@@ -121,6 +122,7 @@ class ClassEmitter:
         )
         lines.append(f"    {self.c_name}_obj_t *self = MP_OBJ_TO_PTR(self_in);")
         lines.append("")
+        lines.extend(self._emit_property_dispatch(all_properties))
         lines.append(
             f"    for (const {self.c_name}_field_t *f = {self.c_name}_fields; f->name != MP_QSTR_NULL; f++) {{"
         )
@@ -164,13 +166,79 @@ class ClassEmitter:
         return lines
 
     def _emit_simple_attr_handler(self) -> list[str]:
+        all_properties = self.class_ir.get_all_properties()
         lines = []
         lines.append(
             f"static void {self.c_name}_attr(mp_obj_t self_in, qstr attr, mp_obj_t *dest) {{"
         )
+        if all_properties:
+            lines.append(f"    {self.c_name}_obj_t *self = MP_OBJ_TO_PTR(self_in);")
+            lines.append("")
+            lines.extend(self._emit_property_dispatch(all_properties))
         lines.append("    dest[1] = MP_OBJ_SENTINEL;")
         lines.append("}")
         lines.append("")
+        return lines
+
+    def _box_property_result(self, c_type: CType, expr: str) -> str:
+        if c_type == CType.MP_INT_T:
+            return f"mp_obj_new_int({expr})"
+        if c_type == CType.MP_FLOAT_T:
+            return f"mp_obj_new_float({expr})"
+        if c_type == CType.BOOL:
+            return f"{expr} ? mp_const_true : mp_const_false"
+        if c_type == CType.VOID:
+            return "mp_const_none"
+        return expr
+
+    def _unbox_property_value(self, c_type: CType, expr: str) -> str:
+        if c_type == CType.MP_INT_T:
+            return f"mp_obj_get_int({expr})"
+        if c_type == CType.MP_FLOAT_T:
+            return f"mp_obj_get_float({expr})"
+        if c_type == CType.BOOL:
+            return f"mp_obj_is_true({expr})"
+        return expr
+
+    def _property_self_expr(self, method_c_name: str, prop_name: str, setter: bool = False) -> str:
+        suffix = f"_{prop_name}_setter" if setter else f"_{prop_name}"
+        owner_c_name = self.c_name
+        if method_c_name.endswith(suffix):
+            owner_c_name = method_c_name[: -len(suffix)]
+        if owner_c_name == self.c_name:
+            return "self"
+        return f"({owner_c_name}_obj_t *)self"
+
+    def _emit_property_dispatch(self, properties: dict[str, PropertyInfo]) -> list[str]:
+        if not properties:
+            return []
+
+        lines = []
+        for prop_name, prop in properties.items():
+            lines.append(f"    if (attr == MP_QSTR_{prop_name}) {{")
+            lines.append("        if (dest[0] == MP_OBJ_NULL) {")
+            getter_self = self._property_self_expr(prop.getter.c_name, prop_name)
+            getter_call = f"{prop.getter.c_name}_native({getter_self})"
+            lines.append(
+                f"            dest[0] = {self._box_property_result(prop.getter.return_type, getter_call)};"
+            )
+            lines.append("            return;")
+            lines.append("        }")
+            lines.append("        if (dest[1] != MP_OBJ_NULL) {")
+            if prop.setter and prop.setter.params:
+                setter_arg_type = prop.setter.params[0][1]
+                setter_arg = self._unbox_property_value(setter_arg_type, "dest[1]")
+                setter_self = self._property_self_expr(prop.setter.c_name, prop_name, setter=True)
+                lines.append(
+                    f"            {prop.setter.c_name}_native({setter_self}, {setter_arg});"
+                )
+                lines.append("            dest[0] = MP_OBJ_NULL;")
+            else:
+                lines.append("            dest[1] = MP_OBJ_SENTINEL;")
+            lines.append("            return;")
+            lines.append("        }")
+            lines.append("    }")
+            lines.append("")
         return lines
 
     def emit_make_new(self) -> list[str]:
@@ -325,14 +393,83 @@ class ClassEmitter:
         return lines
 
     def emit_print_handler(self) -> list[str]:
-        if not self.class_ir.is_dataclass:
-            return []
+        has_user_repr = self.class_ir.has_repr
+        has_user_str = self.class_ir.has_str
+        has_dataclass_repr = (
+            self.class_ir.is_dataclass
+            and self.class_ir.dataclass_info
+            and self.class_ir.dataclass_info.repr_
+            and not has_user_repr
+        )
 
-        lines = []
+        # Case 1: User-defined __str__ and/or __repr__
+        if has_user_str or has_user_repr:
+            return self._emit_user_print_handler(has_user_str, has_user_repr)
+
+        # Case 2: Dataclass auto-generated repr (no user override)
+        if has_dataclass_repr:
+            return self._emit_dataclass_print_handler()
+
+        return []
+
+    def _emit_user_print_handler(
+        self, has_str: bool, has_repr: bool
+    ) -> list[str]:
+        """Emit print handler that dispatches to user __str__/__repr__ methods."""
+        lines: list[str] = []
+        repr_c_name = self.class_ir.methods.get("__repr__")
+        str_c_name = self.class_ir.methods.get("__str__")
+
+        lines.append(
+            f"static void {self.c_name}_print(const mp_print_t *print, "
+            f"mp_obj_t self_in, mp_print_kind_t kind) {{"
+        )
+
+        if has_str and has_repr:
+            # Dispatch based on kind
+            assert repr_c_name is not None
+            assert str_c_name is not None
+            lines.append("    mp_obj_t result;")
+            lines.append("    if (kind == PRINT_STR) {")
+            lines.append(f"        result = {str_c_name.c_name}_mp(self_in);")
+            lines.append("    } else {")
+            lines.append(f"        result = {repr_c_name.c_name}_mp(self_in);")
+            lines.append("    }")
+            lines.append("    mp_obj_print_helper(print, result, PRINT_STR);")
+        elif has_repr:
+            # __repr__ only: Python semantics -- str() falls back to repr()
+            assert repr_c_name is not None
+            lines.append("    (void)kind;")
+            lines.append(
+                f"    mp_obj_t result = {repr_c_name.c_name}_mp(self_in);"
+            )
+            lines.append("    mp_obj_print_helper(print, result, PRINT_STR);")
+        else:
+            # __str__ only: use for PRINT_STR, default for PRINT_REPR
+            assert str_c_name is not None
+            lines.append("    if (kind == PRINT_STR) {")
+            lines.append(
+                f"        mp_obj_t result = {str_c_name.c_name}_mp(self_in);"
+            )
+            lines.append("        mp_obj_print_helper(print, result, PRINT_STR);")
+            lines.append("    } else {")
+            lines.append(
+                f'        mp_printf(print, "<{self.class_ir.name} object>");'
+            )
+            lines.append("    }")
+
+        lines.append("}")
+        lines.append("")
+        return lines
+
+    def _emit_dataclass_print_handler(self) -> list[str]:
+        """Emit auto-generated print handler for @dataclass classes."""
+        lines: list[str] = []
         fields_with_path = self.class_ir.get_all_fields_with_path()
 
         lines.append(
-            f"static void {self.c_name}_print(const mp_print_t *print, mp_obj_t self_in, mp_print_kind_t kind) {{"
+            f"static void {self.c_name}_print(const mp_print_t *print, "
+            f"mp_obj_t self_in, mp_print_kind_t kind) {{"
         )
         lines.append(f"    {self.c_name}_obj_t *self = MP_OBJ_TO_PTR(self_in);")
         lines.append("    (void)kind;")
@@ -360,52 +497,178 @@ class ClassEmitter:
         lines.append('    mp_printf(print, ")");')
         lines.append("}")
         lines.append("")
-
         return lines
 
-    def emit_binary_op_handler(self) -> list[str]:
-        if not (
+    def _has_user_comparison_methods(self) -> bool:
+        """Check if this class has any user-defined comparison methods."""
+        return (
+            self.class_ir.has_eq
+            or self.class_ir.has_ne
+            or self.class_ir.has_lt
+            or self.class_ir.has_le
+            or self.class_ir.has_gt
+            or self.class_ir.has_ge
+        )
+
+    def _has_dataclass_eq(self) -> bool:
+        """Check if this is a dataclass with auto-generated __eq__."""
+        return (
             self.class_ir.is_dataclass
-            and self.class_ir.dataclass_info
+            and self.class_ir.dataclass_info is not None
             and self.class_ir.dataclass_info.eq
-        ):
+            and not self.class_ir.has_eq  # No user override
+        )
+
+    def emit_binary_op_handler(self) -> list[str]:
+        """Emit binary_op handler for comparison operators."""
+        has_user_comparisons = self._has_user_comparison_methods()
+        has_dataclass_eq = self._has_dataclass_eq()
+
+        if not has_user_comparisons and not has_dataclass_eq:
             return []
 
-        lines = []
-        fields_with_path = self.class_ir.get_all_fields_with_path()
-
+        lines: list[str] = []
         lines.append(
             f"static mp_obj_t {self.c_name}_binary_op(mp_binary_op_t op, mp_obj_t lhs_in, mp_obj_t rhs_in) {{"
         )
-        lines.append("    if (op != MP_BINARY_OP_EQUAL) {")
-        lines.append("        return MP_OBJ_NULL;")
-        lines.append("    }")
-        lines.append("")
-        lines.append("    if (!mp_obj_is_type(rhs_in, mp_obj_get_type(lhs_in))) {")
-        lines.append("        return mp_const_false;")
-        lines.append("    }")
-        lines.append("")
-        lines.append(f"    {self.c_name}_obj_t *lhs = MP_OBJ_TO_PTR(lhs_in);")
-        lines.append(f"    {self.c_name}_obj_t *rhs = MP_OBJ_TO_PTR(rhs_in);")
-        lines.append("")
 
-        conditions = []
-        for fld, path in fields_with_path:
-            if fld.c_type == CType.MP_OBJ_T:
-                conditions.append(f"mp_obj_equal(lhs->{path}, rhs->{path})")
+        # Map of comparison ops to methods
+        comparison_ops = [
+            ("MP_BINARY_OP_EQUAL", "__eq__", self.class_ir.has_eq),
+            ("MP_BINARY_OP_NOT_EQUAL", "__ne__", self.class_ir.has_ne),
+            ("MP_BINARY_OP_LESS", "__lt__", self.class_ir.has_lt),
+            ("MP_BINARY_OP_LESS_EQUAL", "__le__", self.class_ir.has_le),
+            ("MP_BINARY_OP_MORE", "__gt__", self.class_ir.has_gt),
+            ("MP_BINARY_OP_MORE_EQUAL", "__ge__", self.class_ir.has_ge),
+        ]
+
+        # Emit dispatch for user-defined comparison methods
+        for mp_op, py_method, has_method in comparison_ops:
+            if has_method and py_method in self.class_ir.methods:
+                method_ir = self.class_ir.methods[py_method]
+                lines.append(f"    if (op == {mp_op}) {{")
+                lines.append(f"        return {method_ir.c_name}_mp(lhs_in, rhs_in);")
+                lines.append("    }")
+
+        # Handle dataclass auto-generated __eq__
+        if has_dataclass_eq:
+            lines.append("    if (op == MP_BINARY_OP_EQUAL) {")
+            lines.append("        if (!mp_obj_is_type(rhs_in, mp_obj_get_type(lhs_in))) {")
+            lines.append("            return mp_const_false;")
+            lines.append("        }")
+            lines.append(f"        {self.c_name}_obj_t *lhs = MP_OBJ_TO_PTR(lhs_in);")
+            lines.append(f"        {self.c_name}_obj_t *rhs = MP_OBJ_TO_PTR(rhs_in);")
+
+            fields_with_path = self.class_ir.get_all_fields_with_path()
+            conditions = []
+            for fld, path in fields_with_path:
+                if fld.c_type == CType.MP_OBJ_T:
+                    conditions.append(f"mp_obj_equal(lhs->{path}, rhs->{path})")
+                else:
+                    conditions.append(f"lhs->{path} == rhs->{path}")
+
+            if conditions:
+                cond_str = " &&\n            ".join(conditions)
+                lines.append("        return mp_obj_new_bool(")
+                lines.append(f"            {cond_str}")
+                lines.append("        );")
             else:
-                conditions.append(f"lhs->{path} == rhs->{path}")
+                lines.append("        return mp_const_true;")
+            lines.append("    }")
 
-        if conditions:
-            cond_str = " &&\n        ".join(conditions)
-            lines.append("    return mp_obj_new_bool(")
-            lines.append(f"        {cond_str}")
-            lines.append("    );")
-        else:
-            lines.append("    return mp_const_true;")
-
+        # Return NULL for unsupported operations
+        lines.append("    return MP_OBJ_NULL;")
         lines.append("}")
         lines.append("")
+
+        return lines
+
+    def emit_unary_op_handler(self) -> list[str]:
+        """Emit unary_op handler for __hash__."""
+        if not self.class_ir.has_hash:
+            return []
+
+        if "__hash__" not in self.class_ir.methods:
+            return []
+
+        lines: list[str] = []
+        method_ir = self.class_ir.methods["__hash__"]
+
+        lines.append(
+            f"static mp_obj_t {self.c_name}_unary_op(mp_unary_op_t op, mp_obj_t self_in) {{"
+        )
+        lines.append("    if (op == MP_UNARY_OP_HASH) {")
+        lines.append(f"        return {method_ir.c_name}_mp(self_in);")
+        lines.append("    }")
+        lines.append("    return MP_OBJ_NULL;")
+        lines.append("}")
+        lines.append("")
+
+        return lines
+
+    def emit_iter_handlers(self) -> list[str]:
+        """Emit getiter and iternext handlers for __iter__ and __next__."""
+        if not self.class_ir.has_iter and not self.class_ir.has_next:
+            return []
+
+        lines: list[str] = []
+
+        is_self_iterator = self.class_ir.has_iter and self.class_ir.has_next
+
+        if is_self_iterator:
+            # Common case: __iter__ returns self, __next__ does the work.
+            # Use MP_TYPE_FLAG_ITER_IS_ITERNEXT: the single iter slot IS the
+            # iternext function and MicroPython auto-returns self for getiter.
+            pass
+        elif self.class_ir.has_iter and "__iter__" in self.class_ir.methods:
+            # __iter__ only (no __next__): emit a getiter wrapper
+            method_ir = self.class_ir.methods["__iter__"]
+            lines.append(
+                f"static mp_obj_t {self.c_name}_getiter(mp_obj_t self_in, mp_obj_iter_buf_t *iter_buf) {{"
+            )
+            lines.append("    (void)iter_buf;")
+            lines.append(f"    return {method_ir.c_name}_mp(self_in);")
+            lines.append("}")
+            lines.append("")
+
+        # Emit iternext handler for __next__
+        if self.class_ir.has_next and "__next__" in self.class_ir.methods:
+            method_ir = self.class_ir.methods["__next__"]
+            lines.append(
+                f"static mp_obj_t {self.c_name}_iternext(mp_obj_t self_in) {{"
+            )
+            # Call the user's __next__ method, which should raise StopIteration
+            # when done. We need to catch that and return MP_OBJ_STOP_ITERATION.
+            lines.append("    nlr_buf_t nlr;")
+            lines.append("    if (nlr_push(&nlr) == 0) {")
+            lines.append(f"        mp_obj_t result = {method_ir.c_name}_mp(self_in);")
+            lines.append("        nlr_pop();")
+            lines.append("        return result;")
+            lines.append("    } else {")
+            lines.append("        // Check if StopIteration was raised")
+            lines.append("        mp_obj_t exc = MP_OBJ_FROM_PTR(nlr.ret_val);")
+            lines.append("        if (mp_obj_is_subclass_fast(MP_OBJ_FROM_PTR(mp_obj_get_type(exc)), MP_OBJ_FROM_PTR(&mp_type_StopIteration))) {")
+            lines.append("            return MP_OBJ_STOP_ITERATION;")
+            lines.append("        }")
+            lines.append("        // Re-raise other exceptions")
+            lines.append("        nlr_jump(nlr.ret_val);")
+            lines.append("    }")
+            lines.append("}")
+            lines.append("")
+
+        # For MP_TYPE_FLAG_ITER_IS_CUSTOM: emit the getiter_iternext struct
+        if is_self_iterator:
+            # Self-iterator: no struct needed, use MP_TYPE_FLAG_ITER_IS_ITERNEXT
+            pass
+        elif self.class_ir.has_iter and self.class_ir.has_next:
+            # Custom: separate getiter and iternext
+            lines.append(
+                f"static const mp_getiter_iternext_custom_t {self.c_name}_iter_custom = {{"
+            )
+            lines.append(f"    .getiter = {self.c_name}_getiter,")
+            lines.append(f"    .iternext = {self.c_name}_iternext,")
+            lines.append("}};")
+            lines.append("")
 
         return lines
 
@@ -443,14 +706,38 @@ class ClassEmitter:
         all_methods = self.class_ir.get_all_methods()
         method_names = [
             name
-            for name in all_methods.keys()
-            if not name.startswith("__") or name in ("__len__", "__getitem__", "__setitem__")
+            for name, method in all_methods.items()
+            if not method.is_property
+            and not name.startswith("_prop_")
+            and (
+                method.is_static
+                or method.is_classmethod
+                or not name.startswith("__")
+                or name in ("__len__", "__getitem__", "__setitem__")
+            )
         ]
 
         if not method_names:
             return []
 
         lines = []
+        for name in method_names:
+            method = all_methods[name]
+            if method.is_static or method.is_classmethod:
+                # Only emit wrapper struct if method belongs to this class (not inherited)
+                is_own_method = name in self.class_ir.methods
+                if is_own_method:
+                    lines.append(
+                        f"static const mp_rom_obj_static_class_method_t {method.c_name}_obj = {{"
+                    )
+                    method_type = "mp_type_staticmethod" if method.is_static else "mp_type_classmethod"
+                    lines.append(f"    {{&{method_type}}}, MP_ROM_PTR(&{method.c_name}_fun_obj)")
+                    lines.append("};")
+        if any(
+            all_methods[name].is_static or all_methods[name].is_classmethod for name in method_names
+        ):
+            lines.append("")
+
         lines.append(f"static const mp_rom_map_elem_t {self.c_name}_locals_dict_table[] = {{")
         for name in method_names:
             method = all_methods[name]
@@ -472,31 +759,77 @@ class ClassEmitter:
         slots = []
         slots.append(f"    make_new, {self.c_name}_make_new")
 
-        if self.class_ir.get_all_fields():
+        if self.class_ir.get_all_fields() or self.class_ir.get_all_properties():
             slots.append(f"    attr, {self.c_name}_attr")
 
-        if self.class_ir.is_dataclass:
+        # Add print slot when we have a print handler
+        has_user_repr = self.class_ir.has_repr
+        has_user_str = self.class_ir.has_str
+        has_dataclass_repr = (
+            self.class_ir.is_dataclass
+            and self.class_ir.dataclass_info
+            and self.class_ir.dataclass_info.repr_
+            and not has_user_repr
+        )
+        if has_user_str or has_user_repr or has_dataclass_repr:
             slots.append(f"    print, {self.c_name}_print")
-            if self.class_ir.dataclass_info and self.class_ir.dataclass_info.eq:
-                slots.append(f"    binary_op, {self.c_name}_binary_op")
 
+        # Add binary_op slot for comparison methods
+        has_binary_op = (
+            self._has_user_comparison_methods()
+            or self._has_dataclass_eq()
+        )
+        if has_binary_op:
+            slots.append(f"    binary_op, {self.c_name}_binary_op")
+
+        # Add unary_op slot for __hash__
+        if self.class_ir.has_hash:
+            slots.append(f"    unary_op, {self.c_name}_unary_op")
+
+        # Add iter slot for __iter__ and/or __next__
+        is_self_iterator = self.class_ir.has_iter and self.class_ir.has_next
+        if is_self_iterator:
+            # Self-iterator: iter slot = iternext function
+            # Flag MP_TYPE_FLAG_ITER_IS_ITERNEXT makes getiter return self
+            slots.append(f"    iter, {self.c_name}_iternext")
+        elif self.class_ir.has_next:
+            # __next__ only: use ITER_IS_ITERNEXT
+            slots.append(f"    iter, {self.c_name}_iternext")
+        elif self.class_ir.has_iter:
+            # __iter__ only: use default getiter
+            slots.append(f"    iter, {self.c_name}_getiter")
         if self.class_ir.base:
             slots.append(f"    parent, &{self.class_ir.base.c_name}_type")
 
+        all_methods = self.class_ir.get_all_methods()
         method_names = [
             name
-            for name in self.class_ir.methods.keys()
-            if not name.startswith("__") or name in ("__len__", "__getitem__", "__setitem__")
+            for name, method in all_methods.items()
+            if not method.is_property
+            and not name.startswith("_prop_")
+            and (
+                method.is_static
+                or method.is_classmethod
+                or not name.startswith("__")
+                or name in ("__len__", "__getitem__", "__setitem__")
+            )
         ]
         if method_names:
             slots.append(f"    locals_dict, &{self.c_name}_locals_dict")
 
         slots_str = ",\n".join(slots)
 
+        # Determine type flags
+        has_iternext = self.class_ir.has_next
+        if has_iternext:
+            type_flags = "MP_TYPE_FLAG_ITER_IS_ITERNEXT"
+        else:
+            type_flags = "MP_TYPE_FLAG_NONE"
+
         lines.append("MP_DEFINE_CONST_OBJ_TYPE(")
         lines.append(f"    {self.c_name}_type,")
         lines.append(f"    MP_QSTR_{self.class_ir.name},")
-        lines.append("    MP_TYPE_FLAG_NONE,")
+        lines.append(f"    {type_flags},")
         lines.append(slots_str)
         lines.append(");")
         lines.append("")
@@ -511,6 +844,8 @@ class ClassEmitter:
         sections.extend(self.emit_attr_handler())
         sections.extend(self.emit_print_handler())
         sections.extend(self.emit_binary_op_handler())
+        sections.extend(self.emit_unary_op_handler())
+        sections.extend(self.emit_iter_handlers())
         sections.extend(self.emit_vtable_instance())
         sections.extend(self.emit_make_new())
         sections.extend(self.emit_locals_dict())
@@ -525,6 +860,8 @@ class ClassEmitter:
         sections.extend(self.emit_attr_handler())
         sections.extend(self.emit_print_handler())
         sections.extend(self.emit_binary_op_handler())
+        sections.extend(self.emit_unary_op_handler())
+        sections.extend(self.emit_iter_handlers())
         sections.extend(self.emit_vtable_instance())
         sections.extend(self.emit_make_new())
         sections.extend(self.emit_locals_dict())

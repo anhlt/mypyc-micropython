@@ -24,10 +24,11 @@ MP_PORT_DIR := $(MICROPYTHON_DIR)/ports/esp32
 # User modules cmake file
 USER_C_MODULES := $(MODULES_DIR)/micropython.cmake
 
-.PHONY: help setup setup-idf setup-mpy compile build flash monitor clean \
-        test test-device test-device-only run-device-tests \
+.PHONY: help setup setup-idf setup-mpy compile build flash monitor clean clean-all \
+        test test-device test-device-only run-device-tests benchmark \
         test-factorial test-point test-counter test-sensor test-list test-dict test-all-modules \
-        repl compile-all check-env compile-lvgl build-lvgl flash-lvgl deploy-lvgl test-lvgl
+        repl compile-all check-env compile-lvgl compile-lvgl-app build-lvgl flash-lvgl deploy-lvgl test-lvgl \
+        erase run list-boards info
 
 # Default target
 help:
@@ -42,8 +43,9 @@ help:
 	@echo "DEVELOPMENT:"
 	@echo "  make compile SRC=examples/factorial.py"
 	@echo "                      - Compile Python file to C module"
-	@echo "  make compile-all    - Compile all examples"
+	@echo "  make compile-all    - Compile all examples (CI-safe; skips lvgl_app)"
 	@echo "  make compile-lvgl   - Generate LVGL C bindings from .pyi stub"
+	@echo "  make compile-lvgl-app - Compile lvgl_app with LVGL cross-module calls"
 	@echo ""
 	@echo "BUILD & FLASH:"
 	@echo "  make build          - Build MicroPython firmware with modules"
@@ -142,20 +144,38 @@ compile-all:
 	@echo "Cleaning old usermod directories..."
 	@rm -rf $(MODULES_DIR)/usermod_*
 	@rm -f $(MODULES_DIR)/micropython.cmake
-	@echo "Compiling all examples..."
-	@for f in examples/*.py; do \
+	@echo "Compiling all examples in parallel (CI-safe)..."
+	@printf '%s\n' examples/*.py | xargs -P $$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4) -n1 sh -c '\
+		f="$$1"; \
 		MOD_NAME=$$(basename "$$f" .py); \
-		if [ "$$MOD_NAME" = "lvgl_app" ]; then continue; fi; \
-		echo "Compiling $$f -> modules/usermod_$$MOD_NAME/"; \
-		mpy-compile "$$f" -o $(MODULES_DIR)/usermod_$$MOD_NAME -v || exit 1; \
+		case "$$MOD_NAME" in \
+			usermod_*|lvgl_app) exit 0 ;; \
+		esac; \
+		echo "Compiling $$f -> $(MODULES_DIR)/usermod_$$MOD_NAME/"; \
+		mpy-compile "$$f" -o "$(MODULES_DIR)/usermod_$$MOD_NAME" \
+	' _
+	@for d in examples/*/; do \
+		if [ -f "$${d}__init__.py" ]; then \
+			PKG_NAME=$$(basename "$$d"); \
+			echo "Compiling package $$d -> $(MODULES_DIR)/usermod_$$PKG_NAME/"; \
+			mpy-compile "$$d" -o "$(MODULES_DIR)/usermod_$$PKG_NAME" || exit 1; \
+		fi; \
 	done
 	@echo ""
 	@echo "Generating $(MODULES_DIR)/micropython.cmake..."
 	@echo "# Auto-generated - include all compiled modules" > $(MODULES_DIR)/micropython.cmake
 	@for f in examples/*.py; do \
 		MOD_NAME=$$(basename "$$f" .py); \
-		if [ "$$MOD_NAME" = "lvgl_app" ]; then continue; fi; \
+		case "$$MOD_NAME" in \
+			usermod_*|lvgl_app) continue ;; \
+		esac; \
 		echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_$$MOD_NAME/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
+	done
+	@for d in examples/*/; do \
+		if [ -f "$${d}__init__.py" ]; then \
+			PKG_NAME=$$(basename "$$d"); \
+			echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_$$PKG_NAME/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
+		fi; \
 	done
 	@if [ -d "$(LVGL_MODULE_DIR)" ]; then \
 		echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_lvgl/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
@@ -174,7 +194,6 @@ compile-lvgl:
 	@echo "Patching lvgl.c with display driver entries..."
 	@python3 scripts/patch_lvgl_c.py $(LVGL_MODULE_DIR)/lvgl.c
 	@echo "LVGL module compiled successfully."
-
 
 compile-lvgl-app: compile-lvgl
 	@echo "Compiling lvgl_app.py with cross-module LVGL calls..."

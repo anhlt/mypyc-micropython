@@ -56,6 +56,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - C emitter argument conversion: unified `CType.to_c_decl()`/`to_mp_unbox()` path
 
 ### Added
+- Simple generator functions (`yield`) compiled into iterator objects with resumable `iternext` state machines
+  - `range(start, end)` patterns in generators (non-zero start value)
+  - `for x in items: yield x` pattern (iterate over arbitrary iterables in generators)
+- `__str__` and `__repr__` special method support for user-defined classes
+  - User-defined `__repr__` wired to MicroPython `print` type slot; `str()` falls back to `__repr__` (Python semantics)
+  - User-defined `__str__` dispatches on `PRINT_STR` vs `PRINT_REPR` kind
+  - Both `__str__` and `__repr__` dispatch correctly when both defined
+  - `@dataclass` with user `__repr__` override uses user version instead of auto-generated field dump
+  - `@dataclass` without user override keeps existing auto-generated `repr`
+- 7 unit tests for `__str__`/`__repr__` compilation
+- 4 C runtime tests for `__str__`/`__repr__` execution
+- 5 device tests for `__str__`/`__repr__` on ESP32
+
+- Private method (`__method`) optimization: skip MP wrappers, vtable entries, and `locals_dict` registration for class-internal methods
+  - Compile-time enforcement: accessing `__private` methods from outside the class is a compilation error
+  - Private methods emit only a native C function -- no boxing/unboxing wrapper
+- `@final` class devirtualization: classes decorated with `@final` skip vtable struct and vtable pointer entirely
+  - Saves 4 bytes per instance on 32-bit MCU (no vtable pointer in struct)
+  - All methods marked `@final` automatically when class is `@final`
+- `Final` attribute constant folding: `Final[int]` class fields with literal values are inlined as C constants
+  - `self.SCALE` (where `SCALE: Final[int] = 2`) emits literal `2` instead of struct field load
+- IR visualizer: fix `MethodIR` dump support (`--dump-ir` with `--ir-function` now shows method body)
+- IR visualizer: fix duplicate `@final` annotation in class output
+- `examples/private_methods.py` exercising all 3 optimization tiers
+- 14 unit tests for private method, `@final`, and `Final` optimizations
+- 3 C runtime tests for native call, devirtualization, and constant folding
+- 11 device tests for `private_methods` module
+- 3 benchmarks: public vs private method call, `@final` FastCounter
+- Blog post 23: Private Methods, @final, and Constant Folding
+
+### Fixed
+- Serial port contention in `run_device_tests.py`: added `_wait_for_port()` with retry and backoff
+- Serial port contention in `run_benchmarks.py`: same retry logic
+- Fixed pre-existing corruption (duplicated entries) in `run_benchmarks.py`
+
+### Added
+- Runtime import support for built-in MicroPython modules (`import math`, `import time`, etc.)
+  - New IR nodes: `ModuleImportIR`, `ModuleCallIR`, `ModuleAttrIR`
+  - Generated C uses `mp_import_name()` + `mp_load_attr()` + `mp_call_function_N()` pattern
+  - Module function calls: `math.sqrt(x)` compiles to runtime dispatch
+  - Module attribute access: `math.pi` compiles to runtime attribute load
+  - Works with all MicroPython built-in modules (math, time, machine, etc.)
+- Cross-module imports between compiled native modules (`import factorial` from another compiled module)
+- Package compilation: compile a directory with `__init__.py` into a single C module with namespaced submodules
+  - `mpy-compile examples/sensor_lib/` compiles the entire package
+  - Nested multi-level sub-packages supported (arbitrary depth)
+  - Sub-packages generate `mp_obj_module_t` with their own globals table
+  - Parent module's globals table references sub-package modules via `MP_ROM_PTR`
+  - Depth-first emission ensures C forward references are satisfied
+- `examples/sensor_lib/` package example with `math_helpers`, `filters`, `converters` submodules
+  and nested `processing/` sub-package with `smoothing` and `calibration` modules
+- 8 unit tests for package compilation (flat + nested)
+- 17 device tests for sensor_lib package including nested sub-package access
+- Makefile `compile-all` now detects and compiles package directories automatically
+- `examples/math_ops.py` demonstrating runtime import of `math` and `time` modules
+- ESP-IDF Python version mismatch troubleshooting in AGENTS.md
+
+### Added
+- `@staticmethod` decorator support for class methods
+  - Static methods have no `self` parameter and are wrapped in `mp_type_staticmethod`
+  - Accessible via both class and instance (e.g., `MyClass.add(1, 2)` or `obj.add(1, 2)`)
+- `@classmethod` decorator support for class methods
+  - Class methods receive the type object as first parameter (`cls`)
+  - Wrapped in `mp_type_classmethod` for automatic class binding by MicroPython runtime
+- `@property` decorator support with getter and setter
+  - Read-only properties via `@property` decorator
+  - Read-write properties via `@property` + `@name.setter` pattern
+  - Properties dispatched directly in generated `attr` handler (not via `locals_dict`)
+  - Type-aware boxing/unboxing for `int`, `float`, `bool`, and `mp_obj_t` return types
+- `examples/decorators.py` demonstrating all three decorator types
+- 14 device tests for decorator functionality
+- Compiler tests for `@staticmethod`, `@classmethod`, and `@property`
+- C runtime tests for static method and property getter execution
+
+### Added
  **Exception handling support**: `try`/`except`/`else`/`finally`/`raise` statements
   - `try`/`except ExceptionType:` - catch specific exception types
   - `try`/`except ExceptionType as e:` - catch with variable binding

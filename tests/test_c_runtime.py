@@ -54,6 +54,113 @@ int main(void) {
     assert stdout.strip().splitlines() == ["4", "0", "1", "4", "9"]
 
 
+def test_c_generator_iternext_yields_expected_values_and_stops(compile_and_run):
+    source = """
+def countdown(n: int):
+    while n > 0:
+        yield n
+        n -= 1
+
+
+def squares(n: int):
+    for i in range(n):
+        yield i * i
+"""
+    test_main_c = """
+#include <stdio.h>
+
+static void drain_countdown(mp_int_t n) {
+    mp_obj_t gen = test_countdown(mp_obj_new_int(n));
+    for (;;) {
+        mp_obj_t item = test_countdown_gen_iternext(gen);
+        if (item == MP_OBJ_STOP_ITERATION) {
+            break;
+        }
+        printf("%ld\\n", (long)mp_obj_get_int(item));
+    }
+    printf("%d\\n", test_countdown_gen_iternext(gen) == MP_OBJ_STOP_ITERATION);
+}
+
+static void drain_squares(mp_int_t n) {
+    mp_obj_t gen = test_squares(mp_obj_new_int(n));
+    for (;;) {
+        mp_obj_t item = test_squares_gen_iternext(gen);
+        if (item == MP_OBJ_STOP_ITERATION) {
+            break;
+        }
+        printf("%ld\\n", (long)mp_obj_get_int(item));
+    }
+    printf("%d\\n", test_squares_gen_iternext(gen) == MP_OBJ_STOP_ITERATION);
+}
+
+int main(void) {
+    drain_countdown(3);
+    drain_squares(5);
+    return 0;
+}
+"""
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["3", "2", "1", "1", "0", "1", "4", "9", "16", "1"]
+
+
+def test_c_generator_for_iter_yields_list_items(compile_and_run):
+    """Test generator with for-iter (list iteration) pattern."""
+    source = '''
+def iter_items(items: list):
+    for x in items:
+        yield x
+
+
+def iter_range_start(n: int):
+    for i in range(1, n):
+        yield i
+'''
+    test_main_c = '''
+#include <stdio.h>
+
+static void drain_iter_items(void) {
+    mp_obj_t items[] = {
+        mp_obj_new_int(10),
+        mp_obj_new_int(20),
+        mp_obj_new_int(30),
+    };
+    mp_obj_t lst = mp_obj_new_list(3, items);
+    mp_obj_t gen = test_iter_items(lst);
+    for (;;) {
+        mp_obj_t item = test_iter_items_gen_iternext(gen);
+        if (item == MP_OBJ_STOP_ITERATION) {
+            break;
+        }
+        printf("%ld\\n", (long)mp_obj_get_int(item));
+    }
+    printf("%d\\n", test_iter_items_gen_iternext(gen) == MP_OBJ_STOP_ITERATION);
+}
+
+static void drain_range_start(mp_int_t n) {
+    mp_obj_t gen = test_iter_range_start(mp_obj_new_int(n));
+    for (;;) {
+        mp_obj_t item = test_iter_range_start_gen_iternext(gen);
+        if (item == MP_OBJ_STOP_ITERATION) {
+            break;
+        }
+        printf("%ld\\n", (long)mp_obj_get_int(item));
+    }
+    printf("%d\\n", test_iter_range_start_gen_iternext(gen) == MP_OBJ_STOP_ITERATION);
+}
+
+int main(void) {
+    drain_iter_items();
+    drain_range_start(5);
+    return 0;
+}
+'''
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    # iter_items: 10, 20, 30, then stop_iteration=1
+    # iter_range_start: 1, 2, 3, 4, then stop_iteration=1
+    assert stdout.strip().splitlines() == ["10", "20", "30", "1", "1", "2", "3", "4", "1"]
+
 def test_c_sum_list_returns_correct_sum(compile_and_run):
     source = """
 def sum_list(lst: list) -> int:
@@ -248,6 +355,69 @@ int main(void) {
 
     stdout = compile_and_run(source, "factorial", test_main_c)
     assert stdout.strip() == "120"
+
+
+def test_c_static_method(compile_and_run):
+    source = """
+class Calculator:
+    @staticmethod
+    def add(a: int, b: int) -> int:
+        return a + b
+"""
+    test_main_c = """
+#include <stdio.h>
+extern mp_obj_t test_Calculator_add_mp(mp_obj_t a, mp_obj_t b);
+int main(void) {
+    mp_obj_t result = test_Calculator_add_mp(mp_obj_new_int(3), mp_obj_new_int(4));
+    printf("%d\\n", (int)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "7"
+
+
+def test_c_classmethod(compile_and_run):
+    source = """
+class MyClass:
+    @classmethod
+    def get_cls(cls) -> object:
+        return cls
+"""
+    test_main_c = """
+#include <stdio.h>
+extern mp_obj_t test_MyClass_get_cls_mp(mp_obj_t cls);
+int main(void) {
+    mp_obj_t cls_arg = mp_obj_new_int(99);
+    mp_obj_t result = test_MyClass_get_cls_mp(cls_arg);
+    printf("%d\\n", (int)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "99"
+
+
+def test_c_property_getter(compile_and_run):
+    source = """
+class Rectangle:
+    @property
+    def pop(self) -> int:
+        return 12
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t rect = test_Rectangle_make_new(&test_Rectangle_type, 0, 0, NULL);
+    mp_obj_t dest[2] = {MP_OBJ_NULL, MP_OBJ_NULL};
+    test_Rectangle_attr(rect, MP_QSTR_pop, dest);
+    printf("%ld\\n", (long)mp_obj_get_int(dest[0]));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "12"
 
 
 def test_c_super_init(compile_and_run):
@@ -1716,11 +1886,11 @@ int main(void) {
 
 def test_c_list_comp_squares(compile_and_run):
     """Test basic list comprehension with range."""
-    source = '''
+    source = """
 def squares(n: int) -> list[int]:
     return [i * i for i in range(n)]
-'''
-    test_main_c = '''
+"""
+    test_main_c = """
 #include <stdio.h>
 
 int main(void) {
@@ -1733,18 +1903,18 @@ int main(void) {
     }
     return 0;
 }
-'''
+"""
     stdout = compile_and_run(source, "test", test_main_c)
     assert stdout.strip().splitlines() == ["5", "0", "1", "4", "9", "16"]
 
 
 def test_c_list_comp_with_condition(compile_and_run):
     """Test list comprehension with filter condition."""
-    source = '''
+    source = """
 def evens(n: int) -> list[int]:
     return [i for i in range(n) if i % 2 == 0]
-'''
-    test_main_c = '''
+"""
+    test_main_c = """
 #include <stdio.h>
 
 int main(void) {
@@ -1757,18 +1927,18 @@ int main(void) {
     }
     return 0;
 }
-'''
+"""
     stdout = compile_and_run(source, "test", test_main_c)
     assert stdout.strip().splitlines() == ["5", "0", "2", "4", "6", "8"]
 
 
 def test_c_list_comp_iterator(compile_and_run):
     """Test list comprehension iterating over a list."""
-    source = '''
+    source = """
 def double_items(items: list[int]) -> list[int]:
     return [x * 2 for x in items]
-'''
-    test_main_c = '''
+"""
+    test_main_c = """
 #include <stdio.h>
 
 int main(void) {
@@ -1783,6 +1953,504 @@ int main(void) {
     }
     return 0;
 }
-'''
+"""
     stdout = compile_and_run(source, "test", test_main_c)
     assert stdout.strip().splitlines() == ["3", "2", "4", "6"]
+
+
+def test_c_private_method_via_public(compile_and_run):
+    """Private method called through public method should work correctly."""
+    source = """
+class Calc:
+    value: int
+
+    def __init__(self, v: int) -> None:
+        self.value = v
+
+    def __add_internal(self, x: int) -> int:
+        return self.value + x
+
+    def compute(self, x: int) -> int:
+        return self.__add_internal(x)
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t args[] = {mp_obj_new_int(10)};
+    mp_obj_t obj = test_Calc_make_new(&test_Calc_type, 1, 0, args);
+    mp_obj_t result = test_Calc_compute_mp(obj, mp_obj_new_int(5));
+    printf(\"%ld\\n\", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "15"
+
+
+def test_c_final_class_method(compile_and_run):
+    """@final class methods should work via direct native calls."""
+    source = """
+from typing import final
+
+@final
+class Config:
+    rate: int
+
+    def __init__(self, r: int) -> None:
+        self.rate = r
+
+    def get_rate(self) -> int:
+        return self.rate
+
+    def doubled(self) -> int:
+        return self.rate * 2
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t args[] = {mp_obj_new_int(7)};
+    mp_obj_t obj = test_Config_make_new(&test_Config_type, 1, 0, args);
+    mp_obj_t r1 = test_Config_get_rate_mp(obj);
+    mp_obj_t r2 = test_Config_doubled_mp(obj);
+    printf(\"%ld\\n\", (long)mp_obj_get_int(r1));
+    printf(\"%ld\\n\", (long)mp_obj_get_int(r2));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().splitlines()
+    assert lines == ["7", "14"]
+
+
+def test_c_final_attribute_constant_fold(compile_and_run):
+    """Final attribute should be constant-folded in generated C."""
+    source = """
+from typing import Final
+
+class Settings:
+    MAX: Final[int] = 42
+    count: int
+
+    def __init__(self, c: int) -> None:
+        self.count = c
+
+    def is_over_max(self) -> bool:
+        return self.count > self.MAX
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t args[] = {mp_obj_new_int(50)};
+    mp_obj_t obj = test_Settings_make_new(&test_Settings_type, 1, 0, args);
+    mp_obj_t result = test_Settings_is_over_max_mp(obj);
+    printf(\"%s\\n\", mp_obj_is_true(result) ? \"true\" : \"false\");
+
+    mp_obj_t args2[] = {mp_obj_new_int(10)};
+    mp_obj_t obj2 = test_Settings_make_new(&test_Settings_type, 1, 0, args2);
+    mp_obj_t result2 = test_Settings_is_over_max_mp(obj2);
+    printf(\"%s\\n\", mp_obj_is_true(result2) ? \"true\" : \"false\");
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().splitlines()
+    assert lines == ["true", "false"]
+
+
+def test_c_repr_method(compile_and_run):
+    """Test __repr__ method is callable and returns string."""
+    source = """
+class Tag:
+    name: str
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __repr__(self) -> str:
+        return self.name
+"""
+    test_main_c = """
+#include <stdio.h>
+extern mp_obj_t test_Tag___repr___mp(mp_obj_t self_in);
+extern mp_obj_t test_Tag_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args);
+int main(void) {
+    mp_obj_t args[] = { mp_obj_new_str("hello", 5) };
+    mp_obj_t obj = test_Tag_make_new(&test_Tag_type, 1, 0, args);
+    mp_obj_t result = test_Tag___repr___mp(obj);
+    mp_obj_print_helper(&mp_plat_print, result, PRINT_STR);
+    printf("\\n");
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "hello"
+
+
+def test_c_str_method(compile_and_run):
+    """Test __str__ method is callable and returns string."""
+    source = """
+class Greeter:
+    name: str
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __str__(self) -> str:
+        return self.name
+"""
+    test_main_c = """
+#include <stdio.h>
+extern mp_obj_t test_Greeter___str___mp(mp_obj_t self_in);
+extern mp_obj_t test_Greeter_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args);
+int main(void) {
+    mp_obj_t args[] = { mp_obj_new_str("world", 5) };
+    mp_obj_t obj = test_Greeter_make_new(&test_Greeter_type, 1, 0, args);
+    mp_obj_t result = test_Greeter___str___mp(obj);
+    mp_obj_print_helper(&mp_plat_print, result, PRINT_STR);
+    printf("\\n");
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "world"
+
+
+def test_c_print_handler_repr_only(compile_and_run):
+    """Test print handler dispatches __repr__ for both str() and repr()."""
+    source = """
+class Label:
+    text: str
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def __repr__(self) -> str:
+        return self.text
+"""
+    test_main_c = """
+#include <stdio.h>
+extern void test_Label_print(const mp_print_t *print, mp_obj_t self_in, mp_print_kind_t kind);
+extern mp_obj_t test_Label_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args);
+int main(void) {
+    mp_obj_t args[] = { mp_obj_new_str("my_label", 8) };
+    mp_obj_t obj = test_Label_make_new(&test_Label_type, 1, 0, args);
+    /* repr() call */
+    test_Label_print(&mp_plat_print, obj, PRINT_REPR);
+    printf("\\n");
+    /* str() call - should also use __repr__ */
+    test_Label_print(&mp_plat_print, obj, PRINT_STR);
+    printf("\\n");
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().splitlines()
+    assert lines == ["my_label", "my_label"]
+
+
+def test_c_print_handler_both_str_repr(compile_and_run):
+    """Test print handler dispatches correctly when both __str__ and __repr__ defined."""
+    source = """
+class Item:
+    name: str
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __str__(self) -> str:
+        return self.name
+
+    def __repr__(self) -> str:
+        return self.name
+"""
+    test_main_c = """
+#include <stdio.h>
+extern void test_Item_print(const mp_print_t *print, mp_obj_t self_in, mp_print_kind_t kind);
+extern mp_obj_t test_Item_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args);
+int main(void) {
+    mp_obj_t str_args[] = { mp_obj_new_str("str_val", 7) };
+    mp_obj_t obj = test_Item_make_new(&test_Item_type, 1, 0, str_args);
+    /* str() call */
+    test_Item_print(&mp_plat_print, obj, PRINT_STR);
+    printf("\\n");
+    /* repr() call */
+    mp_obj_t repr_args[] = { mp_obj_new_str("repr_val", 8) };
+    mp_obj_t obj2 = test_Item_make_new(&test_Item_type, 1, 0, repr_args);
+    test_Item_print(&mp_plat_print, obj2, PRINT_REPR);
+    printf("\\n");
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().splitlines()
+    assert lines == ["str_val", "repr_val"]
+
+
+def test_c_class_lt_method(compile_and_run):
+    """Test class with __lt__ method generates working binary_op handler."""
+    source = """
+class Number:
+    value: int
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __lt__(self, other: Number) -> bool:
+        o: Number = other
+        return self.value < o.value
+"""
+    test_main_c = """
+#include <stdio.h>
+extern mp_obj_t test_Number_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args);
+extern mp_obj_t test_Number_binary_op(mp_binary_op_t op, mp_obj_t lhs_in, mp_obj_t rhs_in);
+int main(void) {
+    mp_obj_t args1[] = { mp_obj_new_int(5) };
+    mp_obj_t num1 = test_Number_make_new(&test_Number_type, 1, 0, args1);
+    mp_obj_t args2[] = { mp_obj_new_int(10) };
+    mp_obj_t num2 = test_Number_make_new(&test_Number_type, 1, 0, args2);
+    mp_obj_t result = test_Number_binary_op(MP_BINARY_OP_LESS, num1, num2);
+    printf("%d\\n", result == mp_const_true ? 1 : 0);
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "1"  # 5 < 10 is true
+
+
+def test_c_class_hash_method(compile_and_run):
+    """Test class with __hash__ method generates working unary_op handler."""
+    source = """
+class Point:
+    x: int
+    y: int
+
+    def __init__(self, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+
+    def __hash__(self) -> int:
+        return self.x + self.y
+"""
+    test_main_c = """
+#include <stdio.h>
+extern mp_obj_t test_Point_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args);
+extern mp_obj_t test_Point_unary_op(mp_unary_op_t op, mp_obj_t self_in);
+int main(void) {
+    mp_obj_t args[] = { mp_obj_new_int(10), mp_obj_new_int(20) };
+    mp_obj_t point = test_Point_make_new(&test_Point_type, 2, 0, args);
+    mp_obj_t result = test_Point_unary_op(MP_UNARY_OP_HASH, point);
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "30"  # 10 + 20 = 30
+
+
+def test_c_class_ne_method(compile_and_run):
+    """Test class with __ne__ method generates working binary_op handler."""
+    source = """
+class Number:
+    value: int
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __ne__(self, other: Number) -> bool:
+        o: Number = other
+        return self.value != o.value
+"""
+    test_main_c = """
+#include <stdio.h>
+extern mp_obj_t test_Number_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args);
+extern mp_obj_t test_Number_binary_op(mp_binary_op_t op, mp_obj_t lhs_in, mp_obj_t rhs_in);
+int main(void) {
+    mp_obj_t args1[] = { mp_obj_new_int(5) };
+    mp_obj_t num1 = test_Number_make_new(&test_Number_type, 1, 0, args1);
+    mp_obj_t args2[] = { mp_obj_new_int(10) };
+    mp_obj_t num2 = test_Number_make_new(&test_Number_type, 1, 0, args2);
+    /* 5 != 10 should be true */
+    mp_obj_t r1 = test_Number_binary_op(MP_BINARY_OP_NOT_EQUAL, num1, num2);
+    printf("%d\\n", r1 == mp_const_true ? 1 : 0);
+    /* 5 != 5 should be false */
+    mp_obj_t args3[] = { mp_obj_new_int(5) };
+    mp_obj_t num3 = test_Number_make_new(&test_Number_type, 1, 0, args3);
+    mp_obj_t r2 = test_Number_binary_op(MP_BINARY_OP_NOT_EQUAL, num1, num3);
+    printf("%d\\n", r2 == mp_const_true ? 1 : 0);
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().split("\n")
+    assert lines[0] == "1"  # 5 != 10 is true
+    assert lines[1] == "0"  # 5 != 5 is false
+
+
+def test_c_class_gt_method(compile_and_run):
+    """Test class with __gt__ method generates working binary_op handler."""
+    source = """
+class Number:
+    value: int
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __gt__(self, other: Number) -> bool:
+        o: Number = other
+        return self.value > o.value
+"""
+    test_main_c = """
+#include <stdio.h>
+extern mp_obj_t test_Number_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args);
+extern mp_obj_t test_Number_binary_op(mp_binary_op_t op, mp_obj_t lhs_in, mp_obj_t rhs_in);
+int main(void) {
+    mp_obj_t args1[] = { mp_obj_new_int(10) };
+    mp_obj_t num1 = test_Number_make_new(&test_Number_type, 1, 0, args1);
+    mp_obj_t args2[] = { mp_obj_new_int(5) };
+    mp_obj_t num2 = test_Number_make_new(&test_Number_type, 1, 0, args2);
+    mp_obj_t result = test_Number_binary_op(MP_BINARY_OP_MORE, num1, num2);
+    printf("%d\\n", result == mp_const_true ? 1 : 0);
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "1"  # 10 > 5 is true
+
+
+def test_c_class_le_method(compile_and_run):
+    """Test class with __le__ method generates working binary_op handler."""
+    source = """
+class Number:
+    value: int
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __le__(self, other: Number) -> bool:
+        o: Number = other
+        return self.value <= o.value
+"""
+    test_main_c = """
+#include <stdio.h>
+extern mp_obj_t test_Number_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args);
+extern mp_obj_t test_Number_binary_op(mp_binary_op_t op, mp_obj_t lhs_in, mp_obj_t rhs_in);
+int main(void) {
+    mp_obj_t args1[] = { mp_obj_new_int(5) };
+    mp_obj_t num1 = test_Number_make_new(&test_Number_type, 1, 0, args1);
+    mp_obj_t args2[] = { mp_obj_new_int(5) };
+    mp_obj_t num2 = test_Number_make_new(&test_Number_type, 1, 0, args2);
+    /* 5 <= 5 should be true */
+    mp_obj_t r1 = test_Number_binary_op(MP_BINARY_OP_LESS_EQUAL, num1, num2);
+    printf("%d\\n", r1 == mp_const_true ? 1 : 0);
+    /* 10 <= 5 should be false */
+    mp_obj_t args3[] = { mp_obj_new_int(10) };
+    mp_obj_t num3 = test_Number_make_new(&test_Number_type, 1, 0, args3);
+    mp_obj_t r2 = test_Number_binary_op(MP_BINARY_OP_LESS_EQUAL, num3, num2);
+    printf("%d\\n", r2 == mp_const_true ? 1 : 0);
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().split("\n")
+    assert lines[0] == "1"  # 5 <= 5 is true
+    assert lines[1] == "0"  # 10 <= 5 is false
+
+
+def test_c_class_ge_method(compile_and_run):
+    """Test class with __ge__ method generates working binary_op handler."""
+    source = """
+class Number:
+    value: int
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __ge__(self, other: Number) -> bool:
+        o: Number = other
+        return self.value >= o.value
+"""
+    test_main_c = """
+#include <stdio.h>
+extern mp_obj_t test_Number_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args);
+extern mp_obj_t test_Number_binary_op(mp_binary_op_t op, mp_obj_t lhs_in, mp_obj_t rhs_in);
+int main(void) {
+    mp_obj_t args1[] = { mp_obj_new_int(5) };
+    mp_obj_t num1 = test_Number_make_new(&test_Number_type, 1, 0, args1);
+    mp_obj_t args2[] = { mp_obj_new_int(5) };
+    mp_obj_t num2 = test_Number_make_new(&test_Number_type, 1, 0, args2);
+    /* 5 >= 5 should be true */
+    mp_obj_t r1 = test_Number_binary_op(MP_BINARY_OP_MORE_EQUAL, num1, num2);
+    printf("%d\\n", r1 == mp_const_true ? 1 : 0);
+    /* 3 >= 5 should be false */
+    mp_obj_t args3[] = { mp_obj_new_int(3) };
+    mp_obj_t num3 = test_Number_make_new(&test_Number_type, 1, 0, args3);
+    mp_obj_t r2 = test_Number_binary_op(MP_BINARY_OP_MORE_EQUAL, num3, num2);
+    printf("%d\\n", r2 == mp_const_true ? 1 : 0);
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().split("\n")
+    assert lines[0] == "1"  # 5 >= 5 is true
+    assert lines[1] == "0"  # 3 >= 5 is false
+
+
+def test_c_class_all_comparisons(compile_and_run):
+    """Test class with all comparison methods working together."""
+    source = """
+class Number:
+    value: int
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __eq__(self, other: object) -> bool:
+        o: Number = other
+        return self.value == o.value
+
+    def __ne__(self, other: object) -> bool:
+        o: Number = other
+        return self.value != o.value
+
+    def __lt__(self, other: Number) -> bool:
+        o: Number = other
+        return self.value < o.value
+
+    def __gt__(self, other: Number) -> bool:
+        o: Number = other
+        return self.value > o.value
+"""
+    test_main_c = """
+#include <stdio.h>
+extern mp_obj_t test_Number_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args);
+extern mp_obj_t test_Number_binary_op(mp_binary_op_t op, mp_obj_t lhs_in, mp_obj_t rhs_in);
+int main(void) {
+    mp_obj_t a1[] = { mp_obj_new_int(3) };
+    mp_obj_t n3 = test_Number_make_new(&test_Number_type, 1, 0, a1);
+    mp_obj_t a2[] = { mp_obj_new_int(5) };
+    mp_obj_t n5 = test_Number_make_new(&test_Number_type, 1, 0, a2);
+    mp_obj_t a3[] = { mp_obj_new_int(3) };
+    mp_obj_t n3b = test_Number_make_new(&test_Number_type, 1, 0, a3);
+    /* 3 == 3 */
+    printf("%d\\n", test_Number_binary_op(MP_BINARY_OP_EQUAL, n3, n3b) == mp_const_true ? 1 : 0);
+    /* 3 != 5 */
+    printf("%d\\n", test_Number_binary_op(MP_BINARY_OP_NOT_EQUAL, n3, n5) == mp_const_true ? 1 : 0);
+    /* 3 < 5 */
+    printf("%d\\n", test_Number_binary_op(MP_BINARY_OP_LESS, n3, n5) == mp_const_true ? 1 : 0);
+    /* NOT 5 < 3 */
+    printf("%d\\n", test_Number_binary_op(MP_BINARY_OP_LESS, n5, n3) == mp_const_true ? 1 : 0);
+    /* 5 > 3 */
+    printf("%d\\n", test_Number_binary_op(MP_BINARY_OP_MORE, n5, n3) == mp_const_true ? 1 : 0);
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().split("\n")
+    assert lines[0] == "1"  # 3 == 3
+    assert lines[1] == "1"  # 3 != 5
+    assert lines[2] == "1"  # 3 < 5
+    assert lines[3] == "0"  # NOT 5 < 3
+    assert lines[4] == "1"  # 5 > 3

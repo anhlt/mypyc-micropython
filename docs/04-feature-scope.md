@@ -84,18 +84,23 @@ This document defines what Python features mypyc-micropython will support, parti
 | Instance methods | ✅ Implemented | With vtable dispatch |
 | Instance attributes | ✅ Implemented | Native C types |
 | Class attributes | 📋 Planned | Phase 3 |
-| `@property` | 📋 Planned | Phase 3 |
-| `@staticmethod` | 📋 Planned | Phase 3 |
-| `@classmethod` | 📋 Planned | Phase 3 |
+| `@property` | ✅ Implemented | Getter + setter with type-aware boxing/unboxing |
+| `@staticmethod` | ✅ Implemented | Via `mp_rom_obj_static_class_method_t` wrapper |
+| `@classmethod` | ✅ Implemented | Via `mp_rom_obj_static_class_method_t` wrapper |
 | Single inheritance | ✅ Implemented | With vtable-based virtual dispatch |
-| `__str__`/`__repr__` | 📋 Planned | Phase 3 |
+| `__str__`/`__repr__` | ✅ Implemented | Via MicroPython print slot |
 | `__eq__`/`__len__`/`__getitem__`/`__setitem__` | ✅ Implemented | Special methods |
 | `@dataclass` | ✅ Implemented | Auto-generated `__init__` and `__eq__` |
 
-### Exception Handling 📋
+### Exception Handling ✅
 
 | Feature | Status | Notes |
 |---------|--------|-------|
+| `try`/`except` | ✅ Implemented | With `nlr_push`/`nlr_pop` |
+| `try`/`finally` | ✅ Implemented | Ensures finally runs on all paths |
+| `raise` | ✅ Implemented | With exception type + message |
+| Exception chaining | ⚠️ Limited | Basic support only |
+| Custom exceptions | 📋 Planned | Phase 4 |
 | `try`/`except` | 📋 Planned | Phase 4 |
 | `try`/`finally` | 📋 Planned | Phase 4 |
 | `raise` | 📋 Planned | Phase 4 |
@@ -149,31 +154,52 @@ matrix = [[i * j for j in range(5)] for i in range(5)]  # ❌
 pairs = [(x, y) for x in range(3) for y in range(3)]  # ❌
 ```
 
-### Generators ⚠️
+### Generators ✅
 
-**Supported (Phase 5):**
+**Supported:**
 ```python
-# Simple generators
-def countdown(n: int) -> Generator[int, None, None]:
+# While-loop generators
+def countdown(n: int):
     while n > 0:
         yield n
         n -= 1
+
+# For-range generators (all forms)
+def squares(n: int):
+    for i in range(n):
+        yield i * i
+
+def range_with_start(n: int):
+    for i in range(1, n):  # Non-zero start supported
+        yield i
+
+# For-iter generators (iterate over arbitrary iterables)
+def iter_items(items: list[object]):
+    for x in items:
+        yield x
 ```
 
 **NOT Supported:**
 ```python
 # Generator expressions
-gen = (x * x for x in range(10))  # ❌
+gen = (x * x for x in range(10))  # Not supported
 
 # yield from
 def chain(*iterables):
     for it in iterables:
-        yield from it  # ❌
+        yield from it  # Not supported
 
 # Generator with send/throw
 def echo():
     while True:
-        x = yield  # ❌ Receiving values not supported
+        x = yield  # Receiving values not supported
+
+# try/with inside generators
+def gen_with_try():
+    try:
+        yield 1  # Not supported - try in generators
+    finally:
+        pass
 ```
 
 ### Decorators ⚠️
@@ -599,9 +625,9 @@ if (n := len(data)) > 10:
 |-------|----------|
 | **1 (Core)** | `for` loops ✅, `list` ✅, `tuple` ✅, `dict` ✅, `set` ✅, `range()` ✅, `len()` ✅, `print()` ✅ |
 | **2 (Functions)** | Default args ✅, `*args` ✅, `**kwargs` ✅, `bool()` ✅, `min()`/`max()` ✅, `sum()` ✅, `enumerate()` ✅, `zip()` ✅, `sorted()` ✅ |
-| **3 (Classes)** | Basic classes ✅, methods ✅, @dataclass ✅, single inheritance ✅, properties, @staticmethod |
-| **4 (Exceptions)** | `try`/`except`/`finally`, `raise`, custom exceptions |
-| **5 (Advanced)** | Simple closures, simple generators, `map()`/`filter()` |
+| **3 (Classes)** | Basic classes ✅, methods ✅, @dataclass ✅, single inheritance ✅, @property ✅, @staticmethod ✅, @classmethod ✅ |
+| **4 (Exceptions)** | `try`/`except`/`finally` ✅, `raise` ✅, custom exceptions |
+| **5 (Advanced)** | Simple generators ✅ (while/for-range/for-iter + yield), closures, `map()`/`filter()` |
 | **6 (Polish)** | Full IR pipeline ✅, RTuple optimization ✅ (47x speedup), list access optimization ✅, 504 tests ✅ |
 
 ## See Also

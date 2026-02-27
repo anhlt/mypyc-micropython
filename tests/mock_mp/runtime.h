@@ -25,6 +25,14 @@ typedef struct _mp_obj_type_t {
 } mp_obj_type_t;
 
 typedef struct {
+    mp_obj_base_t base;
+    mp_obj_t fun;
+} mp_rom_obj_static_class_method_t;
+
+static mp_obj_type_t mp_type_staticmethod __attribute__((unused)) = {0};
+static mp_obj_type_t mp_type_classmethod __attribute__((unused)) = {0};
+
+typedef struct {
     mp_obj_t key;
     mp_obj_t value;
 } mp_rom_map_elem_t;
@@ -463,11 +471,23 @@ static inline mp_obj_t mp_obj_list_append(mp_obj_t list_obj, mp_obj_t item) {
 typedef uintptr_t qstr;
 
 typedef enum {
+    MP_BINARY_OP_LESS,
+    MP_BINARY_OP_MORE,
+    MP_BINARY_OP_EQUAL,
+    MP_BINARY_OP_LESS_EQUAL,
+    MP_BINARY_OP_MORE_EQUAL,
+    MP_BINARY_OP_NOT_EQUAL,
     MP_BINARY_OP_ADD,
     MP_BINARY_OP_SUBTRACT,
     MP_BINARY_OP_MULTIPLY,
     MP_BINARY_OP_IN,
 } mp_binary_op_t;
+
+typedef enum {
+    MP_UNARY_OP_BOOL,
+    MP_UNARY_OP_LEN,
+    MP_UNARY_OP_HASH,
+} mp_unary_op_t;
 
 static inline mp_obj_t mp_binary_op(mp_binary_op_t op, mp_obj_t lhs, mp_obj_t rhs) {
     if (op == MP_BINARY_OP_IN) {
@@ -556,6 +576,26 @@ static inline mp_obj_t mp_binary_op(mp_binary_op_t op, mp_obj_t lhs, mp_obj_t rh
 #define MP_QSTR_pop   ((qstr)0x1001)
 #define MP_QSTR_append ((qstr)0x1002)
 
+/* Catch-all for unknown QSTRs used by class field descriptors */
+#define MP_QSTR_value   ((qstr)0x2001)
+#define MP_QSTR_x       ((qstr)0x2002)
+#define MP_QSTR_y       ((qstr)0x2003)
+#define MP_QSTR_count   ((qstr)0x2004)
+#define MP_QSTR_rate    ((qstr)0x2005)
+#define MP_QSTR_factor  ((qstr)0x2006)
+#define MP_QSTR_name    ((qstr)0x2007)
+#define MP_QSTR_MAX     ((qstr)0x2008)
+#define MP_QSTR_mass    ((qstr)0x2009)
+#define MP_QSTR_GRAVITY ((qstr)0x200A)
+#define MP_QSTR_DEBUG   ((qstr)0x200B)
+#define MP_QSTR_MAX_SIZE ((qstr)0x200C)
+#define MP_QSTR_TIMEOUT  ((qstr)0x200D)
+#define MP_QSTR_MAX_RETRIES ((qstr)0x200E)
+#define MP_QSTR_RATE    ((qstr)0x200F)
+#define MP_QSTR_LIMIT   ((qstr)0x2010)
+#define MP_QSTR_size    ((qstr)0x2011)
+#define MP_QSTR_text    ((qstr)0x2012)
+#define MP_QSTR_generator ((qstr)0x2013)
 #define MP_MOCK_TAG_ITER (0x173A)
 
 typedef struct {
@@ -995,6 +1035,7 @@ static inline mp_obj_t mp_call_function_n_kw(mp_obj_t fun, size_t n_args, size_t
 #define MP_DEFINE_CONST_FUN_OBJ_KW(obj_name, min, fun_name) static const int obj_name = 0
 #define MP_DEFINE_CONST_DICT(dict_name, table_name) const int dict_name = 0
 #define MP_TYPE_FLAG_NONE (0)
+#define MP_TYPE_FLAG_ITER_IS_ITERNEXT (1)
 #define MP_DEFINE_CONST_OBJ_TYPE(obj_name, qstr, flags, ...) const mp_obj_type_t obj_name = {0}
 #define MP_REGISTER_MODULE(qstr, mod)
 
@@ -1199,6 +1240,75 @@ static inline void mp_raise_msg_varg(int *exc_type, const char *fmt, ...) {
     mp_raise_msg(exc_type, buf);
 }
 
+
+/* Print infrastructure for __str__/__repr__ support */
+typedef struct _mp_print_t {
+    void *data;
+    int (*print_strn)(void *data, const char *str, size_t len);
+} mp_print_t;
+
+typedef enum {
+    PRINT_STR = 0,
+    PRINT_REPR = 1,
+} mp_print_kind_t;
+
+/* Simple print implementation that writes to stdout */
+static int mp_mock_print_strn(void *data, const char *str, size_t len) {
+    (void)data;
+    return (int)fwrite(str, 1, len, stdout);
+}
+
+static mp_print_t mp_plat_print __attribute__((unused)) = { NULL, mp_mock_print_strn };
+
+static inline void mp_printf(const mp_print_t *print, const char *fmt, ...) {
+    char buf[1024];
+    va_list args;
+    va_start(args, fmt);
+    int len = vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    if (len > 0 && print->print_strn) {
+        print->print_strn(print->data, buf, (size_t)len);
+    }
+}
+
+static inline void mp_print_str(const mp_print_t *print, const char *str) {
+    if (print->print_strn) {
+        print->print_strn(print->data, str, strlen(str));
+    }
+}
+
+/* Forward declaration needed for recursive print calls */
+static void mp_obj_print_helper(const mp_print_t *print, mp_obj_t obj, mp_print_kind_t kind);
+
+static void mp_obj_print_helper(const mp_print_t *print, mp_obj_t obj, mp_print_kind_t kind) {
+    (void)kind;
+    if (obj == mp_const_none) {
+        mp_print_str(print, "None");
+    } else if (obj == mp_const_true) {
+        mp_print_str(print, "True");
+    } else if (obj == mp_const_false) {
+        mp_print_str(print, "False");
+    } else if (MP_OBJ_IS_SMALL_INT(obj)) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%ld", (long)MP_OBJ_SMALL_INT_VALUE(obj));
+        mp_print_str(print, buf);
+    } else if (!mp_mock_is_special_const(obj)) {
+        mp_obj_str_struct *s = (mp_obj_str_struct *)obj;
+        if (s->tag == MP_MOCK_TAG_STR) {
+            if (kind == PRINT_REPR) {
+                mp_print_str(print, "'");
+                print->print_strn(print->data, s->data, s->len);
+                mp_print_str(print, "'");
+            } else {
+                print->print_strn(print->data, s->data, s->len);
+            }
+        } else {
+            mp_print_str(print, "<object>");
+        }
+    } else {
+        mp_print_str(print, "<unknown>");
+    }
+}
 #define MP_OBJ_FROM_PTR(p) ((mp_obj_t)(p))
 #define MP_OBJ_TO_PTR(o) ((void *)(o))
 

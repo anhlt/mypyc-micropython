@@ -34,6 +34,8 @@ from .ir import (
     InstrIR,
     IRType,
     MethodIR,
+    ModuleAttrIR,
+    ModuleCallIR,
     NameIR,
     ParamAttrIR,
     PassIR,
@@ -562,6 +564,10 @@ class BaseEmitter:
             return self._emit_clib_call(value, native)
         elif isinstance(value, CLibEnumIR):
             return str(value.c_enum_value), "mp_int_t"
+        elif isinstance(value, ModuleCallIR):
+            return self._emit_module_call(value, native)
+        elif isinstance(value, ModuleAttrIR):
+            return self._emit_module_attr(value)
         return "/* unsupported */", "mp_obj_t"
 
     def _emit_const(self, const: ConstIR) -> tuple[str, str]:
@@ -698,9 +704,7 @@ class BaseEmitter:
         args_str = ", ".join(args)
         if call.uses_var_args:
             n = len(args)
-            call_expr = (
-                f"{call.c_wrapper_name}({n}, (const mp_obj_t[]){{{args_str}}})"
-            )
+            call_expr = f"{call.c_wrapper_name}({n}, (const mp_obj_t[]){{{args_str}}})"
         else:
             call_expr = f"{call.c_wrapper_name}({args_str})"
         if call.is_void:
@@ -974,7 +978,7 @@ class BaseEmitter:
 
     def _emit_param_attr(self, attr: ParamAttrIR) -> tuple[str, str]:
         expr = (
-            f"(({attr.class_c_name}_obj_t *)MP_OBJ_TO_PTR({attr.c_param_name}))->{attr.attr_name}"
+            f"(({attr.class_c_name}_obj_t *)MP_OBJ_TO_PTR({attr.c_param_name}))->{attr.attr_path}"
         )
         return expr, attr.result_type.to_c_type_str()
 
@@ -1021,6 +1025,73 @@ class BaseEmitter:
             f"{call.parent_method_c_name}_native(({call.parent_c_name}_obj_t *)self{', ' if args_str else ''}{args_str})",
             call.return_type.to_c_type_str(),
         )
+
+    def _emit_module_call(self, call: ModuleCallIR, native: bool = False) -> tuple[str, str]:
+        """Emit C code for calling a function on an imported module.
+
+        Generated C pattern:
+            mp_obj_t _mod = mp_import_name(MP_QSTR_math, mp_const_none, MP_OBJ_NEW_SMALL_INT(0));
+            mp_obj_t _fn = mp_load_attr(_mod, MP_QSTR_sqrt);
+            mp_obj_t result = mp_call_function_1(_fn, arg);
+        """
+        mod_name = call.module_name
+        func_name = call.func_name
+
+        # Build boxed args
+        boxed_args = []
+        for arg in call.args:
+            arg_expr, arg_type = self._emit_expr(arg, native)
+            boxed_args.append(self._box_value(arg_expr, arg_type))
+
+        # Emit inline expression using compound statement expression (GCC extension)
+        # For cleaner code, use sequential calls:
+        n_args = len(boxed_args)
+        if n_args == 0:
+            return (
+                f"mp_call_function_0("
+                f"mp_load_attr("
+                f"mp_import_name(MP_QSTR_{mod_name}, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)), "
+                f"MP_QSTR_{func_name}))"
+            ), "mp_obj_t"
+        elif n_args == 1:
+            return (
+                f"mp_call_function_1("
+                f"mp_load_attr("
+                f"mp_import_name(MP_QSTR_{mod_name}, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)), "
+                f"MP_QSTR_{func_name}), "
+                f"{boxed_args[0]})"
+            ), "mp_obj_t"
+        elif n_args == 2:
+            return (
+                f"mp_call_function_2("
+                f"mp_load_attr("
+                f"mp_import_name(MP_QSTR_{mod_name}, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)), "
+                f"MP_QSTR_{func_name}), "
+                f"{boxed_args[0]}, {boxed_args[1]})"
+            ), "mp_obj_t"
+        else:
+            args_str = ", ".join(boxed_args)
+            return (
+                f"mp_call_function_n_kw("
+                f"mp_load_attr("
+                f"mp_import_name(MP_QSTR_{mod_name}, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)), "
+                f"MP_QSTR_{func_name}), "
+                f"{n_args}, 0, (const mp_obj_t[]){{{args_str}}})"
+            ), "mp_obj_t"
+
+    def _emit_module_attr(self, attr: ModuleAttrIR) -> tuple[str, str]:
+        """Emit C code for accessing an attribute on an imported module.
+
+        Generated C pattern:
+            mp_obj_t result = mp_load_attr(
+                mp_import_name(MP_QSTR_math, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)),
+                MP_QSTR_pi);
+        """
+        return (
+            f"mp_load_attr("
+            f"mp_import_name(MP_QSTR_{attr.module_name}, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)), "
+            f"MP_QSTR_{attr.attr_name})"
+        ), "mp_obj_t"
 
     def _box_value(self, expr: str, expr_type: str) -> str:
         if expr_type == "mp_int_t":
@@ -1376,14 +1447,36 @@ class MethodEmitter(BaseEmitter):
         del call
         return native
 
+    def _emit_self_attr(self, attr: SelfAttrIR) -> tuple[str, str]:
+        """Override to constant-fold Final field access."""
+        # Check if this is a Final field with a known literal value
+        for fld in self.class_ir.get_all_fields():
+            if fld.name == attr.attr_name and fld.is_final and fld.final_value is not None:
+                val = fld.final_value
+                if isinstance(val, bool):
+                    return ("true" if val else "false"), "bool"
+                elif isinstance(val, int):
+                    return str(val), "mp_int_t"
+                elif isinstance(val, float):
+                    return str(val), "mp_float_t"
+                elif isinstance(val, str):
+                    escaped = val.replace('"', '\\"')
+                    return (
+                        f'mp_obj_new_str("{escaped}", {len(val)})',
+                        "mp_obj_t",
+                    )
+        return f"self->{attr.attr_path}", attr.result_type.to_c_type_str()
+
     def emit_native(self, body: list[StmtIR]) -> str:
         method_ir = self.method_ir
         class_ir = self.class_ir
 
-        params = [f"{class_ir.c_name}_obj_t *self"]
+        params: list[str] = []
+        if not method_ir.is_static and not method_ir.is_classmethod:
+            params.append(f"{class_ir.c_name}_obj_t *self")
         for param_name, param_type in method_ir.params:
             params.append(f"{param_type.to_c_type_str()} {param_name}")
-        params_str = ", ".join(params)
+        params_str = ", ".join(params) if params else "void"
 
         ret_type = method_ir.return_type.to_c_type_str()
         lines = [f"static {ret_type} {method_ir.c_name}_native({params_str}) {{"]
@@ -1402,30 +1495,61 @@ class MethodEmitter(BaseEmitter):
         method_ir = self.method_ir
         class_ir = self.class_ir
 
-        num_args = len(method_ir.params) + 1
+        num_args = len(method_ir.params) + (
+            0 if (method_ir.is_static or method_ir.is_classmethod) else 1
+        )
+        obj_name = (
+            f"{method_ir.c_name}_fun_obj"
+            if (method_ir.is_static or method_ir.is_classmethod)
+            else f"{method_ir.c_name}_obj"
+        )
 
-        if num_args == 1:
-            sig = f"static mp_obj_t {method_ir.c_name}_mp(mp_obj_t self_in)"
-            obj_def = f"MP_DEFINE_CONST_FUN_OBJ_1({method_ir.c_name}_obj, {method_ir.c_name}_mp);"
+        if num_args == 0:
+            sig = f"static mp_obj_t {method_ir.c_name}_mp(void)"
+            obj_def = f"MP_DEFINE_CONST_FUN_OBJ_0({obj_name}, {method_ir.c_name}_mp);"
+        elif num_args == 1:
+            arg0 = "arg0_obj" if (method_ir.is_static or method_ir.is_classmethod) else "self_in"
+            sig = f"static mp_obj_t {method_ir.c_name}_mp(mp_obj_t {arg0})"
+            obj_def = f"MP_DEFINE_CONST_FUN_OBJ_1({obj_name}, {method_ir.c_name}_mp);"
         elif num_args == 2:
-            sig = f"static mp_obj_t {method_ir.c_name}_mp(mp_obj_t self_in, mp_obj_t arg0_obj)"
-            obj_def = f"MP_DEFINE_CONST_FUN_OBJ_2({method_ir.c_name}_obj, {method_ir.c_name}_mp);"
+            if method_ir.is_static or method_ir.is_classmethod:
+                sig = f"static mp_obj_t {method_ir.c_name}_mp(mp_obj_t arg0_obj, mp_obj_t arg1_obj)"
+            else:
+                sig = f"static mp_obj_t {method_ir.c_name}_mp(mp_obj_t self_in, mp_obj_t arg0_obj)"
+            obj_def = f"MP_DEFINE_CONST_FUN_OBJ_2({obj_name}, {method_ir.c_name}_mp);"
         elif num_args == 3:
-            sig = f"static mp_obj_t {method_ir.c_name}_mp(mp_obj_t self_in, mp_obj_t arg0_obj, mp_obj_t arg1_obj)"
-            obj_def = f"MP_DEFINE_CONST_FUN_OBJ_3({method_ir.c_name}_obj, {method_ir.c_name}_mp);"
+            if method_ir.is_static or method_ir.is_classmethod:
+                sig = (
+                    f"static mp_obj_t {method_ir.c_name}_mp(mp_obj_t arg0_obj, mp_obj_t arg1_obj, "
+                    "mp_obj_t arg2_obj)"
+                )
+            else:
+                sig = (
+                    f"static mp_obj_t {method_ir.c_name}_mp(mp_obj_t self_in, mp_obj_t arg0_obj, "
+                    "mp_obj_t arg1_obj)"
+                )
+            obj_def = f"MP_DEFINE_CONST_FUN_OBJ_3({obj_name}, {method_ir.c_name}_mp);"
         else:
             sig = f"static mp_obj_t {method_ir.c_name}_mp(size_t n_args, const mp_obj_t *args)"
-            obj_def = f"MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN({method_ir.c_name}_obj, {num_args}, {num_args}, {method_ir.c_name}_mp);"
+            obj_def = (
+                f"MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN({obj_name}, {num_args}, {num_args}, "
+                f"{method_ir.c_name}_mp);"
+            )
 
         lines = [sig + " {"]
 
-        if num_args <= 3:
-            lines.append(f"    {class_ir.c_name}_obj_t *self = MP_OBJ_TO_PTR(self_in);")
-        else:
-            lines.append(f"    {class_ir.c_name}_obj_t *self = MP_OBJ_TO_PTR(args[0]);")
+        if not method_ir.is_static and not method_ir.is_classmethod:
+            if num_args <= 3:
+                lines.append(f"    {class_ir.c_name}_obj_t *self = MP_OBJ_TO_PTR(self_in);")
+            else:
+                lines.append(f"    {class_ir.c_name}_obj_t *self = MP_OBJ_TO_PTR(args[0]);")
 
         for i, (param_name, param_type) in enumerate(method_ir.params):
-            src = f"arg{i}_obj" if num_args <= 3 else f"args[{i + 1}]"
+            if num_args <= 3:
+                src = f"arg{i}_obj"
+            else:
+                src_index = i if (method_ir.is_static or method_ir.is_classmethod) else i + 1
+                src = f"args[{src_index}]"
 
             if param_type == CType.MP_INT_T:
                 lines.append(f"    mp_int_t {param_name} = mp_obj_get_int({src});")
@@ -1436,8 +1560,16 @@ class MethodEmitter(BaseEmitter):
             else:
                 lines.append(f"    mp_obj_t {param_name} = {src};")
 
-        if method_ir.is_virtual and not method_ir.is_special:
-            args_list = ["self"] + [p[0] for p in method_ir.params]
+        if (
+            method_ir.is_static
+            or method_ir.is_classmethod
+            or method_ir.is_property
+            or method_ir.is_final
+            or (method_ir.is_virtual and not method_ir.is_special)
+        ):
+            args_list = [p[0] for p in method_ir.params]
+            if not method_ir.is_static and not method_ir.is_classmethod:
+                args_list.insert(0, "self")
             args_str = ", ".join(args_list)
 
             if method_ir.return_type == CType.VOID:
@@ -1479,6 +1611,16 @@ class MethodEmitter(BaseEmitter):
             return lines
 
         expr, expr_type = self._emit_expr(stmt.value, native)
+
+        # In methods, "return self" should return self_in (the original mp_obj_t)
+        # not the struct pointer "self"
+        if expr == "self" and not native:
+            if self._nlr_stack:
+                lines.append("        nlr_pop();")
+                lines.append("        return self_in;")
+            else:
+                lines.append("    return self_in;")
+            return lines
 
         if self._nlr_stack:
             ret_tmp = self._fresh_temp()

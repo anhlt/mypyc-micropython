@@ -38,13 +38,14 @@ A 7-phase roadmap for mypyc-micropython from proof-of-concept to production-read
   `print()`, `bool()`, `min()`, `max()`, `sum()` (with inline optimization for typed lists)
 - **Classes**: Class definitions with typed fields, `__init__`, instance methods, `@dataclass`,
   single inheritance with vtable-based virtual dispatch, `__eq__`, `__len__`, `__getitem__`,
-  `__setitem__`, class fields with `list`/`dict` types, augmented assignment on fields
+  `__setitem__`, class fields with `list`/`dict` types, augmented assignment on fields,
+  `@property` (getter + setter), `@staticmethod`, `@classmethod`
 - **IR pipeline**: Full two-phase architecture (IRBuilder → Emitters), StmtIR/ExprIR/ValueIR
   hierarchies, prelude pattern for side effects, BinOp type inference, RTuple optimization
-- **ESP32**: All 16 compiled modules verified on real ESP32-C6 hardware (161 device tests pass)
+- **ESP32**: All 17 compiled modules verified on real ESP32-C6 hardware (262 device tests pass)
 - **Performance**: RTuple internal ops (57x speedup), list[tuple] (9.2x speedup), 22 benchmarks
   suite with 11.8x average speedup
-- **Testing**: 518 tests (unit + C runtime), comprehensive device test coverage
+- **Testing**: 548 tests (unit + C runtime), comprehensive device test coverage
 - **Strings**: Full method support (`split`, `join`, `replace`, `find`, `strip`, `upper`, `lower`, etc.)
 - **Type Checking**: Optional mypy integration via `type_check=True` parameter, extracts function/class signatures
 - **Exception Handling**: `try`/`except`/`else`/`finally`, `raise`, multiple handlers, exception variable binding
@@ -56,9 +57,9 @@ A 7-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 - Remaining list methods (`extend`, `insert`, `remove`, `count`, `index`, `reverse`, `sort`)
 - List/dict comprehensions
 - Keyword-only arguments, positional-only arguments
-- `@property`, `@staticmethod`, `@classmethod`
+- Remaining class special methods (`__ne__`/`__lt__`/`__gt__`/`__le__`/`__ge__`, `__hash__`, `__iter__`/`__next__`)
  Custom exception classes
-- Closures and generators
+- Closures
 
 ## Phase Overview
 
@@ -70,16 +71,16 @@ Phase 2: Functions & Arguments  █████████████░░  ~
   default args ✅ │ *args ✅ │ **kwargs ✅ │ bool ✅ │ min/max ✅ │ sum ✅
   enumerate ✅ │ zip ✅ │ sorted ✅ │ keyword-only args │ positional-only args
 
-Phase 3: Classes                ███████████████  ~95% done
+Phase 3: Classes                ████████████████ ~98% done
   class def ✅ │ __init__ ✅ │ methods ✅ │ @dataclass ✅ │ inheritance ✅
   vtable dispatch ✅ │ __eq__/__len__/__getitem__/__setitem__ ✅ │ inherited methods ✅
-  @property │ @staticmethod │ @classmethod
+  @property ✅ │ @staticmethod ✅ │ @classmethod ✅ │ remaining: special methods
 
 Phase 4: Exception Handling     ███████████████  ~95% done
   try/except ✅ │ try/finally ✅ │ try/except/else ✅ │ raise ✅ │ custom exceptions
 
-Phase 5: Advanced Features      ░░░░░░░░░░░░░░░  TODO
-  closures │ generators │ list comprehensions │ map/filter
+Phase 5: Advanced Features      ████░░░░░░░░░░░  ~25% done
+  generators ✅ (while/for-range/for-iter + yield) │ closures │ comprehensions │ map/filter
 
 Phase 6: Integration & Polish   █████████████░░  ~85% done
   ESP32 modules ✅ (17 modules on ESP32-C6) │ RTuple optimization ✅ (57x speedup)
@@ -453,18 +454,21 @@ Tasks:
 - [x] Support list/dict fields in methods (container IR + prelude flush)
 - [x] Augmented assignment on `self.field` (e.g., `self.count += 1`)
 
-### 3.3 Properties
+### 3.3 Properties ✅ DONE
 
 Tasks:
-- [ ] Detect `@property` decorator
-- [ ] Generate getter/setter in attr handler
-- [ ] Support read-only properties
-
-### 3.4 Static and Class Methods
+- [x] Detect `@property` decorator
+- [x] Generate getter in attr handler (direct native call, bypass `locals_dict`)
+- [x] Detect `@prop.setter` decorator via `ast.Attribute` pattern matching
+- [x] Generate setter in attr handler with type-aware unboxing
+- [x] Support read-only properties (getter only, no setter)
+- [x] `PropertyInfo` dataclass tracking getter/setter pairs in `ClassIR`
+### 3.4 Static and Class Methods ✅ DONE
 
 Tasks:
-- [ ] `@staticmethod` — no self parameter
-- [ ] `@classmethod` — cls parameter
+- [x] `@staticmethod` — skip self parameter, `mp_rom_obj_static_class_method_t` wrapper with `mp_type_staticmethod`
+- [x] `@classmethod` — cls parameter, `mp_rom_obj_static_class_method_t` wrapper with `mp_type_classmethod`
+- [x] Both callable from class and instance
 
 ### 3.5 Single Inheritance ✅ DONE (with known limitations)
 
@@ -496,7 +500,7 @@ Tasks:
 ### 3.6 Special Methods (Partial)
 
 Tasks:
-- [ ] `__str__` / `__repr__`
+- [x] `__str__` / `__repr__` — user-defined methods wired to MicroPython print slot
 - [x] `__len__` — supported in `locals_dict`
 - [x] `__getitem__` / `__setitem__` — supported in `locals_dict`
 - [x] `__eq__` — auto-generated for `@dataclass`, field-by-field comparison
@@ -508,8 +512,8 @@ Tasks:
 
 | Issue | Description | Workaround |
 |-------|-------------|------------|
-| No `@property` | No getter/setter decorator support | Use explicit getter/setter methods |
-| No `@staticmethod`/`@classmethod` | Only instance methods supported | Use module-level functions instead |
+| ~~No `@property`~~ | ~~No getter/setter decorator support~~ | ✅ Resolved — full @property support |
+| ~~No `@staticmethod`/`@classmethod`~~ | ~~Only instance methods supported~~ | ✅ Resolved — both decorators supported |
 
 ---
 
@@ -588,20 +592,49 @@ Tasks:
 - [ ] Generate callable closure type
 - [ ] Limit to read-only captures initially
 
-### 5.2 Simple Generators
+### 5.2 Simple Generators ✅ DONE
 
 ```python
-def countdown(n: int) -> Generator[int, None, None]:
+# While-loop generator
+def countdown(n: int):
     while n > 0:
         yield n
         n -= 1
+
+# For-range generator (all forms)
+def squares(n: int):
+    for i in range(n):
+        yield i * i
+
+# For-range with non-zero start
+def range_with_start(n: int):
+    for i in range(1, n):
+        yield i
+
+# For-iter generator (iterate over arbitrary iterables)
+def iter_items(items: list[object]):
+    for x in items:
+        yield x
 ```
 
-Tasks:
-- [ ] Detect generator functions (contain yield)
-- [ ] Transform to state machine
-- [ ] Generate iterator type
-- [ ] Handle `return` in generators
+Implemented:
+- [x] Detect generator functions (contain `yield`)
+- [x] Transform to state machine with `uint16_t state` field
+- [x] Generate custom iterator type with `MP_TYPE_FLAG_ITER_IS_ITERNEXT`
+- [x] Handle `while` loops with yield
+- [x] Handle `for i in range(...)` with yield (all forms: 1-arg, 2-arg, 3-arg)
+- [x] Handle `for x in iterable` with yield (arbitrary iterables via `mp_getiter`/`mp_iternext`)
+- [x] Generator struct stores all local variables and loop state
+- [x] `return` in generator emits `MP_OBJ_STOP_ITERATION`
+
+**Restrictions (raise `NotImplementedError`):**
+- `yield from` not supported
+- `yield` as expression (receiving values) not supported
+- `try`/`with` inside generators not supported
+- Generator methods (classes with `yield`) not supported
+- Generator expressions not supported
+
+See [Blog 24: Generator Implementation](/blogs/24-generator-implementation.md) for detailed C code generation.
 
 ### 5.3 Comprehensions
 

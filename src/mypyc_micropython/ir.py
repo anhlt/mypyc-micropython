@@ -185,6 +185,8 @@ class FieldIR:
     default_value: Any = None  # Literal default value
     default_factory: str | None = None  # For dataclass field(default_factory=...)
     default_ast: ast.expr | None = None  # AST node for default value
+    is_final: bool = False  # typing.Final -- constant, cannot be reassigned
+    final_value: Any = None  # Resolved literal value for Final fields (for constant folding)
 
     def get_c_type_str(self) -> str:
         """Get the C type string for this field."""
@@ -206,6 +208,8 @@ class MethodIR:
     is_property: bool = False  # @property
     vtable_index: int = -1  # Index in vtable (if virtual)
     is_special: bool = False  # __init__, __repr__, etc.
+    is_private: bool = False  # __method (no trailing __) — class-internal only
+    is_final: bool = False  # @final decorator — cannot be overridden
     docstring: str | None = None
     max_temp: int = 0
 
@@ -240,6 +244,13 @@ class MethodIR:
 
 
 @dataclass
+class PropertyInfo:
+    name: str
+    getter: MethodIR
+    setter: MethodIR | None = None
+
+
+@dataclass
 class DataclassInfo:
     """Metadata for @dataclass decorated classes."""
 
@@ -271,13 +282,21 @@ class ClassIR:
     # Members
     fields: list[FieldIR] = field(default_factory=list)
     methods: dict[str, MethodIR] = field(default_factory=dict)
+    properties: dict[str, PropertyInfo] = field(default_factory=dict)
 
     # Special methods tracking
     has_init: bool = False
     has_repr: bool = False
     has_eq: bool = False
+    has_ne: bool = False
+    has_lt: bool = False
+    has_le: bool = False
+    has_gt: bool = False
+    has_ge: bool = False
+    has_str: bool = False
     has_hash: bool = False
-
+    has_iter: bool = False
+    has_next: bool = False
     # Virtual dispatch
     virtual_methods: list[str] = field(default_factory=list)
     vtable_size: int = 0
@@ -285,6 +304,9 @@ class ClassIR:
     # Dataclass support
     is_dataclass: bool = False
     dataclass_info: DataclassInfo | None = None
+
+    # @final class -- cannot be subclassed, all methods devirtualized
+    is_final_class: bool = False
 
     # MicroPython slots to emit
     mp_slots: set[str] = field(default_factory=lambda: {"make_new", "attr"})
@@ -342,6 +364,13 @@ class ClassIR:
             methods.update(self.base.get_all_methods())
         methods.update(self.methods)
         return methods
+
+    def get_all_properties(self) -> dict[str, PropertyInfo]:
+        properties = {}
+        if self.base:
+            properties.update(self.base.get_all_properties())
+        properties.update(self.properties)
+        return properties
 
     def get_struct_name(self) -> str:
         """Get the C struct type name."""
@@ -418,10 +447,12 @@ class FuncIR:
     uses_list_opt: bool = False
     uses_builtins: bool = False  # min, max, sum builtins require py/builtin.h
     uses_checked_div: bool = False  # floor divide/modulo inside try blocks
+    uses_imports: bool = False  # runtime module imports (mp_import_name)
     used_rtuples: set[RTuple] = field(default_factory=set)
     rtuple_types: dict[str, RTuple] = field(default_factory=dict)
     list_vars: dict[str, str | None] = field(default_factory=dict)
     max_temp: int = 0  # Highest temp counter used by IR builder
+    is_generator: bool = False
     # Default arguments: maps param index to DefaultArg
     defaults: dict[int, DefaultArg] = field(default_factory=dict)
     star_args: ParamIR | None = None
@@ -617,6 +648,7 @@ class AttrAccessIR(InstrIR):
     class_c_name: str
     result_type: IRType
 
+
 @dataclass
 class ListCompIR(InstrIR):
     """List comprehension: [expr for var in iterable] or [expr for var in iterable if cond].
@@ -644,6 +676,7 @@ class ListCompIR(InstrIR):
     range_start: ValueIR | None = None
     range_end: ValueIR | None = None
     range_step: ValueIR | None = None
+
 
 # ---------------------------------------------------------------------------
 # Lowered expression: prelude instructions + final value
@@ -681,6 +714,13 @@ class ReturnIR(StmtIR):
     value: ValueIR | None = None
     # Prelude instructions that must execute before the return
     prelude: list[InstrIR] = field(default_factory=list)
+
+
+@dataclass
+class YieldIR(StmtIR):
+    value: ValueIR | None = None
+    prelude: list[InstrIR] = field(default_factory=list)
+    state_id: int = 0
 
 
 @dataclass
@@ -988,6 +1028,7 @@ class ParamAttrIR(ExprIR):
     param_name: str  # Python parameter name (e.g., "p1")
     c_param_name: str  # C parameter name (sanitized)
     attr_name: str  # Attribute name (e.g., "x")
+    attr_path: str  # C access path (e.g., "x" or "super._id" for inherited fields)
     class_c_name: str  # C class name (e.g., "module_Point")
     result_type: IRType
 
@@ -1021,6 +1062,50 @@ class SuperCallIR(ExprIR):
     is_init: bool = False  # True if calling super().__init__()
     # Preludes for args
     arg_preludes: list[list[InstrIR]] = field(default_factory=list)
+
+
+@dataclass
+class ModuleImportIR(InstrIR):
+    """Runtime module import: import X or import X as Y.
+
+    Generated C:
+        mp_obj_t _tmp = mp_import_name(MP_QSTR_math, mp_const_none, MP_OBJ_NEW_SMALL_INT(0));
+    """
+
+    module_name: str  # Python module name (e.g., 'math')
+    result: TempIR  # Temp var holding the imported module object
+
+
+@dataclass
+class ModuleCallIR(ExprIR):
+    """Call a function on an imported module: module.func(args).
+
+    Generated C:
+        mp_obj_t mod = mp_import_name(MP_QSTR_math, mp_const_none, MP_OBJ_NEW_SMALL_INT(0));
+        mp_obj_t fn = mp_load_attr(mod, MP_QSTR_sqrt);
+        mp_obj_t result = mp_call_function_1(fn, arg);
+    """
+
+    module_name: str  # Python module name (e.g., 'math')
+    func_name: str  # Function name (e.g., 'sqrt')
+    args: list[ValueIR]
+    arg_preludes: list[list[InstrIR]] = field(default_factory=list)
+
+
+@dataclass
+class ModuleAttrIR(ExprIR):
+    """Access an attribute on an imported module: module.attr.
+
+    Used for constants like math.pi, math.e.
+
+    Generated C:
+        mp_obj_t mod = mp_import_name(MP_QSTR_math, mp_const_none, MP_OBJ_NEW_SMALL_INT(0));
+        mp_obj_t result = mp_load_attr(mod, MP_QSTR_pi);
+    """
+
+    module_name: str  # Python module name (e.g., 'math')
+    attr_name: str  # Attribute name (e.g., 'pi')
+
 
 @dataclass
 class CLibCallIR(ExprIR):
@@ -1157,6 +1242,9 @@ class ModuleIR:
     # For tracking definition order (important for forward declarations)
     class_order: list[str] = field(default_factory=list)
     function_order: list[str] = field(default_factory=list)
+
+    # Imported modules used by compiled functions (for runtime import)
+    imported_modules: set[str] = field(default_factory=set)
 
     def add_class(self, class_ir: ClassIR) -> None:
         """Add a class to the module."""
