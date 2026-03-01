@@ -1,4 +1,4 @@
-# 24. Special Methods: Comparison Operators, Hashing, and the Iterator Protocol
+# 28. Special Methods: Comparison Operators, Hashing, and the Iterator Protocol
 
 This post covers a feature that looks small from Python, but touches some of the deepest seams in MicroPython's runtime model. We added support for three groups of special methods on compiled classes:
 

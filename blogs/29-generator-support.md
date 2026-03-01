@@ -1,4 +1,4 @@
-# 25. Generator Support: Simple `yield` Lowered to a State Machine
+# 29. Generator Support: Simple `yield` Lowered to a State Machine
 
 This post documents Phase 5.2 generator support, the smallest useful slice of Python generators: `yield` as a statement inside a function, compiled into a MicroPython iterator object.
 

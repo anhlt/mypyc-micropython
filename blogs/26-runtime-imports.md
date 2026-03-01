@@ -1,4 +1,4 @@
-# 22. Runtime imports
+# 26. Runtime imports
 
 This post documents the runtime import feature in mypyc-micropython.
 
