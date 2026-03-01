@@ -152,6 +152,9 @@ EventCallback = Callable[[c_ptr[LvEvent]], None]
 
 def lv_screen_active() -> c_ptr[LvObj]: ...
 def lv_screen_load(scr: c_ptr[LvObj]) -> None: ...
+def lv_screen_load_anim(scr: c_ptr[LvObj], anim_type: c_int, time: c_uint, delay: c_uint, auto_del: c_bool) -> None: ...
+def lv_layer_top() -> c_ptr[LvObj]: ...
+def lv_layer_sys() -> c_ptr[LvObj]: ...
 
 # -- Object core --
 
@@ -439,6 +442,24 @@ class LvAnimEnable:
 
 LV_ANIM_OFF: int = 0
 LV_ANIM_ON: int = 1
+
+@c_enum("lv_scr_load_anim_t")
+class LvScrLoadAnim:
+    NONE: int = 0
+    OVER_LEFT: int = 1
+    OVER_RIGHT: int = 2
+    OVER_TOP: int = 3
+    OVER_BOTTOM: int = 4
+    MOVE_LEFT: int = 5
+    MOVE_RIGHT: int = 6
+    MOVE_TOP: int = 7
+    MOVE_BOTTOM: int = 8
+    FADE_IN: int = 9
+    FADE_OUT: int = 10
+    OUT_LEFT: int = 11
+    OUT_RIGHT: int = 12
+    OUT_TOP: int = 13
+    OUT_BOTTOM: int = 14
 
 # =============================================================================
 # STYLE API
