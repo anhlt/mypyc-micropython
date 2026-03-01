@@ -126,7 +126,7 @@ class CEmitter:
             self.lines.extend(
                 [
                     f"/* Value wrapper for {struct.c_name} */",
-                    f"typedef struct {{",
+                    "typedef struct {",
                     "    mp_obj_base_t base;",
                     f"    {struct.c_name} value;",
                     f"}} mp_{struct.py_name}_val_t;",
