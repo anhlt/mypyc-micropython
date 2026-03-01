@@ -61,11 +61,12 @@ class StubParser:
         for node in ast.iter_child_nodes(tree):
             if isinstance(node, ast.Assign):
                 self._parse_assign(node)
+            elif isinstance(node, ast.AnnAssign):
+                self._parse_module_constant(node)
             elif isinstance(node, ast.ClassDef):
                 self._parse_class(node)
             elif isinstance(node, ast.FunctionDef):
                 self._parse_function(node)
-
         return self._library
 
     def _parse_assign(self, node: ast.Assign) -> None:
@@ -97,6 +98,29 @@ class StubParser:
                 if callback:
                     self._library.callbacks[name] = callback
 
+
+    def _parse_module_constant(self, node: ast.AnnAssign) -> None:
+        """Parse module-level annotated constant: NAME: int = VALUE"""
+        if not isinstance(node.target, ast.Name):
+            return
+        if not isinstance(node.annotation, ast.Name) or node.annotation.id != "int":
+            return
+        if node.value is None:
+            return
+
+        name = node.target.id
+        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, int):
+            self._library.constants[name] = node.value.value
+        elif isinstance(node.value, ast.UnaryOp) and isinstance(node.value.op, ast.USub):
+            # Handle negative constants like -1
+            if isinstance(node.value.operand, ast.Constant):
+                self._library.constants[name] = -node.value.operand.value
+        elif isinstance(node.value, ast.BinOp):
+            # Handle hex expressions like 0xFF << 8
+            try:
+                self._library.constants[name] = self._eval_const_expr(node.value)
+            except (ValueError, TypeError):
+                pass
     def _parse_callback_alias(self, name: str, subscript: ast.Subscript) -> CCallbackDef | None:
         callback = CCallbackDef(py_name=name)
         if not isinstance(subscript.slice, ast.Tuple) or len(subscript.slice.elts) != 2:
@@ -232,6 +256,11 @@ class StubParser:
             # Check if name matches a known callback alias
             if self._library and name in self._library.callbacks:
                 return CTypeDef(base_type=CType.CALLBACK, callback_name=name)
+            # Check if name matches a known struct - use STRUCT_VAL for non-opaque
+            if self._library and name in self._library.structs:
+                struct = self._library.structs[name]
+                if not struct.is_opaque:
+                    return CTypeDef(base_type=CType.STRUCT_VAL, struct_name=name)
             return CTypeDef(base_type=CType.STRUCT_PTR, struct_name=name)
 
         if isinstance(annotation, ast.Subscript):

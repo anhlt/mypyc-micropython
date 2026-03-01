@@ -71,7 +71,7 @@
 #define LV_USE_CALENDAR 0
 #define LV_USE_CANVAS 0
 #define LV_USE_CHART 0
-#define LV_USE_DROPDOWN 0
+#define LV_USE_DROPDOWN 1
 #define LV_USE_IMAGE 0
 #define LV_USE_IMGBTN 0
 #define LV_USE_KEYBOARD 0

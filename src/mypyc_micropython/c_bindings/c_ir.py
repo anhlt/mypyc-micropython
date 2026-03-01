@@ -23,7 +23,8 @@ class CType(Enum):
     BOOL = auto()
     STR = auto()
     PTR = auto()
-    STRUCT_PTR = auto()
+    STRUCT_PTR = auto()  # Pointer to struct (opaque structs)
+    STRUCT_VAL = auto()  # Struct by value (non-opaque structs)
     CALLBACK = auto()
 
     def to_c_decl(self) -> str:
@@ -148,4 +149,5 @@ class CLibraryDef:
     enums: dict[str, CEnumDef] = field(default_factory=dict)
     functions: dict[str, CFuncDef] = field(default_factory=dict)
     callbacks: dict[str, CCallbackDef] = field(default_factory=dict)
+    constants: dict[str, int] = field(default_factory=dict)  # Module-level int constants
     docstring: str | None = None

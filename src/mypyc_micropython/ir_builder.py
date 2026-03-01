@@ -981,6 +981,8 @@ class IRBuilder:
             ast.GtE: ">=",
             ast.In: "in",
             ast.NotIn: "not in",
+            ast.Is: "is",
+            ast.IsNot: "is not",
         }
 
         ops: list[str] = []

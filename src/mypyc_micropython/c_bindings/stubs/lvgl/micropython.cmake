@@ -30,4 +30,10 @@ if(IDF_TARGET)
     )
 endif()
 
+# Suppress unused function/variable warnings for generated wrapper code
+target_compile_options(usermod_lvgl INTERFACE
+    -Wno-unused-function
+    -Wno-unused-const-variable
+)
+
 target_link_libraries(usermod INTERFACE usermod_lvgl)

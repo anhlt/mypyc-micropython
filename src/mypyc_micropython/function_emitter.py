@@ -666,7 +666,16 @@ class BaseEmitter:
                     parts.append(f"(!{contains_expr})")
                 else:
                     parts.append(f"({contains_expr})")
+            elif c_op in ("is", "is not"):
+                # Identity comparison - use pointer comparison without unboxing
+                boxed_prev = self._box_value(prev, prev_type)
+                boxed_right = self._box_value(right, right_type)
+                if c_op == "is":
+                    parts.append(f"({boxed_prev} == {boxed_right})")
+                else:
+                    parts.append(f"({boxed_prev} != {boxed_right})")
             else:
+                # Regular comparison operators (==, !=, <, <=, >, >=)
                 if prev_type == "mp_obj_t" or right_type == "mp_obj_t":
                     target = (
                         right_type
@@ -692,9 +701,15 @@ class BaseEmitter:
         for arg in call.args:
             arg_expr, arg_type = self._emit_expr(arg, native)
             args.append(self._box_value(arg_expr, arg_type))
-        args_str = ", ".join(args)
 
-        return f"mp_obj_get_int({call.c_func_name}({args_str}))", "mp_int_t"
+        # Functions with 4+ parameters use VAR_BETWEEN calling convention
+        # They expect (size_t n_args, const mp_obj_t *args) signature
+        if len(args) > 3:
+            args_str = ", ".join(args)
+            return f"{call.c_func_name}({len(args)}, (const mp_obj_t[]){{{args_str}}})", "mp_obj_t"
+
+        args_str = ", ".join(args)
+        return f"{call.c_func_name}({args_str})", "mp_obj_t"
 
     def _emit_clib_call(self, call: CLibCallIR, native: bool = False) -> tuple[str, str]:
         args = []

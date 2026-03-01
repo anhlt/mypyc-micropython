@@ -96,29 +96,60 @@ class CEmitter:
             self._emit_struct_wrapper_type(struct)
 
     def _emit_struct_wrapper_type(self, struct: CStructDef) -> None:
-        self.lines.extend(
-            [
-                "static MP_DEFINE_CONST_OBJ_TYPE(",
-                f"    mp_type_{struct.py_name},",
-                f"    MP_QSTR_{struct.py_name},",
-                "    MP_TYPE_FLAG_NONE",
-                ");",
-                "",
-                f"static mp_obj_t wrap_{struct.py_name}({struct.c_name} *ptr) {{",
-                "    if (ptr == NULL) return mp_const_none;",
-                f"    mp_c_ptr_t *o = mp_obj_malloc(mp_c_ptr_t, &mp_type_{struct.py_name});",
-                "    o->ptr = ptr;",
-                "    return MP_OBJ_FROM_PTR(o);",
-                "}",
-                "",
-                f"static {struct.c_name} *unwrap_{struct.py_name}(mp_obj_t obj) {{",
-                "    if (obj == mp_const_none) return NULL;",
-                "    mp_c_ptr_t *o = MP_OBJ_TO_PTR(obj);",
-                f"    return ({struct.c_name} *)o->ptr;",
-                "}",
-                "",
-            ]
-        )
+        if struct.is_opaque:
+            # Opaque struct: store pointer to struct
+            self.lines.extend(
+                [
+                    "static MP_DEFINE_CONST_OBJ_TYPE(",
+                    f"    mp_type_{struct.py_name},",
+                    f"    MP_QSTR_{struct.py_name},",
+                    "    MP_TYPE_FLAG_NONE",
+                    ");",
+                    "",
+                    f"static mp_obj_t wrap_{struct.py_name}({struct.c_name} *ptr) {{",
+                    "    if (ptr == NULL) return mp_const_none;",
+                    f"    mp_c_ptr_t *o = mp_obj_malloc(mp_c_ptr_t, &mp_type_{struct.py_name});",
+                    "    o->ptr = ptr;",
+                    "    return MP_OBJ_FROM_PTR(o);",
+                    "}",
+                    "",
+                    f"static {struct.c_name} *unwrap_{struct.py_name}(mp_obj_t obj) {{",
+                    "    if (obj == mp_const_none) return NULL;",
+                    "    mp_c_ptr_t *o = MP_OBJ_TO_PTR(obj);",
+                    f"    return ({struct.c_name} *)o->ptr;",
+                    "}",
+                    "",
+                ]
+            )
+        else:
+            # Non-opaque struct: store struct value (copied)
+            self.lines.extend(
+                [
+                    f"/* Value wrapper for {struct.c_name} */",
+                    f"typedef struct {{",
+                    "    mp_obj_base_t base;",
+                    f"    {struct.c_name} value;",
+                    f"}} mp_{struct.py_name}_val_t;",
+                    "",
+                    "static MP_DEFINE_CONST_OBJ_TYPE(",
+                    f"    mp_type_{struct.py_name},",
+                    f"    MP_QSTR_{struct.py_name},",
+                    "    MP_TYPE_FLAG_NONE",
+                    ");",
+                    "",
+                    f"static mp_obj_t wrap_{struct.py_name}_val({struct.c_name} val) {{",
+                    f"    mp_{struct.py_name}_val_t *o = mp_obj_malloc(mp_{struct.py_name}_val_t, &mp_type_{struct.py_name});",
+                    "    o->value = val;",
+                    "    return MP_OBJ_FROM_PTR(o);",
+                    "}",
+                    "",
+                    f"static {struct.c_name} unwrap_{struct.py_name}_val(mp_obj_t obj) {{",
+                    f"    mp_{struct.py_name}_val_t *o = MP_OBJ_TO_PTR(obj);",
+                    "    return o->value;",
+                    "}",
+                    "",
+                ]
+            )
 
     def _has_callbacks(self) -> bool:
         for func in self.lib.functions.values():
@@ -342,6 +373,13 @@ class CEmitter:
                 )
             return f"{c_type} *c_{param.name} = {unwrap_expr};"
 
+        # Handle struct by value (non-opaque structs)
+        if t.base_type == CType.STRUCT_VAL and t.struct_name:
+            struct = self.lib.structs.get(t.struct_name)
+            if struct:
+                return f"{struct.c_name} c_{param.name} = unwrap_{struct.py_name}_val({arg_expr});"
+            return f"void *c_{param.name} = unwrap_ptr({arg_expr});"
+
         if t.base_type == CType.PTR:
             return f"void *c_{param.name} = unwrap_ptr({arg_expr});"
 
@@ -373,8 +411,17 @@ class CEmitter:
             if struct:
                 return f"wrap_{struct.py_name}({val_expr})"
             return f"wrap_ptr((void *){val_expr})"
+
+        # Handle struct by value return (non-opaque structs)
+        if type_def.base_type == CType.STRUCT_VAL and type_def.struct_name:
+            struct = self.lib.structs.get(type_def.struct_name)
+            if struct:
+                return f"wrap_{struct.py_name}_val({val_expr})"
+            return f"wrap_ptr((void *)&{val_expr})"
+
         if type_def.base_type == CType.PTR:
             return f"wrap_ptr({val_expr})"
+
         return type_def.base_type.to_mp_box(val_expr)
 
     def _get_c_type_str(self, type_def: CTypeDef) -> str:
@@ -383,6 +430,14 @@ class CEmitter:
             if struct:
                 return f"{struct.c_name} *"
             return "void *"
+
+        # Handle struct by value (non-opaque structs)
+        if type_def.base_type == CType.STRUCT_VAL and type_def.struct_name:
+            struct = self.lib.structs.get(type_def.struct_name)
+            if struct:
+                return f"{struct.c_name} "
+            return "void *"
+
         if type_def.base_type == CType.STR:
             return "const char *"
         if type_def.base_type == CType.PTR:
@@ -444,6 +499,10 @@ class CEmitter:
 
         for enum in self.lib.enums.values():
             self._emit_enum_entries(enum)
+
+        # Module-level constants
+        for const_name, const_val in self.lib.constants.items():
+            self.lines.append(f"    {{ MP_ROM_QSTR(MP_QSTR_{const_name}), MP_ROM_INT({const_val}) }},")
 
         self.lines.append("};")
         self.lines.append(
