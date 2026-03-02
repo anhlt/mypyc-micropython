@@ -4802,6 +4802,51 @@ def align_center() -> int:
         code = emitter.emit()
         assert "static mp_obj_t test_create_label_wrapper" in code
 
+    def test_callback_param_generates_var_between_extern_decl(self):
+        """Test that a function with a CALLBACK param gets VAR_BETWEEN extern declaration."""
+        from mypyc_micropython.c_bindings.c_ir import (
+            CFuncDef,
+            CParamDef,
+            CType,
+            CTypeDef,
+            CLibraryDef,
+        )
+
+        lib = CLibraryDef(
+            name="cblib",
+            header="cblib.h",
+            functions={
+                "on_event": CFuncDef(
+                    py_name="on_event",
+                    c_name="cb_on_event",
+                    params=[
+                        CParamDef(
+                            name="obj",
+                            type_def=CTypeDef(CType.STRUCT_PTR, struct_name="cb_obj_t"),
+                        ),
+                        CParamDef(
+                            name="handler",
+                            type_def=CTypeDef(CType.CALLBACK),
+                        ),
+                    ],
+                    return_type=CTypeDef(CType.VOID),
+                ),
+            },
+        )
+        source = """
+import cblib
+
+def register() -> int:
+    cblib.on_event(None, None)
+    return 0
+"""
+        # type_check=False: cblib is an external C library stub, not typed Python
+        result = compile_source(source, "test", type_check=False, external_libs={"cblib": lib})
+        # CALLBACK param forces VAR_BETWEEN signature regardless of n_args <= 3
+        assert "extern mp_obj_t cb_on_event_wrapper(size_t, const mp_obj_t *);" in result
+        # Must NOT emit fixed-arity declaration
+        assert "extern mp_obj_t cb_on_event_wrapper(mp_obj_t" not in result
+
 
 class TestModuleImports:
     """Tests for runtime module import support."""

@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .c_bindings.c_ir import CType
 from .ir import FuncIR, ModuleIR, RTuple
 
 C_RESERVED_WORDS = {
@@ -147,13 +148,13 @@ class ModuleEmitter:
                     continue
                 n_args = len(func_def.params)
                 wrapper_name = f"{func_def.c_name}_wrapper"
-                if n_args == 0:
+                if n_args > 3 or any(p.type_def.base_type == CType.CALLBACK for p in func_def.params):
+                    parts.append(f"extern mp_obj_t {wrapper_name}(size_t, const mp_obj_t *);")
+                elif n_args == 0:
                     parts.append(f"extern mp_obj_t {wrapper_name}(void);")
-                elif n_args <= 3:
+                else:
                     args = ", ".join("mp_obj_t" for _ in range(n_args))
                     parts.append(f"extern mp_obj_t {wrapper_name}({args});")
-                else:
-                    parts.append(f"extern mp_obj_t {wrapper_name}(size_t, const mp_obj_t *);")
             parts.append("")
         return parts
 
