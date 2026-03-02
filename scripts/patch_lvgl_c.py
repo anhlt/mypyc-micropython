@@ -11,6 +11,7 @@ HEADER_MARKER = '#include "lvgl.h"'
 GLOBALS_DICT_MARKER = "static MP_DEFINE_CONST_DICT(lvgl_module_globals, lvgl_module_globals_table);"
 DRIVER_ENTRIES = (
     "    { MP_ROM_QSTR(MP_QSTR_init_display), MP_ROM_PTR(&lvgl_init_display_obj) },\n"
+    "    { MP_ROM_QSTR(MP_QSTR_deinit_display), MP_ROM_PTR(&lvgl_deinit_display_obj) },\n"
     "    { MP_ROM_QSTR(MP_QSTR_timer_handler), MP_ROM_PTR(&lvgl_timer_handler_obj) },\n"
     "    { MP_ROM_QSTR(MP_QSTR_backlight), MP_ROM_PTR(&lvgl_backlight_obj) },\n"
 )

@@ -269,9 +269,12 @@ try:
     popped = sm.pop()
     t("pop_at_root", popped is None, "True")
 
-    # Cleanup
+    # Cleanup - create fresh default screen for next run
     sm.cleanup()
-
+    # Create a blank screen to reset LVGL state for consecutive runs
+    blank = sm.ls.create_screen()
+    sm.lv.lv_screen_load(blank)
+    refresh(5)
     mem_end = gc.mem_free()
     mem_diff = mem_start - mem_end
     print("\n  Memory: start=" + str(mem_start) + ", end=" + str(mem_end) + ", diff=" + str(mem_diff))

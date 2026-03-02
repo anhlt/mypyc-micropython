@@ -125,6 +125,21 @@ static mp_obj_t lvgl_init_display(void) {
 }
 MP_DEFINE_CONST_FUN_OBJ_0(lvgl_init_display_obj, lvgl_init_display);
 
+static mp_obj_t lvgl_deinit_display(void) {
+    if (!s_initialized) {
+        return mp_const_none;
+    }
+    // Delete all objects on active screen and layers
+    lv_obj_t *screen = lv_screen_active();
+    if (screen) lv_obj_clean(screen);
+    lv_obj_t *top = lv_layer_top();
+    if (top) lv_obj_clean(top);
+    lv_obj_t *sys = lv_layer_sys();
+    if (sys) lv_obj_clean(sys);
+    return mp_const_none;
+}
+MP_DEFINE_CONST_FUN_OBJ_0(lvgl_deinit_display_obj, lvgl_deinit_display);
+
 static mp_obj_t lvgl_timer_handler(void) {
     uint32_t ms = lv_timer_handler();
     return mp_obj_new_int_from_uint(ms);
