@@ -54,6 +54,7 @@ class CEmitter:
         self.lines.append("")
         self.lines.append('#include "py/runtime.h"')
         self.lines.append('#include "py/obj.h"')
+        self.lines.append('#include <string.h>')  # for strlen() in string boxing
         if self.lib.header:
             self.lines.append(f'#include "{self.lib.header}"')
         self.lines.append("")
