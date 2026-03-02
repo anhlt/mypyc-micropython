@@ -1,4 +1,4 @@
-# 23. Private Methods, @final, and Constant Folding
+# 27. Private Methods, @final, and Constant Folding
 
 *Three ways `mypyc-micropython` turns "this can't happen" into smaller and faster C code.*
 

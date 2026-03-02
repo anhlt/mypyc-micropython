@@ -8,7 +8,9 @@ function code, class code, and module registration.
 from __future__ import annotations
 
 import re
+from typing import Any
 
+from .c_bindings.c_ir import CType
 from .ir import FuncIR, ModuleIR, RTuple
 
 C_RESERVED_WORDS = {
@@ -73,6 +75,7 @@ class ModuleEmitter:
         uses_checked_div: bool = False,
         uses_imports: bool = False,
         used_rtuples: set[RTuple] | None = None,
+        external_libs: dict[str, Any] | None = None,
     ):
         self.module_ir = module_ir
         self.c_name = module_ir.c_name
@@ -82,6 +85,7 @@ class ModuleEmitter:
         self._uses_checked_div = uses_checked_div
         self._uses_imports = uses_imports
         self._used_rtuples = used_rtuples or set()
+        self.external_libs = external_libs or {}
 
     def emit(
         self,
@@ -95,6 +99,10 @@ class ModuleEmitter:
 
         lines.extend(self._emit_includes())
         lines.append("")
+
+        if self.external_libs:
+            lines.extend(self._emit_external_wrapper_declarations())
+            lines.append("")
 
         if forward_decls:
             lines.extend(forward_decls)
@@ -130,6 +138,30 @@ class ModuleEmitter:
         lines.extend(self._emit_module_registration())
 
         return "\n".join(lines)
+
+    def _emit_external_wrapper_declarations(self) -> list[str]:
+        parts: list[str] = []
+        for lib_name, lib_def in self.external_libs.items():
+            parts.append(f"/* External library: {lib_name} */")
+            for func_def in lib_def.functions.values():
+                if func_def.has_var_args:
+                    continue
+                n_args = len(func_def.params)
+                wrapper_name = f"{func_def.c_name}_wrapper"
+                # Check for CALLBACK params - must use VAR_BETWEEN calling convention
+                # to match CEmitter._make_wrapper_extern_decl
+                has_callback = any(
+                    p.type_def.base_type == CType.CALLBACK for p in func_def.params
+                )
+                if has_callback or n_args > 3:
+                    parts.append(f"extern mp_obj_t {wrapper_name}(size_t, const mp_obj_t *);")
+                elif n_args == 0:
+                    parts.append(f"extern mp_obj_t {wrapper_name}(void);")
+                else:
+                    args = ", ".join("mp_obj_t" for _ in range(n_args))
+                    parts.append(f"extern mp_obj_t {wrapper_name}({args});")
+            parts.append("")
+        return parts
 
     def emit_package(
         self,

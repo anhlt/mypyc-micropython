@@ -14,6 +14,7 @@ import ast
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from .ir import FuncIR, ModuleIR, RTuple
 from .type_checker import TypeCheckResult, type_check_file, type_check_source
@@ -45,6 +46,7 @@ class _ModuleCompileParts:
     uses_checked_div: bool
     uses_imports: bool
     used_rtuples: set[RTuple]
+    external_libs: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -112,6 +114,7 @@ def compile_to_micropython(
     *,
     type_check: bool = True,
     strict_type_check: bool = True,
+    external_libs: dict[str, Any] | None = None,
 ) -> CompilationResult:
     """Compile typed Python file to MicroPython usermod folder.
 
@@ -161,7 +164,11 @@ def compile_to_micropython(
     try:
         source_code = source_path.read_text()
         c_code = compile_source(
-            source_code, module_name, type_check=type_check, strict=strict_type_check
+            source_code,
+            module_name,
+            type_check=type_check,
+            strict=strict_type_check,
+            external_libs=external_libs,
         )
         mk_code = generate_micropython_mk(module_name)
         cmake_code = generate_micropython_cmake(module_name)
@@ -229,6 +236,7 @@ def _compile_module_parts(
     *,
     type_check: bool,
     strict: bool,
+    external_libs: dict[str, Any] | None = None,
 ) -> _ModuleCompileParts:
     from .class_emitter import ClassEmitter
     from .function_emitter import FunctionEmitter, MethodEmitter
@@ -251,7 +259,7 @@ def _compile_module_parts(
     c_name = sanitize_name(module_name)
     module_ir = ModuleIR(name=module_name, c_name=c_name)
 
-    ir_builder = IRBuilder(module_name, mypy_types=mypy_types)
+    ir_builder = IRBuilder(module_name, mypy_types=mypy_types, external_libs=external_libs)
     function_irs: list[FuncIR] = []
     function_code: list[str] = []
     forward_decls: list[str] = []
@@ -340,6 +348,12 @@ def _compile_module_parts(
 
         class_code.append(class_emitter.emit_all_except_struct())
 
+    used_libs = {
+        key: value
+        for key, value in (external_libs or {}).items()
+        if key in ir_builder.used_external_libs
+    }
+
     return _ModuleCompileParts(
         module_ir=module_ir,
         function_irs=function_irs,
@@ -353,6 +367,7 @@ def _compile_module_parts(
         uses_checked_div=uses_checked_div,
         uses_imports=uses_imports,
         used_rtuples=used_rtuples,
+        external_libs=used_libs,
     )
 
 
@@ -362,6 +377,7 @@ def compile_source(
     *,
     type_check: bool = True,
     strict: bool = True,
+    external_libs: dict[str, Any] | None = None,
 ) -> str:
     """Compile typed Python source to MicroPython C code.
 
@@ -379,7 +395,13 @@ def compile_source(
     """
     from .module_emitter import ModuleEmitter
 
-    parts = _compile_module_parts(source, module_name, type_check=type_check, strict=strict)
+    parts = _compile_module_parts(
+        source,
+        module_name,
+        type_check=type_check,
+        strict=strict,
+        external_libs=external_libs,
+    )
 
     module_emitter = ModuleEmitter(
         parts.module_ir,
@@ -389,6 +411,7 @@ def compile_source(
         uses_checked_div=parts.uses_checked_div,
         uses_imports=parts.uses_imports,
         used_rtuples=parts.used_rtuples,
+        external_libs=parts.external_libs,
     )
 
     return module_emitter.emit(

@@ -1,3 +1,6 @@
 [submodule "deps/micropython"]
 	path = deps/micropython
 	url = https://github.com/micropython/micropython.git
+[submodule "deps/lvgl"]
+	path = deps/lvgl
+	url = https://github.com/lvgl/lvgl.git

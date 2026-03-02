@@ -49,22 +49,30 @@ else:
 | Feature | Status |
 |---------|--------|
 | Functions with `int`, `float`, `bool` parameters | ✅ |
-| Arithmetic operators (`+`, `-`, `*`, `/`, `%`) | ✅ |
+| Default arguments, `*args`, `**kwargs` | ✅ |
+| Arithmetic operators (`+`, `-`, `*`, `/`, `%`, `**`) | ✅ |
 | Augmented assignment (`+=`, `-=`, `*=`, etc.) | ✅ |
 | Bitwise operators (`&`, `\|`, `^`, `<<`, `>>`) | ✅ |
 | Comparison operators (`==`, `!=`, `<`, `>`, `<=`, `>=`) | ✅ |
-| `if`/`else` statements | ✅ |
-| `while` loops | ✅ |
-| `for` loops (range, list, dict) | ✅ |
+| Logical operators (`and`, `or`, `not`) | ✅ |
+| `if`/`elif`/`else` statements | ✅ |
+| `while` loops with `break`/`continue` | ✅ |
+| `for` loops (range, list, dict, iterables) | ✅ |
 | Ternary expressions (`x if cond else y`) | ✅ |
 | Recursion | ✅ |
-| Local variables (typed and untyped) | ✅ |
-| Built-ins: `abs`, `int`, `float`, `len`, `range` | ✅ |
-| Lists: literals, indexing, `append()`, `pop()` | ✅ |
-| Dicts: literals, indexing, `get()`, `keys()`, `values()`, `items()` | ✅ |
-| Strings (basic) | Partial |
-| Classes | ❌ |
-| Exceptions | ❌ |
+| Local variables (typed and inferred) | ✅ |
+| Built-ins: `abs`, `int`, `float`, `bool`, `len`, `range`, `print`, `min`, `max`, `sum` | ✅ |
+| Lists: literals, indexing, slicing, `append()`, `pop()`, iteration | ✅ |
+| Dicts: literals, indexing, `get()`, `keys()`, `values()`, `items()`, full API | ✅ |
+| Tuples: literals, indexing, slicing, unpacking, RTuple optimization | ✅ |
+| Sets: literals, `add()`, `remove()`, `in` operator, iteration | ✅ |
+| Strings: full method support (`split`, `join`, `replace`, `find`, `strip`, etc.) | ✅ |
+| Classes: typed fields, `__init__`, methods, `@dataclass`, single inheritance | ✅ |
+| Class features: `@property`, `@staticmethod`, `@classmethod`, vtable dispatch | ✅ |
+| Special methods: `__str__`, `__repr__`, `__eq__`, `__len__`, `__getitem__`, `__setitem__` | ✅ |
+| Exception handling: `try`/`except`/`else`/`finally`, `raise` | ✅ |
+| Generators: `yield` in `while`/`for` loops | ✅ |
+| Itertools: `enumerate()`, `zip()`, `sorted()` | ✅ |
 
 ## Example
 
