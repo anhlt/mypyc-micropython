@@ -24,24 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `compile-lvgl-app` Makefile target for cross-module compilation
 - Blog 24: cross-module C library calls architecture documentation
 - 13 new unit tests for external library call compilation (563 total)
-
 - LVGL MVU (Retained Mode UI) example with memory soak test
-- Cross-module external C library call support (`CLibCallIR`, `CLibEnumIR`)
-  - Compile-time resolution of `import lvgl as lv; lv.func()` to direct C wrapper calls
-  - `CLibCallIR`: direct C wrapper function calls with var_args support (>3 params)
-  - `CLibEnumIR`: compile-time enum constant resolution (e.g., `LvAlign.CENTER` -> `9`)
-  - Import alias tracking in `IRBuilder` for external library detection
-  - Extern declarations in generated module C code
-  - `--public` flag for `mpy-compile-c` to emit non-static wrapper functions
-  - `emit_header_file()` for generating C header files
-- LVGL application example (`examples/lvgl_app.py`)
-  - Cross-module calls from compiled Python to LVGL wrappers
-  - `scripts/compile_lvgl_app.py` compilation script
-  - Device-verified on ESP32-C6: label, slider, alignment all working
-- `compile-lvgl-app` Makefile target for cross-module compilation
-- Blog 24: cross-module C library calls architecture documentation
-- 13 new unit tests for external library call compilation (563 total)
-
 - `.pyi` stub-based C bindings system (`src/mypyc_micropython/c_bindings/`)
   - `StubParser`: parses `.pyi` files into `CLibraryDef` IR
   - `CEmitter`: generates MicroPython C wrapper code with proper `mp_c_ptr_t` pointer wrapping
@@ -245,26 +228,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tuple support**: literals `(1, 2, 3)`, indexing `t[n]`, slicing `t[n:m]`, `len(t)`, iteration
 - **Tuple operations**: concatenation `t1 + t2`, repetition `t * n`, unpacking `a, b, c = t`
 - **Tuple constructors**: `tuple()`, `tuple(iterable)`
-### Fixed
-- C emitter pointer wrapping: replaced `MP_OBJ_FROM_PTR` with `mp_c_ptr_t` struct wrapper
-- C emitter GC safety: module-prefixed callback registry with `MP_REGISTER_ROOT_POINTER`
-- C emitter callback trampolines: generic user_data extraction instead of hardcoded LVGL
-- C emitter callback dispatch: match by callback name, not just first callback
-- C emitter argument conversion: unified `CType.to_c_decl()`/`to_mp_unbox()` path
-
-- Serial port contention in `run_device_tests.py`: added `_wait_for_port()` with retry and backoff
-- Serial port contention in `run_benchmarks.py`: same retry logic
-- Fixed pre-existing corruption (duplicated entries) in `run_benchmarks.py`
-
-- `BinOpIR` with `mp_obj_t` operands now correctly uses `mp_binary_op()` instead of native C operators
-- `CompareIR` with `mp_obj_t` operands now correctly uses `mp_binary_op()` + `mp_obj_is_true()` for proper comparison
-- Void functions now properly return `mp_const_none` instead of falling through
-- Tuple unpacking with typed variables now correctly unboxes values (e.g., `a: int; b: int; a, b = t`)
-- `set.add()` and other void-returning methods no longer generate invalid C code
-- **Type coercion in assignments**: Reassigning `mp_obj_t` values to typed variables (e.g., `result: int = 0; result = n` where `n` is a loop variable) now correctly preserves the declared type and inserts `mp_obj_get_int()`/`mp_obj_get_float()` conversion
-- Blog post: `10-type-coercion-fix.md` documenting the assignment type coercion bug and fix
-- **List augmented assignment**: `+=` and `*=` on `list` (and other `mp_obj_t`) types now correctly use `mp_binary_op(MP_BINARY_OP_INPLACE_ADD, ...)` instead of native C operations
-- Makefile LVGL partition-table restore reliability: avoid  git checkout  and prevent .index.lock conflicts
+- **Set support**: literals `{1, 2, 3}`, `len(s)`, `in` operator, iteration
 - **Set methods**: `add()`, `remove()`, `discard()`, `update()`, `clear()`, `copy()`, `pop()`
 - **Set constructors**: `set()`, `set(iterable)`
 - **Slicing support**: `lst[n:m]`, `lst[n:]`, `lst[:m]`, `lst[:]`, `lst[::step]` for lists and tuples
@@ -287,11 +251,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - C emitter callback trampolines: generic user_data extraction instead of hardcoded LVGL
 - C emitter callback dispatch: match by callback name, not just first callback
 - C emitter argument conversion: unified `CType.to_c_decl()`/`to_mp_unbox()` path
-
 - Serial port contention in `run_device_tests.py`: added `_wait_for_port()` with retry and backoff
 - Serial port contention in `run_benchmarks.py`: same retry logic
 - Fixed pre-existing corruption (duplicated entries) in `run_benchmarks.py`
-
 - `BinOpIR` with `mp_obj_t` operands now correctly uses `mp_binary_op()` instead of native C operators
 - `CompareIR` with `mp_obj_t` operands now correctly uses `mp_binary_op()` + `mp_obj_is_true()` for proper comparison
 - Void functions now properly return `mp_const_none` instead of falling through
@@ -300,7 +262,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Type coercion in assignments**: Reassigning `mp_obj_t` values to typed variables (e.g., `result: int = 0; result = n` where `n` is a loop variable) now correctly preserves the declared type and inserts `mp_obj_get_int()`/`mp_obj_get_float()` conversion
 - Blog post: `10-type-coercion-fix.md` documenting the assignment type coercion bug and fix
 - **List augmented assignment**: `+=` and `*=` on `list` (and other `mp_obj_t`) types now correctly use `mp_binary_op(MP_BINARY_OP_INPLACE_ADD, ...)` instead of native C operations
-
+- Makefile LVGL partition-table restore reliability: avoid `git checkout` and prevent .index.lock conflicts
 ## [0.1.0] - 2024-02-07
 
 ### Added
