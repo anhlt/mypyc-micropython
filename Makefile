@@ -193,7 +193,7 @@ compile-lvgl:
 	@echo ""
 	@echo "Adding LVGL to micropython.cmake..."
 	@if [ -f "$(MODULES_DIR)/micropython.cmake" ]; then \
-		if ! grep -q "usermod_lvgl" $(MODULES_DIR)/micropython.cmake 2>/dev/null; then \
+		if ! grep -q "usermod_lvgl/micropython.cmake" $(MODULES_DIR)/micropython.cmake 2>/dev/null; then \
 			echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_lvgl/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
 		fi; \
 	else \
@@ -211,7 +211,7 @@ build: check-env
 		exit 1; \
 	fi
 	@# Add LVGL to cmake if it exists but isn't listed
-	@if [ -d "$(LVGL_MODULE_DIR)" ] && ! grep -q "usermod_lvgl" $(MODULES_DIR)/micropython.cmake 2>/dev/null; then \
+	@if [ -d "$(LVGL_MODULE_DIR)" ] && ! grep -q "usermod_lvgl/micropython.cmake" $(MODULES_DIR)/micropython.cmake 2>/dev/null; then \
 		echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_lvgl/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
 	fi
 	@# Add lvgl_screens to cmake if it exists but isn't listed
@@ -230,10 +230,27 @@ build: check-env
 		source $(ESP_IDF_DIR)/export.sh && \
 		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) USER_C_MODULES=$(USER_C_MODULES) \
 	'
-	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then \
-		echo "Restoring original partition table..."; \
-		cd $(MICROPYTHON_DIR) && git checkout ports/esp32/partitions-4MiB.csv; \
-	fi
+	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then echo "Restoring original partition table..."; cp $(ROOT_DIR)/partitions-default.csv $(MP_PORT_DIR)/partitions-4MiB.csv; fi
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 flash: check-env
 	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then \
@@ -244,10 +261,27 @@ flash: check-env
 	fi
 	@bash -c 'source $(ESP_IDF_DIR)/export.sh && \
 		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) PORT=$(PORT) deploy'
-	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then \
-		echo "Restoring original partition table..."; \
-		cd $(MICROPYTHON_DIR) && git checkout ports/esp32/partitions-4MiB.csv; \
-	fi
+	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then echo "Restoring original partition table..."; cp $(ROOT_DIR)/partitions-default.csv $(MP_PORT_DIR)/partitions-4MiB.csv; fi
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 erase: check-env
 	@echo "Erasing flash..."

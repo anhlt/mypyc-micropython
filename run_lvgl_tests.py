@@ -177,6 +177,50 @@ except Exception as e:
     sys.print_exception(e)
     _failed += 1
 
+suite("lvgl_mvu")
+
+try:
+    import lvgl_mvu as mvu
+    import gc
+
+    # Create app with initial parameters
+    app = mvu.App(0, 8, 32)  # screen_width, screen_height, buffer_size
+    app.mount()
+
+    # Memory soak test
+    min_free = gc.mem_free()
+    baseline = min_free
+
+    for i in range(5000):
+        # Dispatch and tick to update UI
+        app.dispatch(1)
+        app.tick(1)
+
+        # Collect garbage and track memory every 64 iterations
+        if i % 64 == 0:
+            gc.collect()
+            current_free = gc.mem_free()
+            min_free = min(min_free, current_free)
+
+        # Occasionally refresh to run LVGL timers
+        if i % 32 == 0:
+            refresh(1)
+
+    # Check memory stability
+    mem_drop = baseline - min_free
+    t("lvgl_mvu memory soak", mem_drop < 4000, "True")
+    print(f"    (mem drop: {mem_drop} bytes)")
+
+    # Clean up
+    app.dispose()
+
+except ImportError as e:
+    print("SKIP: lvgl_mvu not available - " + str(e))
+except Exception as e:
+    print("ERROR: lvgl_mvu tests failed - " + str(e))
+    import sys
+    sys.print_exception(e)
+    _failed += 1
 # ---- summary ----
 gc.collect()
 print("@D:" + str(_total) + "|" + str(_passed) + "|" + str(_failed))
