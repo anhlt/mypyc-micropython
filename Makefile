@@ -224,7 +224,7 @@ build: check-env
 	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then \
 		echo "Building MicroPython + LVGL firmware for $(BOARD)..."; \
 		echo "Using larger partition table (2.56MB app) for LVGL"; \
-		cp $(ROOT_DIR)/partitions-lvgl.csv $(MP_PORT_DIR)/partitions-4MiB.csv; \
+		cp $(ROOT_DIR)/configs/partitions-lvgl.csv $(MP_PORT_DIR)/partitions-4MiB.csv; \
 	else \
 		echo "Building MicroPython firmware for $(BOARD)..."; \
 	fi
@@ -233,7 +233,7 @@ build: check-env
 		source $(ESP_IDF_DIR)/export.sh && \
 		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) USER_C_MODULES=$(USER_C_MODULES) \
 	'
-	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then echo "Restoring original partition table..."; cp $(ROOT_DIR)/partitions-default.csv $(MP_PORT_DIR)/partitions-4MiB.csv; fi
+	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then echo "Restoring original partition table..."; cp $(ROOT_DIR)/configs/partitions-default.csv $(MP_PORT_DIR)/partitions-4MiB.csv; fi
 
 
 
@@ -258,13 +258,13 @@ build: check-env
 flash: check-env
 	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then \
 		echo "Flashing LVGL firmware to $(PORT)..."; \
-		cp $(ROOT_DIR)/partitions-lvgl.csv $(MP_PORT_DIR)/partitions-4MiB.csv; \
+		cp $(ROOT_DIR)/configs/partitions-lvgl.csv $(MP_PORT_DIR)/partitions-4MiB.csv; \
 	else \
 		echo "Flashing firmware to $(PORT)..."; \
 	fi
 	@bash -c 'source $(ESP_IDF_DIR)/export.sh && \
 		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) PORT=$(PORT) deploy'
-	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then echo "Restoring original partition table..."; cp $(ROOT_DIR)/partitions-default.csv $(MP_PORT_DIR)/partitions-4MiB.csv; fi
+	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then echo "Restoring original partition table..."; cp $(ROOT_DIR)/configs/partitions-default.csv $(MP_PORT_DIR)/partitions-4MiB.csv; fi
 
 
 
@@ -314,11 +314,11 @@ test-device: compile-all build flash run-device-tests
 
 run-device-tests:
 	@echo "Running device tests on $(PORT)..."
-	mpremote connect $(PORT) run run_device_tests.py
+	mpremote connect $(PORT) run tests/device/run_device_tests.py
 
 benchmark:
 	@echo "Running benchmarks: Native C vs Vanilla MicroPython..."
-	@python3 run_benchmarks.py --port $(PORT)
+	@python3 tests/device/run_benchmarks.py --port $(PORT)
 
 test-lvgl:
 	@echo "Testing LVGL on device..."
@@ -326,21 +326,21 @@ test-lvgl:
 
 run-lvgl-tests:
 	@echo "Running LVGL test suite on $(PORT)..."
-	mpremote connect $(PORT) run run_lvgl_tests.py
+	mpremote connect $(PORT) run tests/device/run_lvgl_tests.py
 
 run-lvgl-mvu-tests:
 	@echo "Running LVGL MVU-only test suite on $(PORT)..."
-	mpremote connect $(PORT) run run_lvgl_mvu_tests.py
+	mpremote connect $(PORT) run tests/device/run_lvgl_mvu_tests.py
 
 run-lvgl-tests-all: run-lvgl-tests run-lvgl-mvu-tests
 	@echo "LVGL full test pass complete"
 
 run-nav-test:
 	@echo "Running visual navigation test on $(PORT)..."
-	mpremote connect $(PORT) run run_nav_test.py
+	mpremote connect $(PORT) run tests/device/run_nav_test.py
 test-navigation:
 	@echo "Running ScreenManager navigation test on $(PORT)..."
-	mpremote connect $(PORT) run test_screen_navigation.py
+	mpremote connect $(PORT) run tests/device/test_screen_navigation.py
 
 repl:
 	@echo "Opening MicroPython REPL on $(PORT)..."
