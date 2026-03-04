@@ -33,7 +33,8 @@ endif
 
 .PHONY: help setup setup-idf setup-mpy compile build flash monitor clean clean-all \
         test test-device run-device-tests benchmark compile-all check-env \
-        compile-lvgl test-lvgl run-lvgl-tests erase run list-boards info repl
+        compile-lvgl test-lvgl run-lvgl-tests run-lvgl-mvu-tests run-lvgl-tests-all \
+        erase run list-boards info repl
 
 # Default target
 help:
@@ -65,6 +66,8 @@ help:
 	@echo "  make test-device    - Full cycle: compile + build + flash + test"
 	@echo "  make run-device-tests - Run device tests on flashed firmware"
 	@echo "  make run-lvgl-tests - Run LVGL test suite on device"
+	@echo "  make run-lvgl-mvu-tests - Run LVGL MVU-only test suite on device"
+	@echo "  make run-lvgl-tests-all - Run all LVGL suites on device"
 	@echo "  make test-navigation - Run ScreenManager navigation test"
 	@echo "  make test-lvgl      - Quick LVGL display test"
 	@echo "  make benchmark      - Run native vs vanilla performance tests"
@@ -324,6 +327,13 @@ test-lvgl:
 run-lvgl-tests:
 	@echo "Running LVGL test suite on $(PORT)..."
 	mpremote connect $(PORT) run run_lvgl_tests.py
+
+run-lvgl-mvu-tests:
+	@echo "Running LVGL MVU-only test suite on $(PORT)..."
+	mpremote connect $(PORT) run run_lvgl_mvu_tests.py
+
+run-lvgl-tests-all: run-lvgl-tests run-lvgl-mvu-tests
+	@echo "LVGL full test pass complete"
 
 run-nav-test:
 	@echo "Running visual navigation test on $(PORT)..."
