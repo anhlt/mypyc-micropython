@@ -11,7 +11,9 @@ Test naming convention: test_emit_<feature>_<behavior>
 
 from __future__ import annotations
 
-from mypyc_micropython.function_emitter import FunctionEmitter
+import ast
+
+from mypyc_micropython.function_emitter import FunctionEmitter, MethodEmitter
 from mypyc_micropython.generator_emitter import GeneratorEmitter
 from mypyc_micropython.ir import (
     AnnAssignIR,
@@ -35,9 +37,12 @@ from mypyc_micropython.ir import (
     IRType,
     ListNewIR,
     MethodCallIR,
+    MethodIR,
     NameIR,
     PassIR,
     ReturnIR,
+    SelfAttrIR,
+    SelfMethodCallIR,
     SubscriptAssignIR,
     SubscriptIR,
     TempIR,
@@ -103,6 +108,47 @@ def make_const_none() -> ConstIR:
     """Create a None constant."""
     return ConstIR(value=None, ir_type=IRType.OBJ)
 
+
+def make_method_ir(
+    name: str = "method",
+    c_name: str | None = None,
+    params: list[tuple[str, CType]] | None = None,
+    return_type: CType = CType.MP_OBJ_T,
+    max_temp: int = 0,
+) -> MethodIR:
+    """Factory for creating MethodIR with a dummy body_ast.
+
+    MethodIR requires body_ast (ast.FunctionDef) but for unit tests,
+    we pass the actual IR body to emit_native() separately.
+    """
+    # Create minimal dummy AST node (required by MethodIR)
+    dummy_args = ast.arguments(
+        posonlyargs=[],
+        args=[ast.arg(arg="self", annotation=None)]
+             + [ast.arg(arg=p[0], annotation=None) for p in (params or [])],
+        kwonlyargs=[],
+        kw_defaults=[],
+        defaults=[],
+        vararg=None,
+        kwarg=None,
+    )
+    dummy_body_ast = ast.FunctionDef(
+        name=name,
+        args=dummy_args,
+        body=[ast.Pass()],
+        decorator_list=[],
+        returns=None,
+        lineno=1,
+        col_offset=0,
+    )
+    return MethodIR(
+        name=name,
+        c_name=c_name or f"test_{name}",
+        params=params or [],
+        return_type=return_type,
+        body_ast=dummy_body_ast,
+        max_temp=max_temp,
+    )
 
 def make_temp(name: str, ir_type: IRType = IRType.OBJ) -> TempIR:
     """Create a temporary variable."""
@@ -1502,3 +1548,256 @@ class TestGeneratorEmitter:
         assert "state_1:" in c_code
         assert "MP_DEFINE_CONST_OBJ_TYPE" in c_code
         assert "MP_OBJ_STOP_ITERATION" in c_code
+
+
+class TestSelfMethodCallArgumentTypes:
+    """Tests for correct argument type handling in self method calls.
+
+    These tests verify that method arguments are passed with correct types,
+    not incorrectly unboxed to mp_int_t when they should remain mp_obj_t.
+    Bug fix: _emit_self_method_call now uses arg.ir_type for target type.
+    """
+
+    def test_self_method_call_with_obj_arg_no_unbox(self):
+        """Self method call with mp_obj_t argument should not unbox."""
+        # Create a class with a method that takes an object parameter
+        class_ir = ClassIR(
+            name="Nav",
+            c_name="test_Nav",
+            module_name="test",
+            fields=[
+                FieldIR(name="_size", py_type="int", c_type=CType.MP_INT_T),
+            ],
+        )
+
+        # Create the method that takes an object (screen) parameter
+        helper_method = make_method_ir(
+            name="_safe_delete",
+            c_name="test_Nav__safe_delete",
+            params=[("screen", CType.MP_OBJ_T)],
+            return_type=CType.VOID,
+        )
+        class_ir.methods["_safe_delete"] = helper_method
+
+        # Create a method that calls _safe_delete with an object argument
+        caller_method = make_method_ir(
+            name="pop",
+            c_name="test_Nav_pop",
+            params=[],
+            return_type=CType.MP_OBJ_T,
+        )
+        class_ir.methods["pop"] = caller_method
+
+        # Build the body IR separately (this is what emit_native expects)
+        # SelfMethodCallIR is an ExprIR, so it goes in the expr field of ExprStmtIR,
+        # not in the prelude (which is for InstrIR like AssignIR, TempAssignIR).
+        body_ir = [
+            ExprStmtIR(
+                expr=SelfMethodCallIR(
+                    ir_type=IRType.OBJ,
+                    method_name="_safe_delete",
+                    c_method_name="test_Nav__safe_delete",
+                    args=[NameIR(py_name="old_screen", c_name="old_screen", ir_type=IRType.OBJ)],
+                    return_type=IRType.OBJ,
+                ),
+                prelude=[],  # No prelude needed for simple args
+            ),
+            ReturnIR(value=NameIR(py_name="old_screen", c_name="old_screen", ir_type=IRType.OBJ)),
+        ]
+
+        emitter = MethodEmitter(caller_method, class_ir)
+        c_code = emitter.emit_native(body_ir)
+
+        # The method call should NOT contain mp_obj_get_int
+        # It should pass old_screen directly
+        assert "mp_obj_get_int(old_screen)" not in c_code, (
+            "Object argument should not be unboxed with mp_obj_get_int"
+        )
+        assert "test_Nav__safe_delete_native(self, old_screen)" in c_code, (
+            "Method call should pass object argument directly"
+        )
+
+    def test_self_method_call_with_int_arg_does_unbox(self):
+        """Self method call with mp_int_t argument should unbox when needed."""
+        class_ir = ClassIR(
+            name="Calculator",
+            c_name="test_Calculator",
+            module_name="test",
+            fields=[],
+        )
+
+        # Method that takes int parameter
+        helper_method = make_method_ir(
+            name="add",
+            c_name="test_Calculator_add",
+            params=[("x", CType.MP_INT_T)],
+            return_type=CType.MP_INT_T,
+        )
+        class_ir.methods["add"] = helper_method
+
+        # Method that calls add with an int argument
+        caller_method = make_method_ir(
+            name="compute",
+            c_name="test_Calculator_compute",
+            params=[],
+            return_type=CType.MP_INT_T,
+        )
+        class_ir.methods["compute"] = caller_method
+
+        # Build the body IR
+        body_ir = [
+            ReturnIR(
+                value=SelfMethodCallIR(
+                    ir_type=IRType.INT,
+                    method_name="add",
+                    c_method_name="test_Calculator_add",
+                    args=[ConstIR(ir_type=IRType.INT, value=42)],
+                    return_type=IRType.INT,
+                )
+            )
+        ]
+
+        emitter = MethodEmitter(caller_method, class_ir)
+        c_code = emitter.emit_native(body_ir)
+
+        # Int constant should be passed directly (no boxing/unboxing needed)
+        assert "test_Calculator_add_native(self, 42)" in c_code
+
+    def test_self_method_call_mixed_arg_types(self):
+        """Self method call with both int and object args handles each correctly."""
+        class_ir = ClassIR(
+            name="Widget",
+            c_name="test_Widget",
+            module_name="test",
+            fields=[],
+        )
+
+        # Method with mixed parameter types
+        helper_method = make_method_ir(
+            name="update",
+            c_name="test_Widget_update",
+            params=[("index", CType.MP_INT_T), ("data", CType.MP_OBJ_T)],
+            return_type=CType.VOID,
+        )
+        class_ir.methods["update"] = helper_method
+
+        # Caller method
+        caller_method = make_method_ir(
+            name="refresh",
+            c_name="test_Widget_refresh",
+            params=[],
+            return_type=CType.VOID,
+        )
+        class_ir.methods["refresh"] = caller_method
+
+        # Build body with mixed args
+        # SelfMethodCallIR is an ExprIR, so it goes in the expr field of ExprStmtIR,
+        # not in the prelude (which is for InstrIR like AssignIR, TempAssignIR).
+        body_ir = [
+            ExprStmtIR(
+                expr=SelfMethodCallIR(
+                    ir_type=IRType.OBJ,
+                    method_name="update",
+                    c_method_name="test_Widget_update",
+                    args=[
+                        ConstIR(ir_type=IRType.INT, value=0),  # int arg
+                        NameIR(py_name="obj", c_name="obj", ir_type=IRType.OBJ),  # obj arg
+                    ],
+                    return_type=IRType.OBJ,
+                ),
+                prelude=[],  # No prelude needed for simple args
+            ),
+            ReturnIR(value=None),
+        ]
+
+        emitter = MethodEmitter(caller_method, class_ir)
+        c_code = emitter.emit_native(body_ir)
+
+        # Should pass int directly and obj directly (no mp_obj_get_int on obj)
+        assert "mp_obj_get_int(obj)" not in c_code, (
+            "Object argument should not be unboxed"
+        )
+        assert "test_Widget_update_native(self, 0, obj)" in c_code, (
+            "Should pass int constant and object variable correctly"
+        )
+
+class TestCompareIdentityEmitter:
+    """Tests for identity comparison emission (is, is not).
+
+    These tests verify that 'is' comparisons emit pointer comparison,
+    not mp_obj_get_int calls.
+    """
+
+    def test_emit_is_none_comparison(self):
+        """'is None' should emit pointer comparison, not mp_obj_get_int."""
+        func_ir = make_func(
+            params=[("x", CType.MP_OBJ_T)],
+            return_type=CType.BOOL,
+            body=[
+                ReturnIR(
+                    value=CompareIR(
+                        ir_type=IRType.BOOL,
+                        left=NameIR(py_name="x", c_name="x", ir_type=IRType.OBJ),
+                        ops=["is"],
+                        comparators=[ConstIR(ir_type=IRType.OBJ, value=None)],
+                    )
+                )
+            ],
+        )
+        c_code = FunctionEmitter(func_ir).emit()[0]
+
+        # Should use direct pointer comparison
+        assert "x == mp_const_none" in c_code, (
+            "'is None' should compile to pointer comparison"
+        )
+        # Should NOT use mp_obj_get_int
+        assert "mp_obj_get_int" not in c_code, (
+            "'is None' should not call mp_obj_get_int"
+        )
+
+    def test_emit_is_not_none_comparison(self):
+        """'is not None' should emit pointer comparison with !=."""
+        func_ir = make_func(
+            params=[("x", CType.MP_OBJ_T)],
+            return_type=CType.BOOL,
+            body=[
+                ReturnIR(
+                    value=CompareIR(
+                        ir_type=IRType.BOOL,
+                        left=NameIR(py_name="x", c_name="x", ir_type=IRType.OBJ),
+                        ops=["is not"],
+                        comparators=[ConstIR(ir_type=IRType.OBJ, value=None)],
+                    )
+                )
+            ],
+        )
+        c_code = FunctionEmitter(func_ir).emit()[0]
+
+        # Should use != for 'is not'
+        assert "x != mp_const_none" in c_code, (
+            "'is not None' should compile to != comparison"
+        )
+        assert "mp_obj_get_int" not in c_code
+
+    def test_emit_is_comparison_between_objects(self):
+        """'is' between two objects should use pointer comparison."""
+        func_ir = make_func(
+            params=[("a", CType.MP_OBJ_T), ("b", CType.MP_OBJ_T)],
+            return_type=CType.BOOL,
+            body=[
+                ReturnIR(
+                    value=CompareIR(
+                        ir_type=IRType.BOOL,
+                        left=NameIR(py_name="a", c_name="a", ir_type=IRType.OBJ),
+                        ops=["is"],
+                        comparators=[NameIR(py_name="b", c_name="b", ir_type=IRType.OBJ)],
+                    )
+                )
+            ],
+        )
+        c_code = FunctionEmitter(func_ir).emit()[0]
+
+        assert "a == b" in c_code, (
+            "'a is b' should compile to pointer comparison"
+        )
+        assert "mp_obj_get_int" not in c_code

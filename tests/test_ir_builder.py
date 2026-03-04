@@ -1198,3 +1198,121 @@ def f(a: int) -> int:
         ret = func_ir.body[0]
         assert isinstance(ret.value, UnaryOpIR)
         assert ret.value.op == "~"
+
+
+class TestMethodIdentityComparison:
+    """Tests for identity comparison operators (is, is not) in class methods.
+
+    These tests verify that 'is' and 'is not' operators are correctly
+    preserved in class method IR, not converted to '==' or '!='.
+    Bug fix: _build_method_expr was missing ast.Is and ast.IsNot mappings.
+    """
+
+    def test_is_none_in_method(self):
+        """Test 'is None' comparison in class method produces 'is' operator."""
+        source = '''
+class Nav:
+    _allowed: object
+
+    def __init__(self, allowed: object = None) -> None:
+        self._allowed = allowed
+
+    def check(self) -> bool:
+        if self._allowed is None:
+            return True
+        return False
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        class_ir = builder.build_class(tree.body[0])
+
+        # Get the check method
+        check_method = class_ir.methods["check"]
+        assert check_method.name == "check"
+
+        # Build the method body
+        builder._current_class = class_ir
+        builder._list_vars = {}
+        builder._temp_count = 0
+        locals_ = []
+        body = []
+        for stmt in check_method.body_ast.body:
+            stmt_ir = builder._build_method_statement(stmt, locals_, class_ir, True)
+            if stmt_ir:
+                body.append(stmt_ir)
+
+        # The first statement should be an IfIR with 'is' comparison
+        assert len(body) >= 1
+        if_stmt = body[0]
+        assert isinstance(if_stmt, IfIR)
+
+        # The test should be a CompareIR with 'is' operator
+        test = if_stmt.test
+        assert isinstance(test, CompareIR)
+        assert test.ops == ["is"], f"Expected ['is'], got {test.ops}"
+
+    def test_is_not_none_in_method(self):
+        """Test 'is not None' comparison in class method produces 'is not' operator."""
+        source = '''
+class Container:
+    _data: object
+
+    def __init__(self, data: object = None) -> None:
+        self._data = data
+
+    def has_data(self) -> bool:
+        return self._data is not None
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        class_ir = builder.build_class(tree.body[0])
+
+        # Get the has_data method
+        has_data_method = class_ir.methods["has_data"]
+
+        # Build the method body
+        builder._current_class = class_ir
+        builder._list_vars = {}
+        builder._temp_count = 0
+        locals_ = []
+        body = []
+        for stmt in has_data_method.body_ast.body:
+            stmt_ir = builder._build_method_statement(stmt, locals_, class_ir, True)
+            if stmt_ir:
+                body.append(stmt_ir)
+
+        # The return statement should contain a CompareIR with 'is not'
+        assert len(body) >= 1
+        ret_stmt = body[0]
+        assert isinstance(ret_stmt, ReturnIR)
+
+        test = ret_stmt.value
+        assert isinstance(test, CompareIR)
+        assert test.ops == ["is not"], f"Expected ['is not'], got {test.ops}"
+
+    def test_is_comparison_with_object_parameter(self):
+        """Test 'is' comparison between method parameters."""
+        source = '''
+class Comparer:
+    def same(self, a: object, b: object) -> bool:
+        return a is b
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        class_ir = builder.build_class(tree.body[0])
+
+        same_method = class_ir.methods["same"]
+        builder._current_class = class_ir
+        builder._list_vars = {}
+        builder._temp_count = 0
+        locals_ = ["a", "b"]
+        body = []
+        for stmt in same_method.body_ast.body:
+            stmt_ir = builder._build_method_statement(stmt, locals_, class_ir, True)
+            if stmt_ir:
+                body.append(stmt_ir)
+
+        ret_stmt = body[0]
+        assert isinstance(ret_stmt, ReturnIR)
+        assert isinstance(ret_stmt.value, CompareIR)
+        assert ret_stmt.value.ops == ["is"]

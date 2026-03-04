@@ -51,6 +51,7 @@ from .ir import (
     MethodIR,
     ModuleAttrIR,
     ModuleCallIR,
+    ModuleRefIR,
     NameIR,
     ParamAttrIR,
     ParamIR,
@@ -120,6 +121,45 @@ C_RESERVED_WORDS = {
 }
 
 
+# Builtin functions recognized by the compiler
+BUILTIN_FUNCTIONS = {
+    "abs",
+    "int",
+    "float",
+    "bool",
+    "str",
+    "len",
+    "range",
+    "list",
+    "tuple",
+    "set",
+    "dict",
+    "min",
+    "max",
+    "sum",
+    "enumerate",
+    "zip",
+    "sorted",
+    "id",
+}
+
+# Builtins that return int
+INT_BUILTINS = {"abs", "int", "len", "sum", "id"}
+
+
+def _builtin_ir_type(func_name: str) -> IRType:
+    """Return the IR type for a builtin function."""
+    if func_name in INT_BUILTINS:
+        return IRType.INT
+    elif func_name == "float":
+        return IRType.FLOAT
+    elif func_name == "bool":
+        return IRType.BOOL
+    return IRType.OBJ
+
+
+
+
 def sanitize_name(name: str) -> str:
     result = re.sub(r"[^a-zA-Z0-9_]", "_", name)
     if result and result[0].isdigit():
@@ -173,6 +213,7 @@ class IRBuilder:
         self._import_aliases: dict[str, str] = {}
         self._imported_modules: set[str] = set()
         self._uses_external_libs: set[str] = set()
+        self._module_constants: dict[str, int | float | str | bool | None] = {}
 
     def _fresh_temp(self) -> str:
         self._temp_counter += 1
@@ -190,6 +231,39 @@ class IRBuilder:
             # from X import Y -- track the module
             self._import_aliases[node.module] = node.module
             self._imported_modules.add(node.module)
+
+    def register_constant(self, node: ast.Assign) -> bool:
+        """Register module-level constant assignment (NAME = literal_value).
+
+        Returns True if successfully registered, False otherwise.
+        Only handles simple NAME = literal assignments.
+        """
+        if len(node.targets) != 1:
+            return False
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            return False
+        name = target.id
+
+        # Extract literal value
+        value = node.value
+        if isinstance(value, ast.Constant):
+            self._module_constants[name] = value.value
+            return True
+        elif isinstance(value, ast.UnaryOp) and isinstance(value.op, ast.USub):
+            # Handle negative numbers: -1, -3.14
+            if isinstance(value.operand, ast.Constant) and isinstance(
+                value.operand.value, (int, float)
+            ):
+                self._module_constants[name] = -value.operand.value
+                return True
+        return False
+
+    @property
+    def module_constants(self) -> dict[str, int | float | str | bool | None]:
+        """Dict of module-level constants (name -> value)."""
+        return self._module_constants
+
 
     @property
     def imported_modules(self) -> set[str]:
@@ -883,6 +957,26 @@ class IRBuilder:
         elif name == "None":
             return ConstIR(ir_type=IRType.OBJ, value=None)
 
+        # Check for module-level constants
+        if name in self._module_constants:
+            const_val = self._module_constants[name]
+            if isinstance(const_val, bool):
+                return ConstIR(ir_type=IRType.BOOL, value=const_val)
+            elif isinstance(const_val, int):
+                return ConstIR(ir_type=IRType.INT, value=const_val)
+            elif isinstance(const_val, float):
+                return ConstIR(ir_type=IRType.FLOAT, value=const_val)
+            elif isinstance(const_val, str):
+                return ConstIR(ir_type=IRType.OBJ, value=const_val)
+            elif const_val is None:
+                return ConstIR(ir_type=IRType.OBJ, value=None)
+
+        # Check for import aliases - return ModuleRefIR for imported modules
+        if name in self._import_aliases:
+            module_name = self._import_aliases[name]
+            self._uses_imports = True
+            return ModuleRefIR(ir_type=IRType.OBJ, module_name=module_name)
+
         c_name = self._star_c_names.get(name, sanitize_name(name))
         var_type = self._var_types.get(name, "mp_int_t")
         ir_type = IRType.from_c_type_str(var_type)
@@ -1032,26 +1126,7 @@ class IRBuilder:
 
         all_preludes = [p for pl in arg_preludes for p in pl]
 
-        builtins = {
-            "abs",
-            "int",
-            "float",
-            "bool",
-            "str",
-            "len",
-            "range",
-            "list",
-            "tuple",
-            "set",
-            "dict",
-            "min",
-            "max",
-            "sum",
-            "enumerate",
-            "zip",
-            "sorted",
-        }
-        if func_name in builtins:
+        if func_name in BUILTIN_FUNCTIONS:
             is_list_len_opt = False
             is_typed_list_sum = False
             sum_list_var: str | None = None
@@ -1073,14 +1148,7 @@ class IRBuilder:
                         sum_element_type = elem_type
                         self._uses_list_opt = True
 
-            if func_name in ("abs", "int", "len", "sum"):
-                ir_type = IRType.INT
-            elif func_name == "float":
-                ir_type = IRType.FLOAT
-            elif func_name == "bool":
-                ir_type = IRType.BOOL
-            else:
-                ir_type = IRType.OBJ
+            ir_type = _builtin_ir_type(func_name)
             return CallIR(
                 ir_type=ir_type,
                 func_name=func_name,
@@ -2746,6 +2814,8 @@ class IRBuilder:
                 ast.GtE: ">=",
                 ast.In: "in",
                 ast.NotIn: "not in",
+                ast.Is: "is",
+                ast.IsNot: "is not",
             }
             ops: list[str] = []
             comparators: list[ValueIR] = []
@@ -2864,34 +2934,8 @@ class IRBuilder:
 
         all_preludes = [p for pl in arg_preludes for p in pl]
 
-        builtins = {
-            "abs",
-            "int",
-            "float",
-            "bool",
-            "str",
-            "len",
-            "range",
-            "list",
-            "tuple",
-            "set",
-            "dict",
-            "min",
-            "max",
-            "sum",
-            "enumerate",
-            "zip",
-            "sorted",
-        }
-        if func_name in builtins:
-            if func_name in ("abs", "int", "len", "sum"):
-                ir_type = IRType.INT
-            elif func_name == "float":
-                ir_type = IRType.FLOAT
-            elif func_name == "bool":
-                ir_type = IRType.BOOL
-            else:
-                ir_type = IRType.OBJ
+        if func_name in BUILTIN_FUNCTIONS:
+            ir_type = _builtin_ir_type(func_name)
             return CallIR(
                 ir_type=ir_type,
                 func_name=func_name,

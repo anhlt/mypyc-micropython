@@ -915,6 +915,19 @@ class BaseEmitter:
                     f"mp_call_function_1(MP_OBJ_FROM_PTR(&mp_builtin_sorted_obj), {boxed})",
                     "mp_obj_t",
                 )
+        elif func == "id" and args:
+            # id(obj) returns the memory address of the object as an integer
+            arg_expr, arg_type = args[0]
+            boxed = self._box_value(arg_expr, arg_type)
+            return f"(mp_int_t)(uintptr_t)({boxed})", "mp_int_t"
+
+            self._mark_uses_builtins()
+            if len(args) >= 1:
+                boxed = self._box_value(args[0][0], args[0][1])
+                return (
+                    f"mp_call_function_1(MP_OBJ_FROM_PTR(&mp_builtin_sorted_obj), {boxed})",
+                    "mp_obj_t",
+                )
 
         return "/* unsupported builtin */", "mp_obj_t"
 
@@ -1004,7 +1017,9 @@ class BaseEmitter:
         for arg in call.args:
             arg_expr, arg_type = self._emit_expr(arg, native)
             if self._should_unbox_self_method_args(call, native):
-                args.append(self._unbox_if_needed(arg_expr, arg_type))
+                # Use the IR's expected type as target, not default mp_int_t
+                target_type = arg.ir_type.to_c_type_str()
+                args.append(self._unbox_if_needed(arg_expr, arg_type, target_type))
             else:
                 args.append(arg_expr)
         args_str = ", ".join(args)
