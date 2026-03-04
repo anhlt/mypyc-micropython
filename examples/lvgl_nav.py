@@ -22,6 +22,7 @@ SCREEN_CONTROLS = 4
 
 ScreenBuilder = Callable[[], object]
 BuilderEntry = tuple[int, ScreenBuilder]
+AllowedChildEntry = tuple[int, tuple[int, ...]]
 
 DEFAULT_BUILDERS: tuple[BuilderEntry, ...] = (
     (SCREEN_HOME, ls.build_home_screen),
@@ -37,11 +38,13 @@ class Nav:
         self,
         nav_capacity: int = 8,
         builders: tuple[BuilderEntry, ...] = DEFAULT_BUILDERS,
+        allowed_children: tuple[AllowedChildEntry, ...] | None = None,
     ) -> None:
         if nav_capacity <= 0:
             nav_capacity = 1
         self._capacity = nav_capacity
         self._builders = builders
+        self._allowed_children = allowed_children
         self._screen_ids: list[int] = [0] * nav_capacity
         self._screens: list[object | None] = [None] * nav_capacity
         self._size = 0
@@ -79,6 +82,8 @@ class Nav:
     def push(self, screen_id: int) -> object:
         if self._size == 0:
             return self.init_root(screen_id)
+        if not self._is_allowed_child(screen_id):
+            raise ValueError("invalid screen id: " + str(screen_id))
         if self._size >= self._capacity:
             return self.replace(screen_id)
 
@@ -169,6 +174,23 @@ class Nav:
                 return builder()
             i += 1
         raise ValueError("invalid screen id: " + str(screen_id))
+
+    def _is_allowed_child(self, child_id: int) -> bool:
+        if self._allowed_children is None:
+            return True
+        parent_id = self.current()
+        i = 0
+        while i < len(self._allowed_children):
+            entry_parent_id, children = self._allowed_children[i]
+            if entry_parent_id == parent_id:
+                j = 0
+                while j < len(children):
+                    if children[j] == child_id:
+                        return True
+                    j += 1
+                return False
+            i += 1
+        return False
 
     def _safe_delete(self, screen: object) -> None:
         if screen is not lv.lv_screen_active():

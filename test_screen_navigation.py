@@ -17,21 +17,12 @@ SCREEN_NAMES = {
     SCREEN_DEEP_CHILD: "deep_child",
 }
 
-ALLOWED_CHILDREN = {
-    SCREEN_HOME: (SCREEN_SETTINGS, SCREEN_ABOUT),
-    SCREEN_SETTINGS: (SCREEN_DEEP_CHILD,),
-    SCREEN_ABOUT: (),
-    SCREEN_DEEP_CHILD: (),
-}
-
-
-def _invalid_screen_id(screen_id):
-    raise ValueError("invalid screen id: " + str(screen_id))
-
-
-def _validate_screen_id(screen_id):
-    if screen_id not in SCREEN_NAMES:
-        _invalid_screen_id(screen_id)
+ALLOWED_CHILDREN: tuple[tuple[int, tuple[int, ...]], ...] = (
+    (SCREEN_HOME, (SCREEN_SETTINGS, SCREEN_ABOUT)),
+    (SCREEN_SETTINGS, (SCREEN_DEEP_CHILD,)),
+    (SCREEN_ABOUT, ()),
+    (SCREEN_DEEP_CHILD, ()),
+)
 
 
 def build_home():
@@ -94,7 +85,9 @@ BUILDERS = (
 
 class ScreenManager:
     def __init__(self):
-        self.nav = lvgl_nav.Nav(nav_capacity=8, builders=BUILDERS)
+        self.nav = lvgl_nav.Nav(
+            nav_capacity=8, builders=BUILDERS, allowed_children=ALLOWED_CHILDREN
+        )
         self._stack = []
 
     def start(self):
@@ -103,13 +96,6 @@ class ScreenManager:
 
     def goto(self, child_id):
         self._ensure_started()
-        _validate_screen_id(child_id)
-
-        parent_id = self._stack[-1]
-        allowed = ALLOWED_CHILDREN.get(parent_id, ())
-        if child_id not in allowed:
-            _invalid_screen_id(child_id)
-
         self._stack.append(child_id)
         return self.nav.push(child_id)
 

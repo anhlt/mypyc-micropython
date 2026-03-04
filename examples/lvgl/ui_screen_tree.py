@@ -5,12 +5,12 @@ SCREEN_SETTINGS = 1
 SCREEN_ABOUT = 2
 SCREEN_DEEP_CHILD = 3
 
-ALLOWED_CHILDREN = {
-    SCREEN_HOME: (SCREEN_SETTINGS, SCREEN_ABOUT),
-    SCREEN_SETTINGS: (SCREEN_DEEP_CHILD,),
-    SCREEN_ABOUT: (),
-    SCREEN_DEEP_CHILD: (),
-}
+ALLOWED_CHILDREN: tuple[tuple[int, tuple[int, ...]], ...] = (
+    (SCREEN_HOME, (SCREEN_SETTINGS, SCREEN_ABOUT)),
+    (SCREEN_SETTINGS, (SCREEN_DEEP_CHILD,)),
+    (SCREEN_ABOUT, ()),
+    (SCREEN_DEEP_CHILD, ()),
+)
 
 
 def _invalid_screen_id(screen_id):
@@ -29,7 +29,9 @@ class ScreenManager:
         self._root = root
         self._stack = []
         builders = self._collect_builders(root)
-        self._nav = lvgl_nav.Nav(nav_capacity=8, builders=builders)
+        self._nav = lvgl_nav.Nav(
+            nav_capacity=8, builders=builders, allowed_children=ALLOWED_CHILDREN
+        )
 
     def start(self):
         self._validate_screen_id(SCREEN_HOME)
@@ -38,13 +40,6 @@ class ScreenManager:
 
     def goto(self, child):
         self._ensure_started()
-        self._validate_screen_id(child)
-
-        current = self._stack[-1]
-        allowed = ALLOWED_CHILDREN.get(current, ())
-        if child not in allowed:
-            _invalid_screen_id(child)
-
         self._stack.append(child)
         return self._nav.push(child)
 
@@ -78,5 +73,10 @@ class ScreenManager:
             raise RuntimeError("ScreenManager.start() must be called before navigation")
 
     def _validate_screen_id(self, screen_id):
-        if screen_id not in ALLOWED_CHILDREN:
-            _invalid_screen_id(screen_id)
+        i = 0
+        while i < len(ALLOWED_CHILDREN):
+            node_id, _children = ALLOWED_CHILDREN[i]
+            if node_id == screen_id:
+                return
+            i += 1
+        _invalid_screen_id(screen_id)
