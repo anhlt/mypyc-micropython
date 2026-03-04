@@ -1,0 +1,185 @@
+import time
+from typing import Callable
+
+import lvgl as lv
+import lvgl_screens as ls
+
+OVER_LEFT = 1
+OVER_RIGHT = 2
+FADE_IN = 9
+
+PUSH_ANIM_MS = 250
+POP_ANIM_MS = 250
+REPLACE_ANIM_MS = 180
+PUMP_STEP_MS = 10
+PUMP_PAD_MS = 100
+
+SCREEN_HOME = 0
+SCREEN_SLIDER = 1
+SCREEN_PROGRESS = 2
+SCREEN_ARC = 3
+SCREEN_CONTROLS = 4
+
+ScreenBuilder = Callable[[], object]
+BuilderEntry = tuple[int, ScreenBuilder]
+
+DEFAULT_BUILDERS: tuple[BuilderEntry, ...] = (
+    (SCREEN_HOME, ls.build_home_screen),
+    (SCREEN_SLIDER, ls.build_slider_screen),
+    (SCREEN_PROGRESS, ls.build_progress_screen),
+    (SCREEN_ARC, ls.build_arc_screen),
+    (SCREEN_CONTROLS, ls.build_controls_screen),
+)
+
+
+class Nav:
+    def __init__(
+        self,
+        nav_capacity: int = 8,
+        builders: tuple[BuilderEntry, ...] = DEFAULT_BUILDERS,
+    ) -> None:
+        if nav_capacity <= 0:
+            nav_capacity = 1
+        self._capacity = nav_capacity
+        self._builders = builders
+        self._screen_ids: list[int] = [0] * nav_capacity
+        self._screens: list[object | None] = [None] * nav_capacity
+        self._size = 0
+
+    def init_root(self, screen_id: int) -> object:
+        root = self._build_screen(screen_id)
+        old_size = self._size
+        old_root = None
+        if old_size > 0:
+            old_root = self._screens[0]
+
+        self._screen_ids[0] = screen_id
+        self._screens[0] = root
+        self._size = 1
+        lv.lv_screen_load(root)
+        self._pump(PUMP_STEP_MS)
+
+        i = 1
+        while i < old_size:
+            old_screen = self._screens[i]
+            if old_screen is not None and old_screen is not root:
+                self._safe_delete(old_screen)
+            i += 1
+
+        if old_root is not None and old_root is not root:
+            self._safe_delete(old_root)
+
+        i = 1
+        while i < self._capacity:
+            self._screen_ids[i] = 0
+            self._screens[i] = None
+            i += 1
+        return root
+
+    def push(self, screen_id: int) -> object:
+        if self._size == 0:
+            return self.init_root(screen_id)
+        if self._size >= self._capacity:
+            return self.replace(screen_id)
+
+        new_screen = self._build_screen(screen_id)
+        self._screen_ids[self._size] = screen_id
+        self._screens[self._size] = new_screen
+        self._size += 1
+
+        lv.lv_screen_load_anim(new_screen, OVER_LEFT, PUSH_ANIM_MS, 0, False)
+        self._pump(PUSH_ANIM_MS)
+        return new_screen
+
+    def pop(self) -> object:
+        if self._size == 0:
+            return lv.lv_screen_active()
+        if self._size == 1:
+            root = self._screens[0]
+            if root is None:
+                return lv.lv_screen_active()
+            return root
+
+        top_idx = self._size - 1
+        prev_idx = top_idx - 1
+        old_screen = self._screens[top_idx]
+        prev_screen = self._screens[prev_idx]
+        if prev_screen is None:
+            prev_screen = lv.lv_screen_active()
+
+        lv.lv_screen_load_anim(prev_screen, OVER_RIGHT, POP_ANIM_MS, 0, False)
+        self._pump(POP_ANIM_MS)
+
+        self._size = prev_idx + 1
+        self._screen_ids[top_idx] = 0
+        self._screens[top_idx] = None
+        if old_screen is not None:
+            self._safe_delete(old_screen)
+        return prev_screen
+
+    def replace(self, screen_id: int) -> object:
+        new_screen = self._build_screen(screen_id)
+        if self._size == 0:
+            self._screen_ids[0] = screen_id
+            self._screens[0] = new_screen
+            self._size = 1
+            lv.lv_screen_load_anim(new_screen, FADE_IN, REPLACE_ANIM_MS, 0, False)
+            self._pump(REPLACE_ANIM_MS)
+            return new_screen
+
+        top_idx = self._size - 1
+        old_screen = self._screens[top_idx]
+        self._screen_ids[top_idx] = screen_id
+        self._screens[top_idx] = new_screen
+
+        lv.lv_screen_load_anim(new_screen, FADE_IN, REPLACE_ANIM_MS, 0, False)
+        self._pump(REPLACE_ANIM_MS)
+        if old_screen is not None and old_screen is not new_screen:
+            self._safe_delete(old_screen)
+        return new_screen
+
+    def current(self) -> int:
+        if self._size == 0:
+            return -1
+        return self._screen_ids[self._size - 1]
+
+    def dispose(self) -> None:
+        if self._size == 0:
+            return
+
+        blank = lv.lv_obj_create(None)
+        lv.lv_screen_load(blank)
+        self._pump(PUMP_STEP_MS)
+
+        i = 0
+        while i < self._size:
+            screen = self._screens[i]
+            if screen is not None and screen is not blank:
+                self._safe_delete(screen)
+            self._screen_ids[i] = 0
+            self._screens[i] = None
+            i += 1
+        self._size = 0
+
+    def _build_screen(self, screen_id: int) -> object:
+        i = 0
+        while i < len(self._builders):
+            entry_screen_id, builder = self._builders[i]
+            if entry_screen_id == screen_id:
+                return builder()
+            i += 1
+        raise ValueError("invalid screen id: " + str(screen_id))
+
+    def _safe_delete(self, screen: object) -> None:
+        if screen is not lv.lv_screen_active():
+            lv.lv_obj_delete(screen)
+
+    def _pump(self, duration_ms: int) -> None:
+        ticks_ms = getattr(time, "ticks_ms")
+        ticks_diff = getattr(time, "ticks_diff")
+        sleep_ms = getattr(time, "sleep_ms")
+        start = ticks_ms()
+        end_time = duration_ms + PUMP_PAD_MS
+        while ticks_diff(ticks_ms(), start) < end_time:
+            ls.timer_handler()
+            sleep_ms(PUMP_STEP_MS)
