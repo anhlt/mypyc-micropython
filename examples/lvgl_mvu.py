@@ -289,6 +289,44 @@ class App:
         if cmd == NAV_NONE:
             return
 
+        old_root = self._active_root
+        new_root = old_root
+
+        if cmd == NAV_PUSH:
+            new_root = self._nav.push(SCREEN_SETTINGS)
+            if self.nav_size < NAV_CAPACITY:
+                self.nav_stack[self.nav_size] = SCREEN_SETTINGS
+                self.nav_size += 1
+            elif self.nav_size > 0:
+                self.nav_stack[self.nav_size - 1] = SCREEN_SETTINGS
+            self.active_screen_id = SCREEN_SETTINGS
+        elif cmd == NAV_POP:
+            new_root = self._nav.pop()
+            if self.nav_size > 1:
+                self.nav_size -= 1
+            if self.nav_size > 0:
+                self.active_screen_id = self.nav_stack[self.nav_size - 1]
+            else:
+                self.active_screen_id = SCREEN_HOME
+        elif cmd == NAV_REPLACE:
+            new_root = self._nav.replace(SCREEN_HOME)
+            if self.nav_size <= 0:
+                self.nav_stack[0] = SCREEN_HOME
+                self.nav_size = 1
+            else:
+                self.nav_stack[self.nav_size - 1] = SCREEN_HOME
+            self.active_screen_id = SCREEN_HOME
+
+        # Prune references only on pop or replace
+        if (cmd == NAV_POP or cmd == NAV_REPLACE) and old_root is not None and old_root is not new_root:
+            self._refs_by_root.pop(id(old_root), None)
+
+        self._active_root = new_root
+        self._nav_pending = NAV_NONE
+        cmd = self._nav_pending
+        if cmd == NAV_NONE:
+            return
+
         new_root = self._active_root
         if cmd == NAV_PUSH:
             new_root = self._nav.push(SCREEN_SETTINGS)
