@@ -16,6 +16,7 @@ from .ir import (
     AttrAccessIR,
     BinOpIR,
     BoxIR,
+    CallIR,
     CompareIR,
     ConstIR,
     DictNewIR,
@@ -25,6 +26,7 @@ from .ir import (
     ListCompIR,
     ListNewIR,
     MethodCallIR,
+    ModuleRefIR,
     NameIR,
     ParamAttrIR,
     SelfAttrIR,
@@ -515,6 +517,9 @@ class ContainerEmitter:
             return value.name
         elif isinstance(value, NameIR):
             return value.c_name
+        elif isinstance(value, ModuleRefIR):
+            # Import the module at runtime
+            return f"mp_import_name(MP_QSTR_{value.module_name}, mp_const_none, MP_OBJ_NEW_SMALL_INT(0))"
         elif isinstance(value, ConstIR):
             return self._const_to_c(value)
         elif isinstance(value, BinOpIR):
@@ -587,6 +592,14 @@ class ContainerEmitter:
                 return f"{val_c}.f{value.rtuple_index}"
             slice_c = self._value_to_c(value.slice_)
             return f"mp_obj_subscr({val_c}, {self._box_expr(slice_c, value.slice_.ir_type)}, MP_OBJ_SENTINEL)"
+        elif isinstance(value, CallIR):
+            # Handle builtin calls that can appear in container contexts
+            if value.is_builtin and value.builtin_kind == "id":
+                # id(obj) -> (mp_int_t)(uintptr_t)(obj)
+                if value.args:
+                    arg_c = self._box_value_ir(value.args[0])
+                    return f"(mp_int_t)(uintptr_t)({arg_c})"
+            # For other calls, we can't easily emit them inline - fall through to unknown
         return "/* unknown value */"
 
     def _const_to_c(self, const: ConstIR) -> str:

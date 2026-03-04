@@ -1108,6 +1108,22 @@ class ModuleAttrIR(ExprIR):
 
 
 @dataclass
+class ModuleRefIR(ExprIR):
+    """Reference to an imported module itself (not an attribute).
+
+    Used when an import alias is used as a standalone variable,
+    typically as a receiver in a method call like nav.Nav().
+
+    Generated C:
+        mp_import_name(MP_QSTR_lvgl_nav, mp_const_none, MP_OBJ_NEW_SMALL_INT(0))
+    """
+
+    module_name: str  # Python module name (e.g., 'lvgl_nav')
+
+
+
+
+@dataclass
 class CLibCallIR(ExprIR):
     """Call to an external C library wrapper function.
 
@@ -1238,6 +1254,9 @@ class ModuleIR:
     c_name: str
     classes: dict[str, ClassIR] = field(default_factory=dict)
     functions: dict[str, FuncIR] = field(default_factory=dict)
+
+    # Module-level constants (NAME = literal_value)
+    constants: dict[str, int | float | str | bool | None] = field(default_factory=dict)
 
     # For tracking definition order (important for forward declarations)
     class_order: list[str] = field(default_factory=list)

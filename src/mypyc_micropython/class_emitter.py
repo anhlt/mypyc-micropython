@@ -50,6 +50,60 @@ class ClassEmitter:
 
         return lines
 
+    def emit_type_forward_declarations(self) -> list[str]:
+        """Emit forward declarations for type object and make_new function.
+
+        These are needed when one class instantiates another class that is
+        defined later in the file.
+        """
+        lines = []
+        # Forward declare the type object
+        lines.append(f"extern const mp_obj_type_t {self.c_name}_type;")
+        # Forward declare make_new
+        lines.append(
+            f"static mp_obj_t {self.c_name}_make_new(const mp_obj_type_t *type, "
+            f"size_t n_args, size_t n_kw, const mp_obj_t *args);"
+        )
+        return lines
+
+    def emit_native_forward_declarations(self) -> list[str]:
+        """Emit forward declarations for native method functions.
+
+        Only emit declarations for methods that will have a native version:
+        - Private methods (emit native-only)
+        - Static, classmethod, property, final methods
+        - Virtual non-special methods
+
+        Skip forward declarations for methods that only have MP wrapper.
+        """
+        lines = []
+        for method_ir in self.class_ir.methods.values():
+            # Check if this method will have a native version emitted
+            # This logic must match compiler.py's `needs_native` condition
+            needs_native = (
+                method_ir.is_private
+                or method_ir.is_static
+                or method_ir.is_classmethod
+                or method_ir.is_property
+                or method_ir.is_final
+                or (method_ir.is_virtual and not method_ir.is_special)
+            )
+            if not needs_native:
+                continue
+
+            # Generate forward declaration for native version of the method
+            params: list[str] = []
+            if not method_ir.is_static and not method_ir.is_classmethod:
+                params.append(f"{self.c_name}_obj_t *self")
+            for param_name, param_type in method_ir.params:
+                params.append(f"{param_type.to_c_type_str()} {param_name}")
+            params_str = ", ".join(params) if params else "void"
+            ret_type = method_ir.return_type.to_c_type_str()
+            lines.append(f"static {ret_type} {method_ir.c_name}_native({params_str});")
+        if lines:
+            lines.append("")
+        return lines
+
     def emit_struct(self) -> list[str]:
         lines = []
         vtable_entries = self.class_ir.get_vtable_entries()

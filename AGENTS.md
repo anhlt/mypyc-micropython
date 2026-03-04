@@ -52,11 +52,12 @@ tests/
 ├── test_type_checker.py # Unit tests - mypy type checker integration (20 tests)
 ├── mock_mp/             # Minimal C stubs for MicroPython API
 └── device/              # Device test runners (run on MicroPython via mpremote)
-    ├── run_device_tests.py     # Main device test runner (364 tests)
-    ├── run_benchmarks.py       # Benchmark runner (native C vs vanilla)
-    ├── run_nav_test.py         # LVGL navigation tests
-    ├── run_lvgl_tests.py       # LVGL screen tests
-    └── run_lvgl_mvu_tests.py   # LVGL MVU architecture tests
+    ├── run_device_tests.py          # Main device test runner (364 tests)
+    ├── run_benchmarks.py            # Benchmark runner (native C vs vanilla)
+    ├── run_nav_tests.py             # LVGL navigation tests
+    ├── run_lvgl_tests.py            # LVGL screen tests
+    ├── run_lvgl_mvu_tests.py        # LVGL MVU architecture tests
+    └── run_screen_navigation_tests.py  # Screen navigation tree tests
 
 examples/                # Sample Python input files (30 modules + 1 package)
 modules/                 # Generated C output (gitignored except committed examples)

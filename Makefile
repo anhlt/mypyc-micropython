@@ -335,12 +335,13 @@ run-lvgl-mvu-tests:
 run-lvgl-tests-all: run-lvgl-tests run-lvgl-mvu-tests
 	@echo "LVGL full test pass complete"
 
-run-nav-test:
-	@echo "Running visual navigation test on $(PORT)..."
-	mpremote connect $(PORT) run tests/device/run_nav_test.py
-test-navigation:
-	@echo "Running ScreenManager navigation test on $(PORT)..."
-	mpremote connect $(PORT) run tests/device/test_screen_navigation.py
+run-nav-tests:
+	@echo "Running navigation tests on $(PORT)..."
+	mpremote connect $(PORT) run tests/device/run_nav_tests.py
+
+run-screen-navigation-tests:
+	@echo "Running screen navigation tests on $(PORT)..."
+	mpremote connect $(PORT) run tests/device/run_screen_navigation_tests.py
 
 repl:
 	@echo "Opening MicroPython REPL on $(PORT)..."

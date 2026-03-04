@@ -40,6 +40,7 @@ class Nav:
     _screen_ids: list[int]
     _screens: list[object | None]
     _size: int
+
     def __init__(
         self,
         nav_capacity: int = 8,
@@ -51,40 +52,19 @@ class Nav:
         self._capacity = nav_capacity
         self._builders = builders
         self._allowed_children = allowed_children
-        self._screen_ids: list[int] = [0] * nav_capacity
-        self._screens: list[object | None] = [None] * nav_capacity
+        # Initialize lists - avoid [x] * n pattern for compiler compatibility
+        self._screen_ids = []
+        self._screens = []
+        i = 0
+        while i < nav_capacity:
+            self._screen_ids.append(0)
+            self._screens.append(None)
+            i += 1
         self._size = 0
 
     def init_root(self, screen_id: int) -> object:
         import lvgl as lv
-        root = self._build_screen(screen_id)
-        old_size = self._size
-        old_root = None
-        if old_size > 0:
-            old_root = self._screens[0]
 
-        self._screen_ids[0] = screen_id
-        self._screens[0] = root
-        self._size = 1
-        lv.lv_screen_load(root)
-        self._pump(10)
-
-        i = 1
-        while i < old_size:
-            old_screen = self._screens[i]
-            if old_screen is not None and old_screen is not root:
-                self._safe_delete(old_screen)
-            i += 1
-
-        if old_root is not None and old_root is not root:
-            self._safe_delete(old_root)
-
-        i = 1
-        while i < self._capacity:
-            self._screen_ids[i] = 0
-            self._screens[i] = None
-            i += 1
-        return root
         root = self._build_screen(screen_id)
         old_size = self._size
         old_root = None
@@ -116,21 +96,7 @@ class Nav:
 
     def push(self, screen_id: int) -> object:
         import lvgl as lv
-        if self._size == 0:
-            return self.init_root(screen_id)
-        if not self._is_allowed_child(screen_id):
-            raise ValueError("invalid screen id: " + str(screen_id))
-        if self._size >= self._capacity:
-            return self.replace(screen_id)
 
-        new_screen = self._build_screen(screen_id)
-        self._screen_ids[self._size] = screen_id
-        self._screens[self._size] = new_screen
-        self._size += 1
-
-        lv.lv_screen_load_anim(new_screen, 1, 250, 0, False)
-        self._pump(250)
-        return new_screen
         if self._size == 0:
             return self.init_root(screen_id)
         if not self._is_allowed_child(screen_id):
@@ -149,30 +115,7 @@ class Nav:
 
     def pop(self) -> object:
         import lvgl as lv
-        if self._size == 0:
-            return lv.lv_screen_active()
-        if self._size == 1:
-            root = self._screens[0]
-            if root is None:
-                return lv.lv_screen_active()
-            return root
 
-        top_idx = self._size - 1
-        prev_idx = top_idx - 1
-        old_screen = self._screens[top_idx]
-        prev_screen = self._screens[prev_idx]
-        if prev_screen is None:
-            prev_screen = lv.lv_screen_active()
-
-        lv.lv_screen_load_anim(prev_screen, 2, 250, 0, False)
-        self._pump(250)
-
-        self._size = prev_idx + 1
-        self._screen_ids[top_idx] = 0
-        self._screens[top_idx] = None
-        if old_screen is not None:
-            self._safe_delete(old_screen)
-        return prev_screen
         if self._size == 0:
             return lv.lv_screen_active()
         if self._size == 1:
@@ -200,25 +143,7 @@ class Nav:
 
     def replace(self, screen_id: int) -> object:
         import lvgl as lv
-        new_screen = self._build_screen(screen_id)
-        if self._size == 0:
-            self._screen_ids[0] = screen_id
-            self._screens[0] = new_screen
-            self._size = 1
-            lv.lv_screen_load_anim(new_screen, 9, 180, 0, False)
-            self._pump(180)
-            return new_screen
 
-        top_idx = self._size - 1
-        old_screen = self._screens[top_idx]
-        self._screen_ids[top_idx] = screen_id
-        self._screens[top_idx] = new_screen
-
-        lv.lv_screen_load_anim(new_screen, 9, 180, 0, False)
-        self._pump(180)
-        if old_screen is not None and old_screen is not new_screen:
-            self._safe_delete(old_screen)
-        return new_screen
         new_screen = self._build_screen(screen_id)
         if self._size == 0:
             self._screen_ids[0] = screen_id
@@ -246,22 +171,7 @@ class Nav:
 
     def dispose(self) -> None:
         import lvgl as lv
-        if self._size == 0:
-            return
 
-        blank = lv.lv_obj_create(None)
-        lv.lv_screen_load(blank)
-        self._pump(10)
-
-        i = 0
-        while i < self._size:
-            screen = self._screens[i]
-            if screen is not None and screen is not blank:
-                self._safe_delete(screen)
-            self._screen_ids[i] = 0
-            self._screens[i] = None
-            i += 1
-        self._size = 0
         if self._size == 0:
             return
 
@@ -280,12 +190,17 @@ class Nav:
         self._size = 0
 
     def _build_screen(self, screen_id: int) -> object:
-        i = 0
-        while i < len(self._builders):
-            entry_screen_id, builder = self._builders[i]
-            if entry_screen_id == screen_id:
-                return builder()
-            i += 1
+        # Direct dispatch to avoid callable-in-tuple limitation
+        if screen_id == SCREEN_HOME:
+            return ls.build_home_screen()
+        if screen_id == SCREEN_SLIDER:
+            return ls.build_slider_screen()
+        if screen_id == SCREEN_PROGRESS:
+            return ls.build_progress_screen()
+        if screen_id == SCREEN_ARC:
+            return ls.build_arc_screen()
+        if screen_id == SCREEN_CONTROLS:
+            return ls.build_controls_screen()
         raise ValueError("invalid screen id: " + str(screen_id))
 
     def _is_allowed_child(self, child_id: int) -> bool:
@@ -294,7 +209,9 @@ class Nav:
         parent_id = self.current()
         i = 0
         while i < len(self._allowed_children):
-            entry_parent_id, children = self._allowed_children[i]
+            entry = self._allowed_children[i]
+            entry_parent_id: int = entry[0]
+            children: tuple[int, ...] = entry[1]
             if entry_parent_id == parent_id:
                 j = 0
                 while j < len(children):
@@ -307,27 +224,19 @@ class Nav:
 
     def _safe_delete(self, screen: object) -> None:
         import lvgl as lv
-        if screen is not lv.lv_screen_active():
-            lv.lv_obj_delete(screen)
+
         if screen is not lv.lv_screen_active():
             lv.lv_obj_delete(screen)
 
     def _pump(self, duration_ms: int) -> None:
         import time
         import lvgl_screens as ls
-        ticks_ms = getattr(time, 'ticks_ms')
-        ticks_diff = getattr(time, 'ticks_diff')
-        sleep_ms = getattr(time, 'sleep_ms')
-        start = ticks_ms()
-        end_time = duration_ms + 100
-        while ticks_diff(ticks_ms(), start) < end_time:
+
+        start: int = int(time.ticks_ms())  # type: ignore[attr-defined]
+        end_time: int = duration_ms + PUMP_PAD_MS
+        elapsed: int = 0
+        while elapsed < end_time:
             ls.timer_handler()
-            sleep_ms(10)
-        ticks_ms = getattr(time, "ticks_ms")
-        ticks_diff = getattr(time, "ticks_diff")
-        sleep_ms = getattr(time, "sleep_ms")
-        start = ticks_ms()
-        end_time = duration_ms + PUMP_PAD_MS
-        while ticks_diff(ticks_ms(), start) < end_time:
-            ls.timer_handler()
-            sleep_ms(PUMP_STEP_MS)
+            time.sleep_ms(PUMP_STEP_MS)  # type: ignore[attr-defined]
+            now: int = int(time.ticks_ms())  # type: ignore[attr-defined]
+            elapsed = int(time.ticks_diff(now, start))  # type: ignore[attr-defined]

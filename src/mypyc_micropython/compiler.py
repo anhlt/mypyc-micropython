@@ -276,6 +276,9 @@ def _compile_module_parts(
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             ir_builder.register_import(node)
+        elif isinstance(node, ast.Assign):
+            # Register module-level constants (NAME = literal)
+            ir_builder.register_constant(node)
         elif isinstance(node, ast.ClassDef):
             class_ir = ir_builder.build_class(node)
             module_ir.add_class(class_ir)
@@ -303,6 +306,7 @@ def _compile_module_parts(
             used_rtuples.update(func_ir.used_rtuples)
 
     module_ir.imported_modules = ir_builder.imported_modules
+    module_ir.constants = ir_builder.module_constants
     module_ir.resolve_base_classes()
 
     for class_ir in module_ir.get_classes_in_order():
@@ -312,6 +316,8 @@ def _compile_module_parts(
         class_emitter = ClassEmitter(class_ir, c_name)
 
         forward_decls.extend(class_emitter.emit_forward_declarations())
+        forward_decls.extend(class_emitter.emit_type_forward_declarations())
+        forward_decls.extend(class_emitter.emit_native_forward_declarations())
         struct_code.extend(class_emitter.emit_struct())
 
         for method_ir in class_ir.methods.values():

@@ -58,14 +58,12 @@ class ScreenManager:
             self.SCREEN_SETTINGS: 0x4CAF50,
             self.SCREEN_DISPLAY: 0xFF9800,
         }
-        self.nav = lvgl_nav.Nav(
-            nav_capacity=8,
-            builders=(
-                (self.SCREEN_HOME, self._build_home),
-                (self.SCREEN_SETTINGS, self._build_settings),
-                (self.SCREEN_DISPLAY, self._build_display),
-            ),
+        builders = (
+            (self.SCREEN_HOME, self._build_home),
+            (self.SCREEN_SETTINGS, self._build_settings),
+            (self.SCREEN_DISPLAY, self._build_display),
         )
+        self.nav = lvgl_nav.Nav(8, builders, None)
 
     def init(self):
         lv.init_display()
