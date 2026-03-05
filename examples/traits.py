@@ -151,3 +151,46 @@ def test_trait_param() -> str:
     p_direct: str = get_name_direct(p)
     cat_direct: str = get_name_direct(cat)
     return p_name + "," + cat_name + "," + p_direct + "," + cat_direct
+
+
+# Identity comparison with trait-typed parameters
+def is_same_named(a: Named, b: Named) -> bool:
+    """Test identity comparison with trait-typed params."""
+    return a is b
+
+
+def is_not_same_named(a: Named, b: Named) -> bool:
+    """Test is not comparison with trait-typed params."""
+    return a is not b
+
+
+def is_none_named(obj: Named) -> bool:
+    """Test is None comparison with trait-typed param."""
+    return obj is None
+
+
+def is_not_none_named(obj: Named) -> bool:
+    """Test is not None comparison with trait-typed param."""
+    return obj is not None
+
+
+def test_trait_identity() -> str:
+    """Test is/is not with trait-typed parameters."""
+    p1 = Person(1, "Alice", 30)
+    p2 = Person(2, "Bob", 25)
+    
+    # Same object
+    same: bool = is_same_named(p1, p1)
+    # Different objects
+    diff: bool = is_same_named(p1, p2)
+    # is not
+    not_same: bool = is_not_same_named(p1, p2)
+    # is not None
+    not_none: bool = is_not_none_named(p1)
+    
+    r1: str = "T" if same else "F"
+    r2: str = "T" if diff else "F"
+    r3: str = "T" if not_same else "F"
+    r4: str = "T" if not_none else "F"
+    
+    return r1 + "," + r2 + "," + r3 + "," + r4

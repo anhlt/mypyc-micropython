@@ -731,6 +731,15 @@ t("get_name_direct(Pet)", traits.get_name_direct(cat), "Whiskers")
 # Test trait param function
 t("test_trait_param", traits.test_trait_param(), "Alice,Whiskers,Alice,Whiskers")
 
+# Test is/is not with trait-typed parameters
+p2 = traits.Person(3, "Bob", 25)
+t("is_same_named(p,p)", traits.is_same_named(p, p), "True")
+t("is_same_named(p,p2)", traits.is_same_named(p, p2), "False")
+t("is_not_same_named(p,p2)", traits.is_not_same_named(p, p2), "True")
+t("is_not_same_named(p,p)", traits.is_not_same_named(p, p), "False")
+t("is_not_none_named(p)", traits.is_not_none_named(p), "True")
+t("test_trait_identity", traits.test_trait_param(), "Alice,Whiskers,Alice,Whiskers")
+
 # Note: Methods using f-strings with self.attr (describe, greet, to_string)
 # are skipped due to pre-existing f-string compilation issue (not trait-related)
 
