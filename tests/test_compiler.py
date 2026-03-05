@@ -1284,10 +1284,9 @@ def get_value(d: dict, key: str):
     return d.get(key)
 """
         result = compile_source(source, "test", type_check=False)
-        # dict.get(key) without default now properly returns None if key not found
-        # by calling the method with mp_const_none as default
-        assert "mp_call_function_n_kw" in result
-        assert "MP_QSTR_get" in result
+        # dict.get(key) uses native mp_map_lookup for performance
+        assert "mp_map_lookup" in result
+        assert "MP_MAP_LOOKUP" in result
         assert "mp_const_none" in result
 
     def test_dict_get_with_default(self):
@@ -1296,9 +1295,9 @@ def get_value(d: dict, key: str, default_val: int):
     return d.get(key, default_val)
 """
         result = compile_source(source, "test", type_check=False)
-        assert "mp_load_attr" in result
-        assert "MP_QSTR_get" in result
-        assert "mp_call_function_n_kw" in result
+        # dict.get(key, default) uses native mp_map_lookup for performance
+        assert "mp_map_lookup" in result
+        assert "MP_MAP_LOOKUP" in result
 
     def test_dict_keys(self):
         source = """
@@ -1573,9 +1572,9 @@ def get_or_zero(d: dict, key: str) -> int:
 """
         result = compile_source(source, "test", type_check=False)
         assert "mp_obj_t d" in result
-        # dict.get(key) properly uses method call with None default
-        assert "mp_call_function_n_kw" in result
-        assert "MP_QSTR_get" in result
+        # dict.get(key) uses native mp_map_lookup for performance
+        assert "mp_map_lookup" in result
+        assert "MP_MAP_LOOKUP" in result
 
     def test_dict_len_in_condition(self):
         source = """
@@ -1631,9 +1630,8 @@ def get_by_int(d: dict, key: int):
     return d.get(key)
 """
         result = compile_source(source, "test", type_check=False)
-        # dict.get(key) with int key properly uses method call with None default
-        assert "mp_call_function_n_kw" in result
-        assert "MP_QSTR_get" in result
+        # dict.get(key) with int key uses native mp_map_lookup
+        assert "mp_map_lookup" in result
         assert "mp_obj_new_int(key)" in result
 
     def test_dict_get_with_default_int(self):
@@ -1642,7 +1640,8 @@ def get_or_default(d: dict, key: str) -> int:
     return d.get(key, 0)
 """
         result = compile_source(source, "test", type_check=False)
-        assert "MP_QSTR_get" in result
+        # dict.get(key, default) uses native mp_map_lookup
+        assert "mp_map_lookup" in result
         assert "mp_obj_new_int(0)" in result
 
     def test_dict_get_with_default_string(self):
@@ -1651,7 +1650,8 @@ def get_or_unknown(d: dict, key: str):
     return d.get(key, "unknown")
 """
         result = compile_source(source, "test", type_check=False)
-        assert "MP_QSTR_get" in result
+        # dict.get(key, default) uses native mp_map_lookup
+        assert "mp_map_lookup" in result
         assert 'mp_obj_new_str("unknown"' in result
 
 
@@ -2173,6 +2173,29 @@ class Calculator:
         assert "test_Calculator_add_mp" in result
         # Should have arg0_obj, arg1_obj
         assert "arg0_obj" in result or "args[" in result
+
+    def test_class_init_with_default_args(self):
+        """Test class __init__ with default arguments."""
+        source = '''
+class App:
+    model: int
+    modulo: int
+    capacity: int
+
+    def __init__(self, model0: int, modulo: int = 8, capacity: int = 32) -> None:
+        self.model = model0 % modulo
+        self.modulo = modulo
+        self.capacity = capacity
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Check mp_arg_check_num allows 1-3 args (model0 required, modulo/capacity optional)
+        assert "mp_arg_check_num(n_args, n_kw, 1, 3, false)" in result
+        # Check default args are handled in make_new
+        assert "(n_args > 1) ? args[1]" in result or "init_args[2] = (n_args > 1)" in result
+        assert "(n_args > 2) ? args[2]" in result or "init_args[3] = (n_args > 2)" in result
+        # Check __init__ wrapper uses VAR_BETWEEN with min/max
+        assert "MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN" in result
+        assert "test_App___init___obj, 2, 4" in result  # 2 min (self + model0), 4 max (self + 3 params)
 
 
 class TestStaticMethod:

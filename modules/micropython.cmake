@@ -1,4 +1,5 @@
 # Auto-generated - include all compiled modules
+include(${CMAKE_CURRENT_LIST_DIR}/usermod_lvgl/micropython.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/usermod_algorithms/micropython.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/usermod_bitwise/micropython.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/usermod_builtins_demo/micropython.cmake)
@@ -34,4 +35,3 @@ include(${CMAKE_CURRENT_LIST_DIR}/usermod_string_operations/micropython.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/usermod_super_calls/micropython.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/usermod_tuple_operations/micropython.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/usermod_sensor_lib/micropython.cmake)
-include(${CMAKE_CURRENT_LIST_DIR}/usermod_lvgl/micropython.cmake)

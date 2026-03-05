@@ -212,6 +212,17 @@ class MethodIR:
     is_final: bool = False  # @final decorator — cannot be overridden
     docstring: str | None = None
     max_temp: int = 0
+    defaults: dict[int, DefaultArg] = field(default_factory=dict)  # param_index -> default
+
+    @property
+    def num_required_args(self) -> int:
+        """Number of required (non-default) arguments."""
+        return len(self.params) - len(self.defaults)
+
+    @property
+    def has_defaults(self) -> bool:
+        """True if method has any default arguments."""
+        return len(self.defaults) > 0
 
     def get_native_signature(self, class_c_name: str) -> str:
         """Get the native C function signature (typed parameters)."""

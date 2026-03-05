@@ -325,7 +325,8 @@ class ClassEmitter:
 
         if init_method:
             num_params = len(init_method.params)
-            lines.append(f"    mp_arg_check_num(n_args, n_kw, {num_params}, {num_params}, false);")
+            min_params = init_method.num_required_args
+            lines.append(f"    mp_arg_check_num(n_args, n_kw, {min_params}, {num_params}, false);")
         else:
             lines.append("    mp_arg_check_num(n_args, n_kw, 0, 0, false);")
 
@@ -353,18 +354,28 @@ class ClassEmitter:
                 lines.append(f"    self->{fld.name} = false;")
 
         if init_method:
-            total_args = len(init_method.params) + 1
+            num_params = len(init_method.params)
+            total_args = num_params + 1  # +1 for self
+            has_defaults = init_method.has_defaults
             lines.append("")
-            if total_args > 3:
+            if total_args > 3 or has_defaults:
                 # VAR_BETWEEN calling convention: (size_t n_args, const mp_obj_t *args)
                 lines.append(f"    mp_obj_t init_args[{total_args}];")
                 lines.append("    init_args[0] = MP_OBJ_FROM_PTR(self);")
-                for i in range(len(init_method.params)):
-                    lines.append(f"    init_args[{i + 1}] = args[{i}];")
+                for i in range(num_params):
+                    default_arg = init_method.defaults.get(i)
+                    if default_arg is not None and default_arg.c_expr is not None:
+                        # Parameter has a default value
+                        lines.append(
+                            f"    init_args[{i + 1}] = (n_args > {i}) ? args[{i}] : {default_arg.c_expr};"
+                        )
+                    else:
+                        # Required parameter
+                        lines.append(f"    init_args[{i + 1}] = args[{i}];")
                 lines.append(f"    {self.c_name}___init___mp({total_args}, init_args);")
             else:
                 args_list = ["MP_OBJ_FROM_PTR(self)"]
-                for i in range(len(init_method.params)):
+                for i in range(num_params):
                     args_list.append(f"args[{i}]")
                 args_str = ", ".join(args_list)
                 lines.append(f"    {self.c_name}___init___mp({args_str});")

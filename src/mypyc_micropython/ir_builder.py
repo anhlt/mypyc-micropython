@@ -2116,6 +2116,9 @@ class IRBuilder:
         if is_private or is_final:
             is_virtual = False
 
+        # Parse default arguments for methods
+        # For methods, defaults are aligned to method params (excluding self)
+        defaults = self._parse_defaults(node.args, len(params))
         method_ir = MethodIR(
             name=method_name,
             c_name=c_method_name,
@@ -2130,6 +2133,7 @@ class IRBuilder:
             is_private=is_private,
             is_final=is_final,
             docstring=ast.get_docstring(node),
+            defaults=defaults,
         )
 
         if is_property and is_property_setter and property_name is not None:

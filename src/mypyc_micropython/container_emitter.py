@@ -364,22 +364,20 @@ class ContainerEmitter:
     def _emit_get(self, instr: MethodCallIR, receiver: str) -> list[str]:
         result_name = instr.result.name if instr.result else "__get_discard"
         if len(instr.args) >= 2:
+            # dict.get(key, default) - use native mp_map_lookup for performance
             key_c = self._box_value_ir(instr.args[0])
             default_c = self._box_value_ir(instr.args[1])
             return [
-                f"    mp_obj_t {result_name} = "
-                f"mp_call_function_n_kw(mp_load_attr({receiver}, MP_QSTR_get), "
-                f"2, 0, (mp_obj_t[]){{{key_c}, {default_c}}});"
+                f"    mp_map_elem_t *__elem_{result_name} = mp_map_lookup(&((mp_obj_dict_t *)MP_OBJ_TO_PTR({receiver}))->map, {key_c}, MP_MAP_LOOKUP);",
+                f"    mp_obj_t {result_name} = __elem_{result_name} ? __elem_{result_name}->value : {default_c};"
             ]
         elif len(instr.args) == 1:
             # dict.get(key) with no default returns None if key not found
-            # Use method call with mp_const_none as default instead of mp_obj_dict_get
-            # which raises KeyError
+            # Use native mp_map_lookup for performance instead of method call
             key_c = self._box_value_ir(instr.args[0])
             return [
-                f"    mp_obj_t {result_name} = "
-                f"mp_call_function_n_kw(mp_load_attr({receiver}, MP_QSTR_get), "
-                f"2, 0, (mp_obj_t[]){{{key_c}, mp_const_none}});"
+                f"    mp_map_elem_t *__elem_{result_name} = mp_map_lookup(&((mp_obj_dict_t *)MP_OBJ_TO_PTR({receiver}))->map, {key_c}, MP_MAP_LOOKUP);",
+                f"    mp_obj_t {result_name} = __elem_{result_name} ? __elem_{result_name}->value : mp_const_none;"
             ]
         return ["    /* get() requires at least 1 arg */"]
 

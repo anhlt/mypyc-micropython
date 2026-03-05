@@ -164,8 +164,12 @@ compile-all:
 		fi; \
 	done
 	@echo ""
+	@echo "Compiling LVGL C bindings..."
+	@$(MAKE) compile-lvgl-only
+	@echo ""
 	@echo "Generating $(MODULES_DIR)/micropython.cmake..."
 	@echo "# Auto-generated - include all compiled modules" > $(MODULES_DIR)/micropython.cmake
+	@echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_lvgl/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake
 	@for f in examples/*.py; do \
 		MOD_NAME=$$(basename "$$f" .py); \
 		case "$$MOD_NAME" in \
@@ -180,6 +184,15 @@ compile-all:
 		fi; \
 	done
 	@echo "Done! Ready to build."
+
+compile-lvgl-only:
+	@mkdir -p $(LVGL_MODULE_DIR)
+	@mpy-compile-c $(LVGL_STUB_DIR)/lvgl.pyi -o $(LVGL_MODULE_DIR) --public
+	@cp $(LVGL_STUB_DIR)/st7789_driver.c $(LVGL_MODULE_DIR)/
+	@cp $(LVGL_STUB_DIR)/st7789_driver.h $(LVGL_MODULE_DIR)/
+	@cp $(LVGL_STUB_DIR)/lv_conf.h $(LVGL_MODULE_DIR)/
+	@cp $(LVGL_STUB_DIR)/micropython.cmake $(LVGL_MODULE_DIR)/
+	@python3 scripts/patch_lvgl_c.py $(LVGL_MODULE_DIR)/lvgl.c
 
 compile-lvgl:
 	@echo "Compiling LVGL bindings from .pyi stub..."

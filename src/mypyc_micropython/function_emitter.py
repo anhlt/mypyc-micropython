@@ -1576,16 +1576,27 @@ class MethodEmitter(BaseEmitter):
         method_ir = self.method_ir
         class_ir = self.class_ir
 
-        num_args = len(method_ir.params) + (
-            0 if (method_ir.is_static or method_ir.is_classmethod) else 1
-        )
+        # For methods: num_args includes self (for instance methods)
+        # For static/classmethod: num_args is just params
+        self_count = 0 if (method_ir.is_static or method_ir.is_classmethod) else 1
+        num_args = len(method_ir.params) + self_count
+        min_args = method_ir.num_required_args + self_count
+        has_defaults = method_ir.has_defaults
         obj_name = (
             f"{method_ir.c_name}_fun_obj"
             if (method_ir.is_static or method_ir.is_classmethod)
             else f"{method_ir.c_name}_obj"
         )
 
-        if num_args == 0:
+        # Choose signature and obj_def based on args
+        if has_defaults:
+            # Methods with defaults use VAR_BETWEEN
+            sig = f"static mp_obj_t {method_ir.c_name}_mp(size_t n_args, const mp_obj_t *args)"
+            obj_def = (
+                f"MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN({obj_name}, {min_args}, {num_args}, "
+                f"{method_ir.c_name}_mp);"
+            )
+        elif num_args == 0:
             sig = f"static mp_obj_t {method_ir.c_name}_mp(void)"
             obj_def = f"MP_DEFINE_CONST_FUN_OBJ_0({obj_name}, {method_ir.c_name}_mp);"
         elif num_args == 1:
@@ -1619,27 +1630,55 @@ class MethodEmitter(BaseEmitter):
 
         lines = [sig + " {"]
 
+        # Unbox self for instance methods
         if not method_ir.is_static and not method_ir.is_classmethod:
-            if num_args <= 3:
-                lines.append(f"    {class_ir.c_name}_obj_t *self = MP_OBJ_TO_PTR(self_in);")
-            else:
+            if has_defaults or num_args > 3:
                 lines.append(f"    {class_ir.c_name}_obj_t *self = MP_OBJ_TO_PTR(args[0]);")
-
-        for i, (param_name, param_type) in enumerate(method_ir.params):
-            if num_args <= 3:
-                src = f"arg{i}_obj"
             else:
+                lines.append(f"    {class_ir.c_name}_obj_t *self = MP_OBJ_TO_PTR(self_in);")
+
+        # Unbox method parameters
+        for i, (param_name, param_type) in enumerate(method_ir.params):
+            if has_defaults or num_args > 3:
                 src_index = i if (method_ir.is_static or method_ir.is_classmethod) else i + 1
                 src = f"args[{src_index}]"
-
-            if param_type == CType.MP_INT_T:
-                lines.append(f"    mp_int_t {param_name} = mp_obj_get_int({src});")
-            elif param_type == CType.MP_FLOAT_T:
-                lines.append(f"    mp_float_t {param_name} = mp_obj_get_float({src});")
-            elif param_type == CType.BOOL:
-                lines.append(f"    bool {param_name} = mp_obj_is_true({src});")
             else:
-                lines.append(f"    mp_obj_t {param_name} = {src};")
+                src = f"arg{i}_obj"
+
+            default_arg = method_ir.defaults.get(i) if has_defaults else None
+
+            if default_arg is not None and default_arg.c_expr is not None:
+                # Parameter has default value - check n_args
+                arg_index = i if (method_ir.is_static or method_ir.is_classmethod) else i + 1
+                if param_type == CType.MP_INT_T:
+                    default_val = default_arg.value if isinstance(default_arg.value, int) else 0
+                    lines.append(
+                        f"    mp_int_t {param_name} = (n_args > {arg_index}) ? mp_obj_get_int({src}) : {default_val};"
+                    )
+                elif param_type == CType.MP_FLOAT_T:
+                    default_val = default_arg.value if isinstance(default_arg.value, (int, float)) else 0.0
+                    lines.append(
+                        f"    mp_float_t {param_name} = (n_args > {arg_index}) ? mp_obj_get_float({src}) : {default_val};"
+                    )
+                elif param_type == CType.BOOL:
+                    default_val = "true" if default_arg.value else "false"
+                    lines.append(
+                        f"    bool {param_name} = (n_args > {arg_index}) ? mp_obj_is_true({src}) : {default_val};"
+                    )
+                else:
+                    lines.append(
+                        f"    mp_obj_t {param_name} = (n_args > {arg_index}) ? {src} : {default_arg.c_expr};"
+                    )
+            else:
+                # Required parameter - no default
+                if param_type == CType.MP_INT_T:
+                    lines.append(f"    mp_int_t {param_name} = mp_obj_get_int({src});")
+                elif param_type == CType.MP_FLOAT_T:
+                    lines.append(f"    mp_float_t {param_name} = mp_obj_get_float({src});")
+                elif param_type == CType.BOOL:
+                    lines.append(f"    bool {param_name} = mp_obj_is_true({src});")
+                else:
+                    lines.append(f"    mp_obj_t {param_name} = {src};")
 
         if (
             method_ir.is_static
