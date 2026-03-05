@@ -758,57 +758,6 @@ static const mp_rom_map_elem_t traits_Person_locals_dict_table[] = {
 };
 ```
 
-## Device Testing
-
-The trait system was verified on an ESP32-C6 device:
-
-```
-@S:traits
-  OK: Person id
-  OK: Person name      # Trait method works!
-  OK: Person age
-  OK: Pet id
-  OK: Pet name         # Same trait, different class
-  OK: Document title
-  OK: Document body
-@D:375|375|0
-ALL 375 TESTS PASSED
-```
-
-The C runtime test verifies the struct layout is correct:
-
-```c
-def test_c_trait_with_multiple_inheritance(compile_and_run):
-    source = '''
-from mypy_extensions import trait
-
-@trait
-class Named:
-    name: str
-    def get_name(self) -> str:
-        return self.name
-
-class Entity:
-    id: int
-    def __init__(self, id: int) -> None:
-        self.id = id
-
-class Person(Entity, Named):
-    age: int
-    def __init__(self, id: int, name: str, age: int) -> None:
-        self.id = id
-        self.name = name
-        self.age = age
-'''
-    # Test that get_name reads from correct offset
-    test_main_c = '''
-    mp_obj_t name = test_Person_get_name_from_test_Named_native(p);
-    printf("name=%s\\n", mp_obj_str_get_str(name));
-    '''
-    
-    stdout = compile_and_run(source, "test", test_main_c)
-    assert "name=Alice" in stdout  # Correct field access!
-```
 
 ## Closing
 

@@ -512,6 +512,12 @@ Write for Python developers unfamiliar with:
 
 Explain every C concept before using it.
 
+### Content Rules
+
+- **Do NOT include test results** (unit tests, device tests, or benchmark output) in blog posts
+- Blog posts are educational documentation, not test reports
+- Focus on explaining concepts, not proving they work
+
 ## Version Matrix
 
 | Component | Version |
