@@ -266,26 +266,6 @@ flash: check-env
 		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) PORT=$(PORT) deploy'
 	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then echo "Restoring original partition table..."; cp $(ROOT_DIR)/configs/partitions-default.csv $(MP_PORT_DIR)/partitions-4MiB.csv; fi
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 erase: check-env
 	@echo "Erasing flash..."
 	@bash -c 'source $(ESP_IDF_DIR)/export.sh && \
