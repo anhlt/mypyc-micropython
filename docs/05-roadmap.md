@@ -544,6 +544,26 @@ Tasks:
 | ~~No `@property`~~ | ~~No getter/setter decorator support~~ | ✅ Resolved — full @property support |
 | ~~No `@staticmethod`/`@classmethod`~~ | ~~Only instance methods supported~~ | ✅ Resolved — both decorators supported |
 
+### 3.8 isinstance() Support (TODO)
+
+Type checking for concrete classes and traits.
+
+```python
+# Concrete class check
+def is_person(obj: object) -> bool:
+    return isinstance(obj, Person)
+
+# Trait check (polymorphism)
+def is_named(obj: object) -> bool:
+    return isinstance(obj, Named)  # Named is a trait
+```
+
+Tasks:
+- [ ] Detect `isinstance(obj, Type)` calls in AST
+- [ ] Generate `mp_obj_is_type(obj, &type)` for concrete classes
+- [ ] Implement trait registry for `isinstance(obj, Trait)` checks
+- [ ] Handle `isinstance(obj, (A, B))` tuple form (lower priority)
+
 ---
 
 ## Phase 4: Exception Handling

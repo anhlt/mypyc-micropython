@@ -125,7 +125,7 @@ This document defines what Python features mypyc-micropython will support, parti
 | `zip()` | ✅ Implemented | Via `mp_type_zip` |
 | `map()`/`filter()` | 📋 Planned | Phase 5 |
 | `sorted()` | ✅ Implemented | Via `mp_builtin_sorted_obj` |
-| `isinstance()` | 📋 Planned | Phase 3 |
+| `isinstance()` | 📋 Planned | Concrete classes + traits (see below) |
 | `type()` | 📋 Planned | Phase 3 |
 | `hasattr()`/`getattr()`/`setattr()` | 📋 Planned | Phase 3 |
 | `list()` | ✅ Implemented | Empty list constructor |
@@ -202,7 +202,38 @@ def gen_with_try():
     finally:
         pass
 ```
+```
 
+### isinstance() ⚠️ (Planned)
+
+Type checking builtin - planned with different behavior for concrete classes vs traits.
+
+**Planned Support:**
+```python
+# Concrete class check - simple type comparison
+isinstance(obj, Person)  # ✅ Will use mp_obj_is_type()
+
+# Trait check - requires runtime trait registry
+isinstance(obj, Named)   # ⚠️ More complex implementation needed
+```
+
+**Implementation:**
+
+| Check Type | C Implementation | Notes |
+|------------|------------------|-------|
+| Concrete class | `mp_obj_is_type(obj, &type)` | Fast pointer comparison |
+| Trait | Runtime trait lookup | Needs trait registry in type object |
+
+**NOT Planned:**
+```python
+# Tuple of types
+isinstance(obj, (A, B, C))  # ❌ Multiple types not supported initially
+
+# Abstract base classes
+isinstance(obj, ABC)  # ❌ No ABC support
+```
+
+### Decorators ⚠️
 ### Decorators ⚠️
 
 **Supported:**
