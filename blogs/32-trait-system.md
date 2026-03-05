@@ -478,6 +478,207 @@ def emit_type_definition(self) -> list[str]:
         slots.append(f"    make_new, {self.c_name}_make_new")
 ```
 
+### Step 7: Trait-Typed Parameters and Dynamic Attribute Lookup
+
+There's another layout challenge: what happens when a function parameter is typed as a trait?
+
+```python
+def greet_named(n: Named) -> str:
+    return "Hello, " + n.name  # n could be Person, Pet, or any Named implementer
+```
+
+The parameter `n` could be ANY class that implements `Named`. At compile time, we don't know which specific struct layout `n` will have. We can't generate `self->name` because the offset differs for each class:
+
+```
+TRAIT-TYPED PARAMETER PROBLEM
+
+Function: greet_named(n: Named)
+
+n could be:                               Field offset for 'name':
+
+  Person_obj_t                            offset 24
+  Pet_obj_t                               offset 24 (same, by coincidence)
+  Employee_obj_t                          offset 32 (different base class)
+  Document_obj_t                          offset 16 (no base class)
+
+We CANNOT generate: ((Named_obj_t*)n)->name
+Because Named_obj_t layout doesn't match any of these!
+```
+
+The solution is **dynamic attribute lookup** using MicroPython's runtime: `mp_load_attr(obj, MP_QSTR_name)`.
+
+#### How mp_load_attr Works Internally
+
+When we call `mp_load_attr(obj, MP_QSTR_name)`, MicroPython performs these steps:
+
+```
+mp_load_attr(obj, MP_QSTR_name) EXECUTION FLOW
+
+Step 1: Get object's actual type
++----------------------------------+
+| const mp_obj_type_t *type =      |
+|     mp_obj_get_type(obj);        |
+|                                  |
+| If obj is Person: type = &traits_Person_type
+| If obj is Pet:    type = &traits_Pet_type
++----------------------------------+
+              |
+              v
+Step 2: Look up the attr handler
++----------------------------------+
+| mp_attr_fun_t attr_fun =         |
+|     type->ext[0].attr;           |
+|                                  |
+| Points to OUR generated handler: |
+|   traits_Person_attr  or         |
+|   traits_Pet_attr                |
++----------------------------------+
+              |
+              v
+Step 3: Call the attr handler
++----------------------------------+
+| mp_obj_t dest[2] = {MP_OBJ_NULL};|
+| attr_fun(obj, MP_QSTR_name, dest);|
+|                                  |
+| dest[0] now contains the value   |
++----------------------------------+
+              |
+              v
+         Return dest[0]
+```
+
+#### Generated attr Handler Per Class
+
+Each class has its own `attr` handler that knows its exact struct layout:
+
+```c
+// Person's attr handler - knows name is at offset 24
+static void traits_Person_attr(mp_obj_t self_in, qstr attr, mp_obj_t *dest) {
+    traits_Person_obj_t *self = MP_OBJ_TO_PTR(self_in);
+    if (dest[0] == MP_OBJ_NULL) {  // Load attribute
+        if (attr == MP_QSTR_id) { dest[0] = mp_obj_new_int(self->id); return; }
+        if (attr == MP_QSTR_name) { dest[0] = self->name; return; }  // offset 24
+        if (attr == MP_QSTR_age) { dest[0] = mp_obj_new_int(self->age); return; }
+    } else if (dest[1] != MP_OBJ_NULL) {  // Store attribute
+        if (attr == MP_QSTR_name) { self->name = dest[1]; dest[0] = MP_OBJ_NULL; return; }
+        // ... other fields
+    }
+    // Fall through to locals_dict for methods
+}
+
+// Employee's attr handler - knows name is at offset 32
+static void traits_Employee_attr(mp_obj_t self_in, qstr attr, mp_obj_t *dest) {
+    traits_Employee_obj_t *self = MP_OBJ_TO_PTR(self_in);
+    if (dest[0] == MP_OBJ_NULL) {  // Load attribute
+        if (attr == MP_QSTR_id) { dest[0] = mp_obj_new_int(self->id); return; }
+        if (attr == MP_QSTR_dept) { dest[0] = self->dept; return; }
+        if (attr == MP_QSTR_name) { dest[0] = self->name; return; }  // offset 32!
+        if (attr == MP_QSTR_salary) { dest[0] = mp_obj_new_int(self->salary); return; }
+    }
+    // ...
+}
+```
+
+#### The Magic: Polymorphism via Dynamic Dispatch
+
+```
+DYNAMIC DISPATCH FOR TRAIT PARAMETERS
+
+Python code:                         Generated C code:
+
+def greet_named(n: Named) -> str:    static mp_obj_t greet_named(mp_obj_t n) {
+    return "Hello, " + n.name           mp_obj_t name = mp_load_attr(n, MP_QSTR_name);
+                                         // ... string concat ...
+                                     }
+
+At runtime with Person:              At runtime with Employee:
+
+mp_load_attr(person, QSTR_name)      mp_load_attr(employee, QSTR_name)
+        |                                    |
+        v                                    v
+mp_obj_get_type(person)              mp_obj_get_type(employee)
+= &traits_Person_type                = &traits_Employee_type
+        |                                    |
+        v                                    v
+type->ext[0].attr                    type->ext[0].attr
+= traits_Person_attr                 = traits_Employee_attr
+        |                                    |
+        v                                    v
+self->name at offset 24              self->name at offset 32
+        |                                    |
+        v                                    v
+    "Alice"                              "Bob"
+```
+
+The SAME generated code (`mp_load_attr(n, MP_QSTR_name)`) works for ANY object that has a `name` attribute, regardless of where that field sits in memory. Each class's attr handler knows its own layout.
+
+#### IR Tracking: is_trait_type Flag
+
+To detect when to use `mp_load_attr` vs direct field access, we track trait-typed parameters in the IR:
+
+```python
+@dataclass
+class ParamAttrIR(ExprIR):
+    param_name: str
+    attr_name: str
+    is_trait_type: bool = False  # True if param is typed as a trait
+```
+
+During IR building, we check if the parameter's type annotation refers to a trait:
+
+```python
+def _build_param_attr(self, param_name: str, attr_name: str) -> ParamAttrIR:
+    is_trait = False
+    if param_name in self.param_types:
+        type_name = self.param_types[param_name]
+        if type_name in self.classes and self.classes[type_name].is_trait:
+            is_trait = True
+    return ParamAttrIR(param_name=param_name, attr_name=attr_name, is_trait_type=is_trait)
+```
+
+#### Code Generation for Trait-Typed Parameters
+
+The emitter checks `is_trait_type` and generates appropriate code:
+
+```python
+def _emit_param_attr(self, ir: ParamAttrIR) -> str:
+    if ir.is_trait_type:
+        # Dynamic lookup - param could be any implementing class
+        return f"mp_load_attr({ir.param_name}, MP_QSTR_{ir.attr_name})"
+    else:
+        # Direct field access - we know the exact struct layout
+        return f"{ir.param_name}->{ir.attr_name}"
+```
+
+#### Two Approaches to the Same Problem
+
+We now have two complementary solutions for trait struct layout incompatibility:
+
+```
+TRAIT LAYOUT SOLUTIONS
+
++----------------------------+----------------------------+
+| SELF ACCESS (in methods)   | PARAM ACCESS (trait-typed) |
++----------------------------+----------------------------+
+| Problem: Trait method body | Problem: Function param is |
+| uses self.field, but self  | typed as trait, could be   |
+| is actually implementing   | any implementing class     |
+| class with different layout|                            |
++----------------------------+----------------------------+
+| Solution: Generate wrapper | Solution: Use mp_load_attr |
+| function per implementing  | for dynamic lookup at      |
+| class with correct struct  | runtime                    |
+| type                       |                            |
++----------------------------+----------------------------+
+| When: Compile-time known   | When: Runtime polymorphism |
+| (class inherits trait)     | (any Named implementer)    |
++----------------------------+----------------------------+
+| Cost: Code size (one       | Cost: Runtime overhead     |
+| wrapper per class)         | (attr lookup vs direct)    |
++----------------------------+----------------------------+
+```
+
+Both solutions handle the fundamental problem that traits don't have a fixed struct layout.
 ### Generated C Code
 
 For our `Person` class with `Named` trait, we generate:
