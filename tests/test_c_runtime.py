@@ -2454,3 +2454,83 @@ int main(void) {
     assert lines[2] == "1"  # 3 < 5
     assert lines[3] == "0"  # NOT 5 < 3
     assert lines[4] == "1"  # 5 > 3
+
+
+def test_c_trait_with_multiple_inheritance(compile_and_run):
+    """Test that trait methods work correctly with proper struct layout."""
+    source = '''
+from mypy_extensions import trait
+
+@trait
+class Named:
+    name: str
+
+    def get_name(self) -> str:
+        return self.name
+
+@trait
+class Describable:
+    def describe(self) -> str:
+        return "An object"
+
+class Entity:
+    id: int
+
+    def __init__(self, id: int) -> None:
+        self.id = id
+
+    def get_id(self) -> int:
+        return self.id
+
+class Person(Entity, Named, Describable):
+    age: int
+
+    def __init__(self, id: int, name: str, age: int) -> None:
+        self.id = id
+        self.name = name
+        self.age = age
+
+    def describe(self) -> str:
+        return "Person"
+
+    def greet(self) -> str:
+        return "Hello"
+'''
+    test_main_c = '''
+#include <stdio.h>
+
+int main(void) {
+    // Create Person(1, "Alice", 30)
+    mp_obj_t args[] = {
+        mp_obj_new_int(1),
+        mp_obj_new_str("Alice", 5),
+        mp_obj_new_int(30)
+    };
+    mp_obj_t person = test_Person_make_new(&test_Person_type, 3, 0, args);
+    test_Person_obj_t *p = MP_OBJ_TO_PTR(person);
+
+    // Test get_id (from Entity)
+    mp_int_t id = test_Entity_get_id_native((test_Entity_obj_t *)&p->super);
+    printf("id=%ld\\n", (long)id);
+
+    // Test get_name (from Named trait - via wrapper)
+    mp_obj_t name = test_Person_get_name_from_test_Named_native(p);
+    printf("name=%s\\n", mp_obj_str_get_str(name));
+
+    // Test describe (overridden in Person)
+    mp_obj_t desc = test_Person_describe_native(p);
+    printf("desc=%s\\n", mp_obj_str_get_str(desc));
+
+    // Test age field
+    printf("age=%ld\\n", (long)p->age);
+
+    return 0;
+}
+'''
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().split("\n")
+    assert lines[0] == "id=1"
+    assert lines[1] == "name=Alice"
+    assert lines[2] == "desc=Person"
+    assert lines[3] == "age=30"

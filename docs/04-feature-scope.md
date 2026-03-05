@@ -88,6 +88,7 @@ This document defines what Python features mypyc-micropython will support, parti
 | `@staticmethod` | ✅ Implemented | Via `mp_rom_obj_static_class_method_t` wrapper |
 | `@classmethod` | ✅ Implemented | Via `mp_rom_obj_static_class_method_t` wrapper |
 | Single inheritance | ✅ Implemented | With vtable-based virtual dispatch |
+| Traits (`@trait`) | ✅ Implemented | Multiple inheritance via traits (one concrete base + N traits) |
 | `__str__`/`__repr__` | ✅ Implemented | Via MicroPython print slot |
 | `__eq__`/`__len__`/`__getitem__`/`__setitem__` | ✅ Implemented | Special methods |
 | `@dataclass` | ✅ Implemented | Auto-generated `__init__` and `__eq__` |
@@ -124,7 +125,7 @@ This document defines what Python features mypyc-micropython will support, parti
 | `zip()` | ✅ Implemented | Via `mp_type_zip` |
 | `map()`/`filter()` | 📋 Planned | Phase 5 |
 | `sorted()` | ✅ Implemented | Via `mp_builtin_sorted_obj` |
-| `isinstance()` | 📋 Planned | Phase 3 |
+| `isinstance()` | 📋 Planned | Concrete classes + traits (see below) |
 | `type()` | 📋 Planned | Phase 3 |
 | `hasattr()`/`getattr()`/`setattr()` | 📋 Planned | Phase 3 |
 | `list()` | ✅ Implemented | Empty list constructor |
@@ -201,7 +202,38 @@ def gen_with_try():
     finally:
         pass
 ```
+```
 
+### isinstance() ⚠️ (Planned)
+
+Type checking builtin - planned with different behavior for concrete classes vs traits.
+
+**Planned Support:**
+```python
+# Concrete class check - simple type comparison
+isinstance(obj, Person)  # ✅ Will use mp_obj_is_type()
+
+# Trait check - requires runtime trait registry
+isinstance(obj, Named)   # ⚠️ More complex implementation needed
+```
+
+**Implementation:**
+
+| Check Type | C Implementation | Notes |
+|------------|------------------|-------|
+| Concrete class | `mp_obj_is_type(obj, &type)` | Fast pointer comparison |
+| Trait | Runtime trait lookup | Needs trait registry in type object |
+
+**NOT Planned:**
+```python
+# Tuple of types
+isinstance(obj, (A, B, C))  # ❌ Multiple types not supported initially
+
+# Abstract base classes
+isinstance(obj, ABC)  # ❌ No ABC support
+```
+
+### Decorators ⚠️
 ### Decorators ⚠️
 
 **Supported:**
@@ -454,16 +486,53 @@ class MyClass(metaclass=Meta):
 # Reason: Too dynamic for static compilation. Use regular classes.
 ```
 
-### Multiple Inheritance (for native classes) ❌
+### Multiple Inheritance (Traits) ✅
 
+**Supported** using mypyc-style trait system:
 ```python
-# NOT SUPPORTED for compiled classes
-class Child(Parent1, Parent2):
+from mypy_extensions import trait
+
+@trait
+class Named:
+    name: str
+    def get_name(self) -> str:
+        return self.name
+
+@trait
+class Describable:
+    def describe(self) -> str:
+        return "object"
+
+class Entity:
+    id: int
+
+# ONE concrete base + multiple traits
+class Person(Entity, Named, Describable):  # ✅
+    age: int
+    def describe(self) -> str:  # Override trait method
+        return f"Person: {self.name}"
+
+# Function accepting trait-typed parameter (polymorphism)
+def greet(obj: Named) -> str:
+    return obj.get_name()  # Dynamic dispatch
+```
+
+**Key features:**
+- `@trait` decorator marks interface-like classes
+- Traits cannot be instantiated directly
+- ONE concrete base class + multiple traits allowed
+- Trait method wrappers handle struct layout differences
+- Trait-typed parameters use dynamic attribute lookup
+
+**NOT Supported:**
+```python
+# Multiple concrete base classes
+class Child(Parent1, Parent2):  # ❌ Only ONE concrete base allowed
     pass
 
-# Reason: Complex MRO and diamond problem handling.
-# Single inheritance only for compiled classes.
-# MicroPython built-in types can still be used as mixins.
+# Diamond inheritance with concrete classes
+class D(B, C):  # ❌ Where both B and C inherit from A
+    pass
 ```
 
 ### Dynamic Features ❌

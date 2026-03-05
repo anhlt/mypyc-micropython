@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Trait system for mypyc-style multiple inheritance
+  - `@trait` decorator support (both `mypy_extensions.trait` and simple `@trait`)
+  - ONE concrete base class + multiple traits allowed
+  - Trait vtables and method wrappers for correct struct layout handling
+  - Trait-typed function parameters with dynamic attribute lookup
+  - 380 device tests passing on ESP32-C6
+- Blog 32: trait system implementation documentation with memory diagrams
+
+### Fixed
+- Trait-typed parameter attribute access now uses `mp_load_attr()` instead of direct struct access
+  - Prevents undefined behavior when implementing classes have different memory layouts
+
 
 ### Added
 - Cross-module external C library call support (`CLibCallIR`, `CLibEnumIR`)

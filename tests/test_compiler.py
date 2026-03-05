@@ -5768,3 +5768,180 @@ class Number:
         assert result.count("MP_OBJ_TO_PTR(o))") >= 5  # one per comparison method
         # None of them should fall back to mp_const_none
         assert "mp_obj_get_int(mp_const_none)" not in result
+
+
+class TestTraitSystem:
+    """Tests for the trait system (mypyc-style multiple inheritance)."""
+
+    def test_trait_decorator_detected(self):
+        """Test that @trait decorator is recognized."""
+        source = '''
+from mypy_extensions import trait
+
+@trait
+class Named:
+    name: str
+    def get_name(self) -> str:
+        return self.name
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Trait should not have make_new slot
+        assert "make_new, test_Named_make_new" not in result
+        # But should still have type definition
+        assert "test_Named_type" in result
+
+    def test_trait_with_concrete_base(self):
+        """Test class inheriting concrete base + trait."""
+        source = '''
+from mypy_extensions import trait
+
+@trait
+class Named:
+    name: str
+    def get_name(self) -> str:
+        return self.name
+
+class Entity:
+    id: int
+    def __init__(self, id: int) -> None:
+        self.id = id
+
+class Person(Entity, Named):
+    age: int
+    def __init__(self, id: int, name: str, age: int) -> None:
+        self.id = id
+        self.name = name
+        self.age = age
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Person should have Entity as parent
+        assert "parent, &test_Entity_type" in result
+        # Person should have its own make_new
+        assert "test_Person_make_new" in result
+        # Named (trait) should NOT have make_new in type def
+        assert "make_new, test_Named_make_new" not in result
+
+    def test_multiple_traits(self):
+        """Test class inheriting multiple traits."""
+        source = '''
+from mypy_extensions import trait
+
+@trait
+class Named:
+    name: str
+
+@trait
+class Describable:
+    def describe(self) -> str:
+        return "object"
+
+class Entity:
+    id: int
+
+class Person(Entity, Named, Describable):
+    age: int
+    def __init__(self, id: int, name: str, age: int) -> None:
+        self.id = id
+        self.name = name
+        self.age = age
+    def describe(self) -> str:
+        return "person"
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Person should exist and have Entity as parent
+        assert "test_Person_type" in result
+        assert "parent, &test_Entity_type" in result
+        # Both traits should be defined
+        assert "test_Named_type" in result
+        assert "test_Describable_type" in result
+
+    def test_trait_only_inheritance(self):
+        """Test class inheriting only from trait (no concrete base)."""
+        source = '''
+from mypy_extensions import trait
+
+@trait
+class Printable:
+    def to_string(self) -> str:
+        return "printable"
+
+class Document(Printable):
+    title: str
+    def __init__(self, title: str) -> None:
+        self.title = title
+    def to_string(self) -> str:
+        return self.title
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Document should have make_new
+        assert "test_Document_make_new" in result
+        # Printable (trait) should not
+        assert "make_new, test_Printable_make_new" not in result
+
+    def test_simple_trait_decorator(self):
+        """Test simple @trait decorator (without mypy_extensions import)."""
+        source = '''
+def trait(cls):
+    return cls
+
+@trait
+class Named:
+    name: str
+    def get_name(self) -> str:
+        return self.name
+
+class Person(Named):
+    def __init__(self, name: str) -> None:
+        self.name = name
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Named should be detected as trait
+        assert "make_new, test_Named_make_new" not in result
+        # Person should have make_new
+        assert "test_Person_make_new" in result
+
+
+    def test_trait_typed_parameter_attribute_access(self):
+        """Test that attribute access on trait-typed parameters uses dynamic lookup."""
+        source = '''
+from mypy_extensions import trait
+
+@trait
+class Named:
+    name: str
+    def get_name(self) -> str:
+        return self.name
+
+class Person(Named):
+    age: int
+    def __init__(self, name: str, age: int) -> None:
+        self.name = name
+        self.age = age
+
+def get_name_from_trait(obj: Named) -> str:
+    return obj.name
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Trait-typed parameter should use mp_load_attr, not direct struct access
+        assert "mp_load_attr(obj, MP_QSTR_name)" in result
+        # Should NOT have direct struct access for trait param
+        assert "((test_Named_obj_t *)MP_OBJ_TO_PTR(obj))->name" not in result
+
+    def test_concrete_class_param_uses_direct_access(self):
+        """Test that non-trait class params still use direct struct access."""
+        source = '''
+class Point:
+    x: int
+    y: int
+    def __init__(self, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+
+def get_x(p: Point) -> int:
+    return p.x
+'''
+        result = compile_source(source, "test")
+        # Regular class should use direct struct access
+        assert "((test_Point_obj_t *)MP_OBJ_TO_PTR(p))->x" in result
+        # Should NOT use mp_load_attr for regular class
+        assert "mp_load_attr(p, MP_QSTR_x)" not in result

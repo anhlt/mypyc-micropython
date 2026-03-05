@@ -127,12 +127,18 @@ class IRPrinter:
         if cls.base_name:
             lines.append(f"{self._i()}Base: {cls.base_name}")
 
+        if cls.is_trait:
+            lines.append(f"{self._i()}@trait")
+
+        if cls.trait_names:
+            lines.append(f"{self._i()}Traits: {', '.join(cls.trait_names)}")
+
         if cls.is_dataclass:
             lines.append(f"{self._i()}@dataclass")
 
         if cls.is_final_class:
             lines.append(f"{self._i()}@final")
-        if cls.fields:
+
             lines.append(f"{self._i()}Fields:")
             self._indent_inc()
             for field in cls.fields:
@@ -603,7 +609,8 @@ class IRPrinter:
         elif isinstance(value, SelfMethodRefIR):
             return f"self.{value.method_name}  # bound method ref"
         elif isinstance(value, ParamAttrIR):
-            return f"{value.param_name}.{value.attr_name}"
+            trait_marker = " # trait" if value.is_trait_type else ""
+            return f"{value.param_name}.{value.attr_name}{trait_marker}"
         elif isinstance(value, SelfMethodCallIR):
             args = ", ".join(self.print_value(a) for a in value.args)
             return f"self.{value.method_name}({args})"

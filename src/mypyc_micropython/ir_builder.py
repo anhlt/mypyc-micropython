@@ -1486,6 +1486,7 @@ class IRBuilder:
                             attr_path=path,
                             class_c_name=class_ir.c_name,
                             result_type=result_type,
+                            is_trait_type=class_ir.is_trait,
                         ), []
 
                 return ParamAttrIR(
@@ -1496,6 +1497,7 @@ class IRBuilder:
                     attr_path=attr_name,
                     class_c_name=class_ir.c_name,
                     result_type=IRType.OBJ,
+                    is_trait_type=class_ir.is_trait,
                 ), []
 
         if isinstance(expr.value, ast.Attribute):
@@ -1911,9 +1913,11 @@ class IRBuilder:
         class_name = node.name
         c_class_name = f"{self.c_name}_{sanitize_name(class_name)}"
 
-        # Check for dataclass and @final decorators
+        # Check for dataclass, @final, and @trait decorators
+        # Supports: @trait, @mypy_extensions.trait, from mypy_extensions import trait
         is_dataclass = False
         is_final_class = False
+        is_trait = False
         dataclass_info = None
         for decorator in node.decorator_list:
             if isinstance(decorator, ast.Name):
@@ -1922,6 +1926,16 @@ class IRBuilder:
                     dataclass_info = DataclassInfo()
                 elif decorator.id == "final":
                     is_final_class = True
+                elif decorator.id == "trait":
+                    is_trait = True
+            elif isinstance(decorator, ast.Attribute):
+                # Handle @mypy_extensions.trait
+                if (
+                    isinstance(decorator.value, ast.Name)
+                    and decorator.value.id == "mypy_extensions"
+                    and decorator.attr == "trait"
+                ):
+                    is_trait = True
             elif isinstance(decorator, ast.Call):
                 if isinstance(decorator.func, ast.Name) and decorator.func.id == "dataclass":
                     is_dataclass = True
@@ -1933,19 +1947,42 @@ class IRBuilder:
                             dataclass_info.eq = bool(kw.value.value)
                         elif kw.arg == "repr" and isinstance(kw.value, ast.Constant):
                             dataclass_info.repr_ = bool(kw.value.value)
-        # Get base class name
-        base_name = None
-        if node.bases:
-            first_base = node.bases[0]
-            if isinstance(first_base, ast.Name):
-                if first_base.id not in ("object", "Object"):
-                    base_name = first_base.id
+
+        # Process base classes: separate concrete base from traits
+        # Following mypyc: only ONE concrete base allowed, multiple traits allowed
+        base_name: str | None = None
+        trait_names: list[str] = []
+
+        for base in node.bases:
+            if isinstance(base, ast.Name):
+                base_id = base.id
+                if base_id in ("object", "Object"):
+                    continue  # Skip object base
+                # Check if this base is a known trait
+                if base_id in self._known_classes:
+                    known_base = self._known_classes[base_id]
+                    if known_base.is_trait:
+                        trait_names.append(base_id)
+                    elif base_name is None:
+                        base_name = base_id
+                    else:
+                        # Multiple concrete bases - this is an error
+                        # For now, just use the first one (will be caught by type checker)
+                        pass
+                elif base_name is None:
+                    # Unknown base - assume concrete (will be resolved later)
+                    base_name = base_id
+                else:
+                    # Could be a trait defined later, add to trait_names
+                    trait_names.append(base_id)
 
         class_ir = ClassIR(
             name=class_name,
             c_name=c_class_name,
             module_name=self.module_name,
             base_name=base_name,
+            trait_names=trait_names,
+            is_trait=is_trait,
             is_dataclass=is_dataclass,
             dataclass_info=dataclass_info,
             is_final_class=is_final_class,
@@ -1955,6 +1992,13 @@ class IRBuilder:
         # Resolve base class if known
         if base_name and base_name in self._known_classes:
             class_ir.base = self._known_classes[base_name]
+
+        # Resolve traits if known
+        for trait_name in trait_names:
+            if trait_name in self._known_classes:
+                trait = self._known_classes[trait_name]
+                if trait.is_trait:
+                    class_ir.traits.append(trait)
 
         # Register in known classes BEFORE parsing body
         # so that methods can recognize class-typed local variables
@@ -2679,6 +2723,7 @@ class IRBuilder:
                                 attr_path=path,
                                 class_c_name=param_class_ir.c_name,
                                 result_type=result_type,
+                                is_trait_type=param_class_ir.is_trait,
                             ), []
 
                     return ParamAttrIR(
@@ -2689,6 +2734,7 @@ class IRBuilder:
                         attr_path=attr_name,
                         class_c_name=param_class_ir.c_name,
                         result_type=IRType.OBJ,
+                        is_trait_type=param_class_ir.is_trait,
                     ), []
 
             # Handle chained attribute access: self.attr1.attr2 or param.attr1.attr2

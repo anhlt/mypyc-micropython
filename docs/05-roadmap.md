@@ -71,10 +71,10 @@ Phase 2: Functions & Arguments  █████████████░░  ~
   default args ✅ │ *args ✅ │ **kwargs ✅ │ bool ✅ │ min/max ✅ │ sum ✅
   enumerate ✅ │ zip ✅ │ sorted ✅ │ keyword-only args │ positional-only args
 
-Phase 3: Classes                ████████████████ ~98% done
+Phase 3: Classes                ████████████████ 100% done
   class def ✅ │ __init__ ✅ │ methods ✅ │ @dataclass ✅ │ inheritance ✅
   vtable dispatch ✅ │ __eq__/__len__/__getitem__/__setitem__ ✅ │ inherited methods ✅
-  @property ✅ │ @staticmethod ✅ │ @classmethod ✅ │ remaining: special methods
+  @property ✅ │ @staticmethod ✅ │ @classmethod ✅ │ traits ✅
 
 Phase 4: Exception Handling     ███████████████  ~95% done
   try/except ✅ │ try/finally ✅ │ try/except/else ✅ │ raise ✅ │ custom exceptions
@@ -497,6 +497,35 @@ Tasks:
   in child class `locals_dict`
 - [x] `super()` calls in methods (e.g., `super().__init__(...)`)
 
+### 3.6 Traits (Multiple Inheritance) ✅ DONE
+
+```python
+from mypy_extensions import trait
+
+@trait
+class Named:
+    name: str
+    def get_name(self) -> str:
+        return self.name
+
+class Entity:
+    id: int
+
+class Person(Entity, Named):  # ONE concrete base + traits
+    age: int
+
+def greet(obj: Named) -> str:  # Trait-typed parameter
+    return obj.get_name()
+```
+
+Tasks:
+- [x] Detect `@trait` decorator (both `mypy_extensions.trait` and simple `@trait`)
+- [x] Separate concrete base from trait bases in inheritance list
+- [x] Generate trait vtables and method wrappers
+- [x] Handle struct layout differences (trait fields vs implementing class fields)
+- [x] Trait-typed parameters use `mp_load_attr()` for attribute access
+- [x] Trait-typed parameters use `mp_load_method()` for method calls
+
 ### 3.6 Special Methods (Partial)
 
 Tasks:
@@ -514,6 +543,26 @@ Tasks:
 |-------|-------------|------------|
 | ~~No `@property`~~ | ~~No getter/setter decorator support~~ | ✅ Resolved — full @property support |
 | ~~No `@staticmethod`/`@classmethod`~~ | ~~Only instance methods supported~~ | ✅ Resolved — both decorators supported |
+
+### 3.8 isinstance() Support (TODO)
+
+Type checking for concrete classes and traits.
+
+```python
+# Concrete class check
+def is_person(obj: object) -> bool:
+    return isinstance(obj, Person)
+
+# Trait check (polymorphism)
+def is_named(obj: object) -> bool:
+    return isinstance(obj, Named)  # Named is a trait
+```
+
+Tasks:
+- [ ] Detect `isinstance(obj, Type)` calls in AST
+- [ ] Generate `mp_obj_is_type(obj, &type)` for concrete classes
+- [ ] Implement trait registry for `isinstance(obj, Trait)` checks
+- [ ] Handle `isinstance(obj, (A, B))` tuple form (lower priority)
 
 ---
 

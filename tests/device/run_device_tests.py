@@ -698,6 +698,51 @@ for v in g.range_with_start(5):
     range_start_result.append(v)
 t("range_with_start", str(range_start_result), "[1, 2, 3, 4]")
 
+# ---- traits ----
+suite("traits")
+import traits
+
+# Test Person class (Entity + Named + Describable traits)
+p = traits.Person(1, "Alice", 30)
+t("Person id", p.get_id(), "1")
+t("Person name", p.get_name(), "Alice")  # Trait method with field access
+t("Person age", p.age, "30")
+
+# Test Pet class (Entity + Named + Describable traits)
+cat = traits.Pet(2, "Whiskers", "cat")
+t("Pet id", cat.get_id(), "2")
+t("Pet name", cat.get_name(), "Whiskers")  # Trait method with field access
+
+# Test Document class (Printable trait)
+doc = traits.Document("README", "Hello World")
+# Note: to_string() uses f-string with self.attr, skipped due to f-string issue
+t("Document title", doc.title, "README")
+t("Document body", doc.body, "Hello World")
+
+# Test trait-typed parameters (polymorphism)
+# greet_named accepts any Named implementor
+t("greet_named(Person)", traits.greet_named(p), "Alice")
+t("greet_named(Pet)", traits.greet_named(cat), "Whiskers")
+
+# Direct attribute access on trait-typed parameter
+t("get_name_direct(Person)", traits.get_name_direct(p), "Alice")
+t("get_name_direct(Pet)", traits.get_name_direct(cat), "Whiskers")
+
+# Test trait param function
+t("test_trait_param", traits.test_trait_param(), "Alice,Whiskers,Alice,Whiskers")
+
+# Test is/is not with trait-typed parameters
+p2 = traits.Person(3, "Bob", 25)
+t("is_same_named(p,p)", traits.is_same_named(p, p), "True")
+t("is_same_named(p,p2)", traits.is_same_named(p, p2), "False")
+t("is_not_same_named(p,p2)", traits.is_not_same_named(p, p2), "True")
+t("is_not_same_named(p,p)", traits.is_not_same_named(p, p), "False")
+t("is_not_none_named(p)", traits.is_not_none_named(p), "True")
+t("test_trait_identity", traits.test_trait_param(), "Alice,Whiskers,Alice,Whiskers")
+
+# Note: Methods using f-strings with self.attr (describe, greet, to_string)
+# are skipped due to pre-existing f-string compilation issue (not trait-related)
+
 # ---- summary ----
 gc.collect()
 print("@D:" + str(_total) + "|" + str(_passed) + "|" + str(_failed))

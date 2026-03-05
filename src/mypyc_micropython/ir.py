@@ -286,9 +286,17 @@ class ClassIR:
     c_name: str  # Sanitized C identifier
     module_name: str
 
-    # Inheritance (single inheritance only)
+    # Inheritance
+    # - Concrete base: single inheritance only (one concrete parent)
+    # - Traits: multiple inheritance allowed (interface-like classes)
     base: ClassIR | None = None
     base_name: str | None = None  # For deferred resolution
+    traits: list[ClassIR] = field(default_factory=list)
+    trait_names: list[str] = field(default_factory=list)  # For deferred resolution
+
+    # Trait system (following mypyc's approach)
+    is_trait: bool = False  # True if this class is a trait (@trait decorator)
+    trait_vtables: dict[str, list[tuple[str, MethodIR]]] = field(default_factory=dict)
 
     # Members
     fields: list[FieldIR] = field(default_factory=list)
@@ -329,10 +337,17 @@ class ClassIR:
     ast_node: ast.ClassDef | None = None
 
     def get_all_fields(self) -> list[FieldIR]:
-        """Get fields including inherited ones (base first)."""
+        """Get fields including inherited and trait fields (base first, then traits)."""
+        result: list[FieldIR] = []
         if self.base:
-            return self.base.get_all_fields() + self.fields
-        return list(self.fields)
+            result.extend(self.base.get_all_fields())
+        # Include fields from traits (merge in order)
+        for trait in self.traits:
+            for fld in trait.fields:
+                if not any(f.name == fld.name for f in result):
+                    result.append(fld)
+        result.extend(self.fields)
+        return result
 
     def get_all_fields_with_path(self) -> list[tuple[FieldIR, str]]:
         """Get fields with their C access path (e.g., 'super.x' for inherited)."""
@@ -340,6 +355,11 @@ class ClassIR:
         if self.base:
             for fld, path in self.base.get_all_fields_with_path():
                 result.append((fld, f"super.{path}"))
+        # Include fields from traits (direct access, no super prefix)
+        for trait in self.traits:
+            for fld in trait.fields:
+                if not any(f.name == fld for f, _ in result):
+                    result.append((fld, fld.name))
         for fld in self.fields:
             result.append((fld, fld.name))
         return result
@@ -369,10 +389,13 @@ class ClassIR:
         return entries
 
     def get_all_methods(self) -> dict[str, MethodIR]:
-        """Get all methods including inherited (child overrides parent)."""
+        """Get all methods including inherited and from traits (child overrides parent)."""
         methods = {}
         if self.base:
             methods.update(self.base.get_all_methods())
+        # Include methods from traits (trait methods can be overridden)
+        for trait in self.traits:
+            methods.update(trait.get_all_methods())
         methods.update(self.methods)
         return methods
 
@@ -380,8 +403,31 @@ class ClassIR:
         properties = {}
         if self.base:
             properties.update(self.base.get_all_properties())
+        # Include properties from traits
+        for trait in self.traits:
+            properties.update(trait.get_all_properties())
         properties.update(self.properties)
         return properties
+
+    def get_all_traits(self) -> list[ClassIR]:
+        """Get all traits including from base class (in MRO order)."""
+        traits: list[ClassIR] = []
+        if self.base:
+            traits.extend(self.base.get_all_traits())
+        for trait in self.traits:
+            if trait not in traits:
+                traits.append(trait)
+        return traits
+
+    def get_mro(self) -> list[ClassIR]:
+        """Get method resolution order (class itself, base, then traits)."""
+        mro: list[ClassIR] = [self]
+        if self.base:
+            mro.extend(self.base.get_mro())
+        for trait in self.traits:
+            if trait not in mro:
+                mro.append(trait)
+        return mro
 
     def get_struct_name(self) -> str:
         """Get the C struct type name."""
@@ -1054,6 +1100,10 @@ class ParamAttrIR(ExprIR):
     accessing p.x requires unboxing the mp_obj_t to the class struct pointer.
 
     Generated C code: ((ClassName_obj_t *)MP_OBJ_TO_PTR(param))->attr
+
+    For trait-typed parameters, we must use dynamic attribute lookup since the
+    actual struct layout depends on the implementing class at runtime:
+        mp_load_attr(param, MP_QSTR_attr)
     """
 
     param_name: str  # Python parameter name (e.g., "p1")
@@ -1062,7 +1112,7 @@ class ParamAttrIR(ExprIR):
     attr_path: str  # C access path (e.g., "x" or "super._id" for inherited fields)
     class_c_name: str  # C class name (e.g., "module_Point")
     result_type: IRType
-
+    is_trait_type: bool = False  # True if param type is a trait (use dynamic lookup)
 
 @dataclass
 class SelfMethodCallIR(ExprIR):
@@ -1311,14 +1361,21 @@ class ModuleIR:
             self.function_order.append(func_ir.name)
 
     def resolve_base_classes(self) -> None:
-        """Resolve base class references after all classes are parsed."""
+        """Resolve base class and trait references after all classes are parsed."""
         for class_ir in self.classes.values():
+            # Resolve concrete base class
             if class_ir.base_name and class_ir.base is None:
                 if class_ir.base_name in self.classes:
                     class_ir.base = self.classes[class_ir.base_name]
+            # Resolve trait references
+            for trait_name in class_ir.trait_names:
+                if trait_name in self.classes:
+                    trait = self.classes[trait_name]
+                    if trait.is_trait and trait not in class_ir.traits:
+                        class_ir.traits.append(trait)
 
     def get_classes_in_order(self) -> list[ClassIR]:
-        """Get classes in topological order (base classes first)."""
+        """Get classes in topological order (traits and base classes first)."""
         visited: set[str] = set()
         result: list[ClassIR] = []
 
@@ -1327,6 +1384,11 @@ class ModuleIR:
                 return
             visited.add(name)
             class_ir = self.classes[name]
+            # Visit traits first (they must be defined before classes using them)
+            for trait_name in class_ir.trait_names:
+                if trait_name in self.classes:
+                    visit(trait_name)
+            # Then visit base class
             if class_ir.base_name and class_ir.base_name in self.classes:
                 visit(class_ir.base_name)
             result.append(class_ir)
