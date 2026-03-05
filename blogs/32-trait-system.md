@@ -111,32 +111,80 @@ struct traits_Person_obj_t {
 };
 ```
 
-Here's what this looks like in memory:
+Here's what this looks like in memory. Notice the critical difference at offset 8:
 
 ```
-MEMORY LAYOUT COMPARISON
+MEMORY LAYOUT: WHY TRAIT CASTING FAILS
 
-Named trait (standalone):              Person class (implements Named):
+Entity_obj_t:                    Named_obj_t (trait):
++---------------------+ 0        +---------------------+ 0
+| base (8 bytes)      |          | base (8 bytes)      |
++---------------------+ 8        +---------------------+ 8
+| id (8 bytes)        |          | vtable* (8 bytes)   |   <-- DIFFERENT!
++---------------------+ 16       +---------------------+ 16
+                                 | name (8 bytes)      |
+                                 +---------------------+ 24
 
-+---------------------------+           +---------------------------+
-| Offset 0:  mp_obj_base_t  |           | Offset 0:  mp_obj_base_t  |  <- Entity
-| (8 bytes)                 |           | (8 bytes)                 |
-+---------------------------+           +---------------------------+
-| Offset 8:  vtable ptr     |           | Offset 8:  vtable ptr     |  <- Entity
-| (8 bytes)                 |           | (8 bytes)                 |
-+---------------------------+           +---------------------------+
-| Offset 16: name (mp_obj_t)|  <--+     | Offset 16: id (mp_int_t)  |  <- Entity
-| (8 bytes)                 |     |     | (8 bytes)                 |
-+---------------------------+     |     +---------------------------+
-                                  |     | Offset 24: name (mp_obj_t)|  <-- DIFFERENT!
-                                  |     | (8 bytes)                 |
-        get_name() expects -------+     +---------------------------+
-        name at offset 16               | Offset 32: age (mp_int_t) |
-                                         | (8 bytes)                 |
-                                         +---------------------------+
+Person_obj_t (Entity + Named):
++---------------------+ 0
+| super.base (8)      |          Can cast to Entity* at offset 0
++---------------------+ 8
+| super.id (8)        |          Entity fields at same offset - SAFE
++---------------------+ 16
+| name (8 bytes)      |          Named expects name at 16 - MATCH!
++---------------------+ 24       BUT Named expects vtable* at offset 8,
+| age (8 bytes)       |          Person has super.id there - MISMATCH!
++---------------------+ 32
 ```
 
-The `name` field is at **offset 16** in `Named`, but at **offset 24** in `Person`.
+The problem is subtle: even though `name` happens to be at offset 16 in both `Named_obj_t` and after Entity's fields in `Person_obj_t`, the **vtable pointer** is in a different place. Named expects `vtable*` at offset 8, but Person has `id` there.
+
+If we cast `Person*` to `Named*` and call a trait method that accesses `self->vtable`, it reads `id` instead of the vtable pointer - causing crashes or undefined behavior.
+
+### Inside vs Outside: Two Different Problems
+
+The struct layout incompatibility manifests in two different ways:
+
+```
+TWO TRAIT ACCESS PATTERNS
+
+1. INSIDE CALL: trait method accessing self.field
+   ================================================
+   
+   @trait
+   class Named:
+       name: str
+       def get_name(self) -> str:
+           return self.name       # <-- self is what type?
+   
+   class Person(Entity, Named):   # Person implements Named
+       ...
+   
+   p = Person(1, "Alice", 30)
+   p.get_name()                   # <-- self is Person, not Named!
+   
+   Problem: get_name() body expects Named_obj_t* but gets Person_obj_t*
+   Solution: Generate WRAPPER function with correct Person_obj_t* type
+
+
+2. OUTSIDE CALL: function with trait-typed parameter
+   ================================================
+   
+   def greet(n: Named) -> str:    # n could be ANY Named implementer
+       return "Hello " + n.name  # <-- which struct layout?
+   
+   p = Person(1, "Alice", 30)
+   e = Employee(2, "Bob", "Sales", 50000)
+   greet(p)                       # n.name at offset 16 in Person
+   greet(e)                       # n.name at offset 32 in Employee!
+   
+   Problem: Can't generate direct field access - offset varies by class
+   Solution: Use mp_load_attr() for DYNAMIC lookup at runtime
+```
+
+**Key insight**: "Inside" and "outside" need different solutions:
+- **Inside** (trait method body): We know at compile time which class implements the trait, so we generate class-specific wrappers
+- **Outside** (trait-typed param): We don't know at compile time which class will be passed, so we use runtime dynamic dispatch
 
 If we call `traits_Named_get_name_native` with a `Person` object, `self->name` reads from offset 16, which is actually the `id` field!
 
