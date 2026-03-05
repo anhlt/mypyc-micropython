@@ -670,12 +670,14 @@ class TestBuiltinFunctions:
     def test_int_cast(self):
         source = "def to_int(x: float) -> int:\n    return int(x)\n"
         result = compile_source(source, "test", type_check=False)
-        assert "(mp_int_t)" in result
+        # int() on non-int types now properly uses mp_obj_get_int
+        assert "mp_obj_get_int" in result
 
     def test_float_cast(self):
         source = "def to_float(x: int) -> float:\n    return float(x)\n"
         result = compile_source(source, "test", type_check=False)
-        assert "(mp_float_t)" in result
+        # float() on non-float types now properly uses mp_obj_get_float
+        assert "mp_obj_get_float" in result
 
     def test_print_string(self):
         source = """
@@ -1282,7 +1284,10 @@ def get_value(d: dict, key: str):
     return d.get(key)
 """
         result = compile_source(source, "test", type_check=False)
-        assert "mp_obj_dict_get" in result
+        # dict.get(key) uses native mp_map_lookup for performance
+        assert "mp_map_lookup" in result
+        assert "MP_MAP_LOOKUP" in result
+        assert "mp_const_none" in result
 
     def test_dict_get_with_default(self):
         source = """
@@ -1290,9 +1295,9 @@ def get_value(d: dict, key: str, default_val: int):
     return d.get(key, default_val)
 """
         result = compile_source(source, "test", type_check=False)
-        assert "mp_load_attr" in result
-        assert "MP_QSTR_get" in result
-        assert "mp_call_function_n_kw" in result
+        # dict.get(key, default) uses native mp_map_lookup for performance
+        assert "mp_map_lookup" in result
+        assert "MP_MAP_LOOKUP" in result
 
     def test_dict_keys(self):
         source = """
@@ -1567,7 +1572,9 @@ def get_or_zero(d: dict, key: str) -> int:
 """
         result = compile_source(source, "test", type_check=False)
         assert "mp_obj_t d" in result
-        assert "mp_obj_dict_get" in result
+        # dict.get(key) uses native mp_map_lookup for performance
+        assert "mp_map_lookup" in result
+        assert "MP_MAP_LOOKUP" in result
 
     def test_dict_len_in_condition(self):
         source = """
@@ -1623,7 +1630,8 @@ def get_by_int(d: dict, key: int):
     return d.get(key)
 """
         result = compile_source(source, "test", type_check=False)
-        assert "mp_obj_dict_get" in result
+        # dict.get(key) with int key uses native mp_map_lookup
+        assert "mp_map_lookup" in result
         assert "mp_obj_new_int(key)" in result
 
     def test_dict_get_with_default_int(self):
@@ -1632,7 +1640,8 @@ def get_or_default(d: dict, key: str) -> int:
     return d.get(key, 0)
 """
         result = compile_source(source, "test", type_check=False)
-        assert "MP_QSTR_get" in result
+        # dict.get(key, default) uses native mp_map_lookup
+        assert "mp_map_lookup" in result
         assert "mp_obj_new_int(0)" in result
 
     def test_dict_get_with_default_string(self):
@@ -1641,7 +1650,8 @@ def get_or_unknown(d: dict, key: str):
     return d.get(key, "unknown")
 """
         result = compile_source(source, "test", type_check=False)
-        assert "MP_QSTR_get" in result
+        # dict.get(key, default) uses native mp_map_lookup
+        assert "mp_map_lookup" in result
         assert 'mp_obj_new_str("unknown"' in result
 
 
@@ -2163,6 +2173,29 @@ class Calculator:
         assert "test_Calculator_add_mp" in result
         # Should have arg0_obj, arg1_obj
         assert "arg0_obj" in result or "args[" in result
+
+    def test_class_init_with_default_args(self):
+        """Test class __init__ with default arguments."""
+        source = '''
+class App:
+    model: int
+    modulo: int
+    capacity: int
+
+    def __init__(self, model0: int, modulo: int = 8, capacity: int = 32) -> None:
+        self.model = model0 % modulo
+        self.modulo = modulo
+        self.capacity = capacity
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Check mp_arg_check_num allows 1-3 args (model0 required, modulo/capacity optional)
+        assert "mp_arg_check_num(n_args, n_kw, 1, 3, false)" in result
+        # Check default args are handled in make_new
+        assert "(n_args > 1) ? args[1]" in result or "init_args[2] = (n_args > 1)" in result
+        assert "(n_args > 2) ? args[2]" in result or "init_args[3] = (n_args > 2)" in result
+        # Check __init__ wrapper uses VAR_BETWEEN with min/max
+        assert "MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN" in result
+        assert "test_App___init___obj, 2, 4" in result  # 2 min (self + model0), 4 max (self + 3 params)
 
 
 class TestStaticMethod:
@@ -4976,6 +5009,36 @@ def combo(n: int) -> int:
         assert "MP_QSTR_factorial" in result
         assert "MP_QSTR_math_ops" in result
         assert "MP_QSTR_timed_sum" in result
+
+    def test_module_call_with_kwargs(self):
+        """Module call with keyword arguments: module.func(a, key=value)."""
+        source = '''
+import nav
+
+def create_nav() -> object:
+    return nav.Nav(capacity=8, builders=())  # noqa: type - demo kwargs
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should use mp_call_function_n_kw
+        assert "mp_call_function_n_kw" in result
+        # Should have keyword names as QSTRs
+        assert "MP_QSTR_capacity" in result
+        assert "MP_QSTR_builders" in result
+        # n_args=0, n_kw=2
+        assert "mp_call_function_n_kw(" in result
+
+    def test_module_call_mixed_args_kwargs(self):
+        """Module call with positional and keyword arguments."""
+        source = '''
+import nav
+
+def create_nav2(cap: int) -> object:
+    return nav.Nav(cap, builders=())  # noqa: type - demo mixed
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should use mp_call_function_n_kw with n_args=1, n_kw=1
+        assert "mp_call_function_n_kw(" in result
+        assert "MP_QSTR_builders" in result
 
 
 class TestPrivateMethodOptimization:

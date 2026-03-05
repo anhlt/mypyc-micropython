@@ -50,6 +50,75 @@ class ClassEmitter:
 
         return lines
 
+    def emit_type_forward_declarations(self) -> list[str]:
+        """Emit forward declarations for type object and make_new function.
+
+        These are needed when one class instantiates another class that is
+        defined later in the file.
+        """
+        lines = []
+        # Forward declare the type object
+        lines.append(f"extern const mp_obj_type_t {self.c_name}_type;")
+        # Forward declare make_new
+        lines.append(
+            f"static mp_obj_t {self.c_name}_make_new(const mp_obj_type_t *type, "
+            f"size_t n_args, size_t n_kw, const mp_obj_t *args);"
+        )
+        return lines
+
+    def emit_native_forward_declarations(self) -> list[str]:
+        """Emit forward declarations for native method functions.
+
+        Only emit declarations for methods that will have a native version:
+        - Private methods (emit native-only)
+        - Static, classmethod, property, final methods
+        - Virtual non-special methods
+
+        Skip forward declarations for methods that only have MP wrapper.
+        """
+        lines = []
+        for method_ir in self.class_ir.methods.values():
+            # Check if this method will have a native version emitted
+            # This logic must match compiler.py's `needs_native` condition
+            needs_native = (
+                method_ir.is_private
+                or method_ir.is_static
+                or method_ir.is_classmethod
+                or method_ir.is_property
+                or method_ir.is_final
+                or (method_ir.is_virtual and not method_ir.is_special)
+            )
+            if not needs_native:
+                continue
+
+            # Generate forward declaration for native version of the method
+            params: list[str] = []
+            if not method_ir.is_static and not method_ir.is_classmethod:
+                params.append(f"{self.c_name}_obj_t *self")
+            for param_name, param_type in method_ir.params:
+                params.append(f"{param_type.to_c_type_str()} {param_name}")
+            params_str = ", ".join(params) if params else "void"
+            ret_type = method_ir.return_type.to_c_type_str()
+            lines.append(f"static {ret_type} {method_ir.c_name}_native({params_str});")
+        if lines:
+            lines.append("")
+        return lines
+
+    def emit_method_obj_forward_declarations(self) -> list[str]:
+        """Emit forward declarations for method _obj symbols.
+
+        This is needed when bound method references (self.method) are used
+        before the method is defined. For example:
+            callback = self._build_home  # needs &ClassName_method_obj
+
+        NOTE: Currently disabled because forward declarations conflict with
+        MP_DEFINE_CONST_FUN_OBJ_X macros which create definitions.
+        Instead, we reorder method emission so non-__init__ methods come first.
+        """
+        # Disabled - see note above
+        return []
+
+
     def emit_struct(self) -> list[str]:
         lines = []
         vtable_entries = self.class_ir.get_vtable_entries()
@@ -256,7 +325,8 @@ class ClassEmitter:
 
         if init_method:
             num_params = len(init_method.params)
-            lines.append(f"    mp_arg_check_num(n_args, n_kw, {num_params}, {num_params}, false);")
+            min_params = init_method.num_required_args
+            lines.append(f"    mp_arg_check_num(n_args, n_kw, {min_params}, {num_params}, false);")
         else:
             lines.append("    mp_arg_check_num(n_args, n_kw, 0, 0, false);")
 
@@ -284,18 +354,28 @@ class ClassEmitter:
                 lines.append(f"    self->{fld.name} = false;")
 
         if init_method:
-            total_args = len(init_method.params) + 1
+            num_params = len(init_method.params)
+            total_args = num_params + 1  # +1 for self
+            has_defaults = init_method.has_defaults
             lines.append("")
-            if total_args > 3:
+            if total_args > 3 or has_defaults:
                 # VAR_BETWEEN calling convention: (size_t n_args, const mp_obj_t *args)
                 lines.append(f"    mp_obj_t init_args[{total_args}];")
                 lines.append("    init_args[0] = MP_OBJ_FROM_PTR(self);")
-                for i in range(len(init_method.params)):
-                    lines.append(f"    init_args[{i + 1}] = args[{i}];")
+                for i in range(num_params):
+                    default_arg = init_method.defaults.get(i)
+                    if default_arg is not None and default_arg.c_expr is not None:
+                        # Parameter has a default value
+                        lines.append(
+                            f"    init_args[{i + 1}] = (n_args > {i}) ? args[{i}] : {default_arg.c_expr};"
+                        )
+                    else:
+                        # Required parameter
+                        lines.append(f"    init_args[{i + 1}] = args[{i}];")
                 lines.append(f"    {self.c_name}___init___mp({total_args}, init_args);")
             else:
                 args_list = ["MP_OBJ_FROM_PTR(self)"]
-                for i in range(len(init_method.params)):
+                for i in range(num_params):
                     args_list.append(f"args[{i}]")
                 args_str = ", ".join(args_list)
                 lines.append(f"    {self.c_name}___init___mp({args_str});")

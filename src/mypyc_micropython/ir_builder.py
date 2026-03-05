@@ -51,6 +51,7 @@ from .ir import (
     MethodIR,
     ModuleAttrIR,
     ModuleCallIR,
+    ModuleRefIR,
     NameIR,
     ParamAttrIR,
     ParamIR,
@@ -63,6 +64,7 @@ from .ir import (
     SelfAttrIR,
     SelfAugAssignIR,
     SelfMethodCallIR,
+    SelfMethodRefIR,
     SetNewIR,
     SliceIR,
     StmtIR,
@@ -120,6 +122,45 @@ C_RESERVED_WORDS = {
 }
 
 
+# Builtin functions recognized by the compiler
+BUILTIN_FUNCTIONS = {
+    "abs",
+    "int",
+    "float",
+    "bool",
+    "str",
+    "len",
+    "range",
+    "list",
+    "tuple",
+    "set",
+    "dict",
+    "min",
+    "max",
+    "sum",
+    "enumerate",
+    "zip",
+    "sorted",
+    "id",
+}
+
+# Builtins that return int
+INT_BUILTINS = {"abs", "int", "len", "sum", "id"}
+
+
+def _builtin_ir_type(func_name: str) -> IRType:
+    """Return the IR type for a builtin function."""
+    if func_name in INT_BUILTINS:
+        return IRType.INT
+    elif func_name == "float":
+        return IRType.FLOAT
+    elif func_name == "bool":
+        return IRType.BOOL
+    return IRType.OBJ
+
+
+
+
 def sanitize_name(name: str) -> str:
     result = re.sub(r"[^a-zA-Z0-9_]", "_", name)
     if result and result[0].isdigit():
@@ -173,6 +214,7 @@ class IRBuilder:
         self._import_aliases: dict[str, str] = {}
         self._imported_modules: set[str] = set()
         self._uses_external_libs: set[str] = set()
+        self._module_constants: dict[str, int | float | str | bool | None] = {}
 
     def _fresh_temp(self) -> str:
         self._temp_counter += 1
@@ -190,6 +232,39 @@ class IRBuilder:
             # from X import Y -- track the module
             self._import_aliases[node.module] = node.module
             self._imported_modules.add(node.module)
+
+    def register_constant(self, node: ast.Assign) -> bool:
+        """Register module-level constant assignment (NAME = literal_value).
+
+        Returns True if successfully registered, False otherwise.
+        Only handles simple NAME = literal assignments.
+        """
+        if len(node.targets) != 1:
+            return False
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            return False
+        name = target.id
+
+        # Extract literal value
+        value = node.value
+        if isinstance(value, ast.Constant):
+            self._module_constants[name] = value.value
+            return True
+        elif isinstance(value, ast.UnaryOp) and isinstance(value.op, ast.USub):
+            # Handle negative numbers: -1, -3.14
+            if isinstance(value.operand, ast.Constant) and isinstance(
+                value.operand.value, (int, float)
+            ):
+                self._module_constants[name] = -value.operand.value
+                return True
+        return False
+
+    @property
+    def module_constants(self) -> dict[str, int | float | str | bool | None]:
+        """Dict of module-level constants (name -> value)."""
+        return self._module_constants
+
 
     @property
     def imported_modules(self) -> set[str]:
@@ -883,6 +958,26 @@ class IRBuilder:
         elif name == "None":
             return ConstIR(ir_type=IRType.OBJ, value=None)
 
+        # Check for module-level constants
+        if name in self._module_constants:
+            const_val = self._module_constants[name]
+            if isinstance(const_val, bool):
+                return ConstIR(ir_type=IRType.BOOL, value=const_val)
+            elif isinstance(const_val, int):
+                return ConstIR(ir_type=IRType.INT, value=const_val)
+            elif isinstance(const_val, float):
+                return ConstIR(ir_type=IRType.FLOAT, value=const_val)
+            elif isinstance(const_val, str):
+                return ConstIR(ir_type=IRType.OBJ, value=const_val)
+            elif const_val is None:
+                return ConstIR(ir_type=IRType.OBJ, value=None)
+
+        # Check for import aliases - return ModuleRefIR for imported modules
+        if name in self._import_aliases:
+            module_name = self._import_aliases[name]
+            self._uses_imports = True
+            return ModuleRefIR(ir_type=IRType.OBJ, module_name=module_name)
+
         c_name = self._star_c_names.get(name, sanitize_name(name))
         var_type = self._var_types.get(name, "mp_int_t")
         ir_type = IRType.from_c_type_str(var_type)
@@ -1032,26 +1127,7 @@ class IRBuilder:
 
         all_preludes = [p for pl in arg_preludes for p in pl]
 
-        builtins = {
-            "abs",
-            "int",
-            "float",
-            "bool",
-            "str",
-            "len",
-            "range",
-            "list",
-            "tuple",
-            "set",
-            "dict",
-            "min",
-            "max",
-            "sum",
-            "enumerate",
-            "zip",
-            "sorted",
-        }
-        if func_name in builtins:
+        if func_name in BUILTIN_FUNCTIONS:
             is_list_len_opt = False
             is_typed_list_sum = False
             sum_list_var: str | None = None
@@ -1073,14 +1149,7 @@ class IRBuilder:
                         sum_element_type = elem_type
                         self._uses_list_opt = True
 
-            if func_name in ("abs", "int", "len", "sum"):
-                ir_type = IRType.INT
-            elif func_name == "float":
-                ir_type = IRType.FLOAT
-            elif func_name == "bool":
-                ir_type = IRType.BOOL
-            else:
-                ir_type = IRType.OBJ
+            ir_type = _builtin_ir_type(func_name)
             return CallIR(
                 ir_type=ir_type,
                 func_name=func_name,
@@ -1193,7 +1262,7 @@ class IRBuilder:
     def _build_module_call(
         self, expr: ast.Call, alias: str, locals_: list[str]
     ) -> tuple[ValueIR, list]:
-        """Build IR for a call on an imported module: module.func(args)."""
+        """Build IR for a call on an imported module: module.func(args, **kwargs)."""
         if not isinstance(expr.func, ast.Attribute):
             return ConstIR(ir_type=IRType.OBJ, value=None), []
 
@@ -1201,13 +1270,26 @@ class IRBuilder:
         func_name = expr.func.attr
         self._uses_imports = True
 
+        # Process positional arguments
         args: list[ValueIR] = []
         arg_preludes: list[list] = []
         for arg in expr.args:
             val, prelude = self._build_expr(arg, locals_)
             args.append(val)
             arg_preludes.append(prelude)
+
+        # Process keyword arguments
+        kwargs: list[tuple[str, ValueIR]] = []
+        kwarg_preludes: list[list] = []
+        for kw in expr.keywords:
+            if kw.arg is None:  # **kwargs - not supported
+                continue
+            val, prelude = self._build_expr(kw.value, locals_)
+            kwargs.append((kw.arg, val))
+            kwarg_preludes.append(prelude)
+
         all_preludes = [p for pl in arg_preludes for p in pl]
+        all_preludes.extend([p for pl in kwarg_preludes for p in pl])
 
         return ModuleCallIR(
             ir_type=IRType.OBJ,
@@ -1215,6 +1297,8 @@ class IRBuilder:
             func_name=func_name,
             args=args,
             arg_preludes=arg_preludes,
+            kwargs=kwargs,
+            kwarg_preludes=kwarg_preludes,
         ), all_preludes
 
     def _build_class_instantiation(
@@ -2032,6 +2116,9 @@ class IRBuilder:
         if is_private or is_final:
             is_virtual = False
 
+        # Parse default arguments for methods
+        # For methods, defaults are aligned to method params (excluding self)
+        defaults = self._parse_defaults(node.args, len(params))
         method_ir = MethodIR(
             name=method_name,
             c_name=c_method_name,
@@ -2046,6 +2133,7 @@ class IRBuilder:
             is_private=is_private,
             is_final=is_final,
             docstring=ast.get_docstring(node),
+            defaults=defaults,
         )
 
         if is_property and is_property_setter and property_name is not None:
@@ -2549,6 +2637,7 @@ class IRBuilder:
                 attr_name = expr.attr
 
                 if var_name == "self":
+                    # First check if it's a field
                     for fld, path in class_ir.get_all_fields_with_path():
                         if fld.name == attr_name:
                             result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
@@ -2558,6 +2647,16 @@ class IRBuilder:
                                 attr_path=path,
                                 result_type=result_type,
                             ), []
+                    # Check if it's a method reference (bound method)
+                    if attr_name in class_ir.methods:
+                        method_ir = class_ir.methods[attr_name]
+                        return SelfMethodRefIR(
+                            ir_type=IRType.OBJ,
+                            method_name=attr_name,
+                            method_c_name=method_ir.c_name,
+                            class_c_name=class_ir.c_name,
+                        ), []
+                    # Fallback to dynamic attribute access
                     return SelfAttrIR(
                         ir_type=IRType.OBJ,
                         attr_name=attr_name,
@@ -2746,6 +2845,8 @@ class IRBuilder:
                 ast.GtE: ">=",
                 ast.In: "in",
                 ast.NotIn: "not in",
+                ast.Is: "is",
+                ast.IsNot: "is not",
             }
             ops: list[str] = []
             comparators: list[ValueIR] = []
@@ -2788,6 +2889,32 @@ class IRBuilder:
                 body_prelude=body_prelude,
                 orelse_prelude=orelse_prelude,
             ), test_prelude + body_prelude + orelse_prelude
+
+        # Handle Tuple with recursive method context to capture preludes
+        if isinstance(expr, ast.Tuple):
+            if not expr.elts:
+                return ConstIR(ir_type=IRType.OBJ, value=()), []
+            items: list[ValueIR] = []
+            all_preludes: list = []
+            for elt in expr.elts:
+                val, prelude = self._build_method_expr(elt, locals_, class_ir, native)
+                items.append(val)
+                all_preludes.extend(prelude)
+            temp_name = self._fresh_temp()
+            result = TempIR(ir_type=IRType.OBJ, name=temp_name)
+            return result, all_preludes + [TupleNewIR(result=result, items=items)]
+
+        # Handle List with recursive method context to capture preludes
+        if isinstance(expr, ast.List):
+            items: list[ValueIR] = []
+            all_preludes: list = []
+            for elt in expr.elts:
+                val, prelude = self._build_method_expr(elt, locals_, class_ir, native)
+                items.append(val)
+                all_preludes.extend(prelude)
+            temp_name = self._fresh_temp()
+            result = TempIR(ir_type=IRType.OBJ, name=temp_name)
+            return result, all_preludes + [ListNewIR(result=result, items=items)]
 
         # Handle Subscript (e.g., self.items[i])
         if isinstance(expr, ast.Subscript):
@@ -2835,15 +2962,25 @@ class IRBuilder:
                 raise TypeError(
                     f"Cannot access private method '{method_name}' from outside its class"
                 )
+
+            # Process positional arguments
             args: list[ValueIR] = []
             for arg in expr.args:
                 val, _ = self._build_method_expr(arg, locals_, class_ir, native)
                 args.append(val)
 
+            # Process keyword arguments
+            kwargs: list[tuple[str, ValueIR]] = []
+            for kw in expr.keywords:
+                if kw.arg is None:  # **kwargs - not supported
+                    continue
+                val, _ = self._build_method_expr(kw.value, locals_, class_ir, native)
+                kwargs.append((kw.arg, val))
+
             temp_name = self._fresh_temp()
             result = TempIR(ir_type=IRType.OBJ, name=temp_name)
             method_call = MethodCallIR(
-                result=result, receiver=receiver, method=method_name, args=args
+                result=result, receiver=receiver, method=method_name, args=args, kwargs=kwargs
             )
             return result, recv_prelude + [method_call]
 
@@ -2864,34 +3001,8 @@ class IRBuilder:
 
         all_preludes = [p for pl in arg_preludes for p in pl]
 
-        builtins = {
-            "abs",
-            "int",
-            "float",
-            "bool",
-            "str",
-            "len",
-            "range",
-            "list",
-            "tuple",
-            "set",
-            "dict",
-            "min",
-            "max",
-            "sum",
-            "enumerate",
-            "zip",
-            "sorted",
-        }
-        if func_name in builtins:
-            if func_name in ("abs", "int", "len", "sum"):
-                ir_type = IRType.INT
-            elif func_name == "float":
-                ir_type = IRType.FLOAT
-            elif func_name == "bool":
-                ir_type = IRType.BOOL
-            else:
-                ir_type = IRType.OBJ
+        if func_name in BUILTIN_FUNCTIONS:
+            ir_type = _builtin_ir_type(func_name)
             return CallIR(
                 ir_type=ir_type,
                 func_name=func_name,

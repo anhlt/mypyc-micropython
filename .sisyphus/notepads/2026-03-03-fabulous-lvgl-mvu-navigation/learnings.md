@@ -1,0 +1,2 @@
+19#QW|- Bounded `_refs_by_root` growth during navigation by pruning references for screens no longer in the active navigation stack, preventing potential memory leaks in long-running MVU applications.
+2026-03-04 - Centralized tree validation inside `lvgl_nav.Nav` by adding optional tuple-based `allowed_children`; callers now pass the policy table and keep navigation behavior consistent across demos/tests.

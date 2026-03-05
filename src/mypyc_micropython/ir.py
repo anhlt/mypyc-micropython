@@ -212,6 +212,17 @@ class MethodIR:
     is_final: bool = False  # @final decorator — cannot be overridden
     docstring: str | None = None
     max_temp: int = 0
+    defaults: dict[int, DefaultArg] = field(default_factory=dict)  # param_index -> default
+
+    @property
+    def num_required_args(self) -> int:
+        """Number of required (non-default) arguments."""
+        return len(self.params) - len(self.defaults)
+
+    @property
+    def has_defaults(self) -> bool:
+        """True if method has any default arguments."""
+        return len(self.defaults) > 0
 
     def get_native_signature(self, class_c_name: str) -> str:
         """Get the native C function signature (typed parameters)."""
@@ -610,13 +621,14 @@ class SetItemIR(InstrIR):
 
 @dataclass
 class MethodCallIR(InstrIR):
-    """receiver.method(args)  →  optional result."""
+    """receiver.method(args, **kwargs)  ->  optional result."""
 
     result: TempIR | None
     receiver: ValueIR
     method: str
     args: list[ValueIR]
-
+    # Keyword arguments: list of (name, value) pairs
+    kwargs: list[tuple[str, ValueIR]] = field(default_factory=list)
 
 @dataclass
 class BoxIR(InstrIR):
@@ -1016,6 +1028,25 @@ class SelfAttrIR(ExprIR):
 
 
 @dataclass
+class SelfMethodRefIR(ExprIR):
+    """Bound method reference on self: self.method (not a call).
+
+    When used as a value (not called), this creates a bound method object.
+    Example: callback = self._build_home
+
+    Generated C code:
+        mp_obj_new_bound_meth(
+            MP_OBJ_FROM_PTR(&ClassName_method_obj),
+            MP_OBJ_FROM_PTR(self)
+        )
+    """
+
+    method_name: str  # Python method name (e.g., "_build_home")
+    method_c_name: str  # Full C function obj name (e.g., "module_App__build_home_obj")
+    class_c_name: str  # C class name (e.g., "module_App")
+
+
+@dataclass
 class ParamAttrIR(ExprIR):
     """Attribute access on a typed class parameter: param.attr (for functions).
 
@@ -1078,7 +1109,7 @@ class ModuleImportIR(InstrIR):
 
 @dataclass
 class ModuleCallIR(ExprIR):
-    """Call a function on an imported module: module.func(args).
+    """Call a function on an imported module: module.func(args, **kwargs).
 
     Generated C:
         mp_obj_t mod = mp_import_name(MP_QSTR_math, mp_const_none, MP_OBJ_NEW_SMALL_INT(0));
@@ -1090,7 +1121,9 @@ class ModuleCallIR(ExprIR):
     func_name: str  # Function name (e.g., 'sqrt')
     args: list[ValueIR]
     arg_preludes: list[list[InstrIR]] = field(default_factory=list)
-
+    # Keyword arguments: list of (name, value) pairs
+    kwargs: list[tuple[str, ValueIR]] = field(default_factory=list)
+    kwarg_preludes: list[list[InstrIR]] = field(default_factory=list)
 
 @dataclass
 class ModuleAttrIR(ExprIR):
@@ -1105,6 +1138,22 @@ class ModuleAttrIR(ExprIR):
 
     module_name: str  # Python module name (e.g., 'math')
     attr_name: str  # Attribute name (e.g., 'pi')
+
+
+@dataclass
+class ModuleRefIR(ExprIR):
+    """Reference to an imported module itself (not an attribute).
+
+    Used when an import alias is used as a standalone variable,
+    typically as a receiver in a method call like nav.Nav().
+
+    Generated C:
+        mp_import_name(MP_QSTR_lvgl_nav, mp_const_none, MP_OBJ_NEW_SMALL_INT(0))
+    """
+
+    module_name: str  # Python module name (e.g., 'lvgl_nav')
+
+
 
 
 @dataclass
@@ -1238,6 +1287,9 @@ class ModuleIR:
     c_name: str
     classes: dict[str, ClassIR] = field(default_factory=dict)
     functions: dict[str, FuncIR] = field(default_factory=dict)
+
+    # Module-level constants (NAME = literal_value)
+    constants: dict[str, int | float | str | bool | None] = field(default_factory=dict)
 
     # For tracking definition order (important for forward declarations)
     class_order: list[str] = field(default_factory=list)

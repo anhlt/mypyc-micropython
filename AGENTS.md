@@ -44,21 +44,31 @@ src/mypyc_micropython/
 
 tests/
 ├── conftest.py          # compile_and_run fixture (gcc compile + execute)
-├── test_compiler.py     # Unit tests — full compilation (437 tests)
-├── test_ir_builder.py   # Unit tests — IR building (79 tests)
-├── test_ir_visualizer.py # Unit tests — IR visualization (18 tests)
-├── test_c_runtime.py    # Integration — compile generated C & run binary (91 tests)
-├── test_emitters.py     # Unit tests — emitter code generation (70 tests)
-├── test_type_checker.py # Unit tests — mypy type checker integration (20 tests)
-└── mock_mp/             # Minimal C stubs for MicroPython API
+├── test_compiler.py     # Unit tests - full compilation (437 tests)
+├── test_ir_builder.py   # Unit tests - IR building (82 tests)
+├── test_ir_visualizer.py # Unit tests - IR visualization (18 tests)
+├── test_c_runtime.py    # Integration - compile generated C & run binary (91 tests)
+├── test_emitters.py     # Unit tests - emitter code generation (77 tests)
+├── test_type_checker.py # Unit tests - mypy type checker integration (20 tests)
+├── mock_mp/             # Minimal C stubs for MicroPython API
+└── device/              # Device test runners (run on MicroPython via mpremote)
+    ├── run_device_tests.py          # Main device test runner (364 tests)
+    ├── run_benchmarks.py            # Benchmark runner (native C vs vanilla)
+    ├── run_nav_tests.py             # LVGL navigation tests
+    ├── run_lvgl_tests.py            # LVGL screen tests
+    ├── run_lvgl_mvu_tests.py        # LVGL MVU architecture tests
+    └── run_screen_navigation_tests.py  # Screen navigation tree tests
 
 examples/                # Sample Python input files (30 modules + 1 package)
 modules/                 # Generated C output (gitignored except committed examples)
 docs/                    # Documentation and ESP-IDF setup guides
 blogs/                   # Technical blog posts (see Blog Writing Guidelines below)
+configs/                 # ESP-IDF configuration files
+├── partitions-default.csv  # Default partition table
+├── partitions-lvgl.csv     # LVGL partition table (larger app)
+└── sdkconfig.lvgl          # LVGL-specific sdkconfig
+scripts/                 # Build and setup scripts
 Makefile                 # Build commands for firmware compilation and flashing
-run_device_tests.py      # Device test runner (364 tests across 29 suites)
-run_benchmarks.py        # Benchmark runner (16 categories, native C vs vanilla MicroPython)
 ```
 
 ## Architecture
@@ -294,9 +304,9 @@ def test_c_sum_range(compile_and_run):
     assert stdout.strip() == "10"
 ```
 
-### Device tests (run_device_tests.py)
+### Device tests (tests/device/run_device_tests.py)
 
-**IMPORTANT**: When adding or updating features, ALWAYS update `run_device_tests.py` with corresponding device tests.
+**IMPORTANT**: When adding or updating features, ALWAYS update `tests/device/run_device_tests.py` with corresponding device tests.
 
 ```bash
 # Full cycle: compile all examples + build firmware + flash + run tests
@@ -306,7 +316,7 @@ make test-device BOARD=ESP32_GENERIC_C6 PORT=/dev/cu.usbmodem2101
 make run-device-tests PORT=/dev/cu.usbmodem2101
 ```
 
-Test pattern in `run_device_tests.py` (uses `t(name, got, expected)` helper and `suite(name)` for grouping):
+Test pattern in `tests/device/run_device_tests.py` (uses `t(name, got, expected)` helper and `suite(name)` for grouping):
 ```python
 suite("special_methods")
 import special_methods as sm
@@ -320,7 +330,7 @@ t("Number hash", hash(sm.Number(42)), "42")
 
 Each module should have a corresponding `suite("module_name")` block added before the summary section.
 
-### Benchmarks (run_benchmarks.py)
+### Benchmarks (tests/device/run_benchmarks.py)
 
 Compare native compiled modules vs vanilla MicroPython interpreter performance.
 
@@ -331,7 +341,7 @@ make benchmark PORT=/dev/cu.usbmodem2101
 
 #### Adding New Benchmarks
 
-Add a `bench_<name>()` function in `run_benchmarks.py` and call it from `run_all_benchmarks()`:
+Add a `bench_<name>()` function in `tests/device/run_benchmarks.py` and call it from `run_all_benchmarks()`:
 
 ```python
 def bench_my_module():
@@ -566,7 +576,7 @@ A feature is NOT complete until:
 - [ ] Unit tests pass (`pytest`)
 - [ ] C runtime tests pass (`pytest -m c_runtime`)
 - [ ] Example file created in `examples/`
-- [ ] Device tests added to `run_device_tests.py`
+- [ ] Device tests added to `tests/device/run_device_tests.py`
 - [ ] **Device tests pass on real hardware** (this is the final verification)
 
 ### Why Device Testing Cannot Be Skipped

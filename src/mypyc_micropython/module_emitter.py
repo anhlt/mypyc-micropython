@@ -332,6 +332,24 @@ class ModuleEmitter:
             f"    {{ MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_{self.c_name}) }},",
         ]
 
+        # Export module-level constants
+        for const_name, const_value in self.module_ir.constants.items():
+            if isinstance(const_value, bool):
+                mp_val = "mp_const_true" if const_value else "mp_const_false"
+                lines.append(
+                    f"    {{ MP_ROM_QSTR(MP_QSTR_{const_name}), MP_ROM_PTR({mp_val}) }},"
+                )
+            elif isinstance(const_value, int):
+                lines.append(
+                    f"    {{ MP_ROM_QSTR(MP_QSTR_{const_name}), MP_ROM_INT({const_value}) }},"
+                )
+            elif isinstance(const_value, str):
+                # Use QSTR for string constants (escaped for C compatibility)
+                lines.append(
+                    f"    {{ MP_ROM_QSTR(MP_QSTR_{const_name}), MP_ROM_QSTR(MP_QSTR_{const_name}) }},"
+                )
+            # Note: float constants require special handling, skip for now
+
         for func in functions:
             lines.append(
                 f"    {{ MP_ROM_QSTR(MP_QSTR_{func.name}), MP_ROM_PTR(&{func.c_name}_obj) }},"

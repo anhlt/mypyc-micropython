@@ -6,7 +6,7 @@
 BOARD ?= ESP32_GENERIC
 PORT ?= /dev/ttyACM0
 BAUD ?= 460800
-LVGL ?= 0
+LVGL ?= 1
 
 # Paths
 ROOT_DIR := $(shell pwd)
@@ -33,7 +33,8 @@ endif
 
 .PHONY: help setup setup-idf setup-mpy compile build flash monitor clean clean-all \
         test test-device run-device-tests benchmark compile-all check-env \
-        compile-lvgl test-lvgl run-lvgl-tests erase run list-boards info repl
+        compile-lvgl test-lvgl run-lvgl-tests run-lvgl-mvu-tests run-lvgl-tests-all \
+        erase run list-boards info repl
 
 # Default target
 help:
@@ -65,6 +66,8 @@ help:
 	@echo "  make test-device    - Full cycle: compile + build + flash + test"
 	@echo "  make run-device-tests - Run device tests on flashed firmware"
 	@echo "  make run-lvgl-tests - Run LVGL test suite on device"
+	@echo "  make run-lvgl-mvu-tests - Run LVGL MVU-only test suite on device"
+	@echo "  make run-lvgl-tests-all - Run all LVGL suites on device"
 	@echo "  make test-navigation - Run ScreenManager navigation test"
 	@echo "  make test-lvgl      - Quick LVGL display test"
 	@echo "  make benchmark      - Run native vs vanilla performance tests"
@@ -161,8 +164,12 @@ compile-all:
 		fi; \
 	done
 	@echo ""
+	@echo "Compiling LVGL C bindings..."
+	@$(MAKE) compile-lvgl-only
+	@echo ""
 	@echo "Generating $(MODULES_DIR)/micropython.cmake..."
 	@echo "# Auto-generated - include all compiled modules" > $(MODULES_DIR)/micropython.cmake
+	@echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_lvgl/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake
 	@for f in examples/*.py; do \
 		MOD_NAME=$$(basename "$$f" .py); \
 		case "$$MOD_NAME" in \
@@ -177,6 +184,15 @@ compile-all:
 		fi; \
 	done
 	@echo "Done! Ready to build."
+
+compile-lvgl-only:
+	@mkdir -p $(LVGL_MODULE_DIR)
+	@mpy-compile-c $(LVGL_STUB_DIR)/lvgl.pyi -o $(LVGL_MODULE_DIR) --public
+	@cp $(LVGL_STUB_DIR)/st7789_driver.c $(LVGL_MODULE_DIR)/
+	@cp $(LVGL_STUB_DIR)/st7789_driver.h $(LVGL_MODULE_DIR)/
+	@cp $(LVGL_STUB_DIR)/lv_conf.h $(LVGL_MODULE_DIR)/
+	@cp $(LVGL_STUB_DIR)/micropython.cmake $(LVGL_MODULE_DIR)/
+	@python3 scripts/patch_lvgl_c.py $(LVGL_MODULE_DIR)/lvgl.c
 
 compile-lvgl:
 	@echo "Compiling LVGL bindings from .pyi stub..."
@@ -193,7 +209,7 @@ compile-lvgl:
 	@echo ""
 	@echo "Adding LVGL to micropython.cmake..."
 	@if [ -f "$(MODULES_DIR)/micropython.cmake" ]; then \
-		if ! grep -q "usermod_lvgl" $(MODULES_DIR)/micropython.cmake 2>/dev/null; then \
+		if ! grep -q "usermod_lvgl/micropython.cmake" $(MODULES_DIR)/micropython.cmake 2>/dev/null; then \
 			echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_lvgl/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
 		fi; \
 	else \
@@ -211,7 +227,7 @@ build: check-env
 		exit 1; \
 	fi
 	@# Add LVGL to cmake if it exists but isn't listed
-	@if [ -d "$(LVGL_MODULE_DIR)" ] && ! grep -q "usermod_lvgl" $(MODULES_DIR)/micropython.cmake 2>/dev/null; then \
+	@if [ -d "$(LVGL_MODULE_DIR)" ] && ! grep -q "usermod_lvgl/micropython.cmake" $(MODULES_DIR)/micropython.cmake 2>/dev/null; then \
 		echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_lvgl/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
 	fi
 	@# Add lvgl_screens to cmake if it exists but isn't listed
@@ -221,7 +237,7 @@ build: check-env
 	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then \
 		echo "Building MicroPython + LVGL firmware for $(BOARD)..."; \
 		echo "Using larger partition table (2.56MB app) for LVGL"; \
-		cp $(ROOT_DIR)/partitions-lvgl.csv $(MP_PORT_DIR)/partitions-4MiB.csv; \
+		cp $(ROOT_DIR)/configs/partitions-lvgl.csv $(MP_PORT_DIR)/partitions-4MiB.csv; \
 	else \
 		echo "Building MicroPython firmware for $(BOARD)..."; \
 	fi
@@ -230,24 +246,38 @@ build: check-env
 		source $(ESP_IDF_DIR)/export.sh && \
 		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) USER_C_MODULES=$(USER_C_MODULES) \
 	'
-	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then \
-		echo "Restoring original partition table..."; \
-		cd $(MICROPYTHON_DIR) && git checkout ports/esp32/partitions-4MiB.csv; \
-	fi
+	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then echo "Restoring original partition table..."; cp $(ROOT_DIR)/configs/partitions-default.csv $(MP_PORT_DIR)/partitions-4MiB.csv; fi
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 flash: check-env
 	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then \
 		echo "Flashing LVGL firmware to $(PORT)..."; \
-		cp $(ROOT_DIR)/partitions-lvgl.csv $(MP_PORT_DIR)/partitions-4MiB.csv; \
+		cp $(ROOT_DIR)/configs/partitions-lvgl.csv $(MP_PORT_DIR)/partitions-4MiB.csv; \
 	else \
 		echo "Flashing firmware to $(PORT)..."; \
 	fi
 	@bash -c 'source $(ESP_IDF_DIR)/export.sh && \
 		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) PORT=$(PORT) deploy'
-	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then \
-		echo "Restoring original partition table..."; \
-		cd $(MICROPYTHON_DIR) && git checkout ports/esp32/partitions-4MiB.csv; \
-	fi
+	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then echo "Restoring original partition table..."; cp $(ROOT_DIR)/configs/partitions-default.csv $(MP_PORT_DIR)/partitions-4MiB.csv; fi
 
 erase: check-env
 	@echo "Erasing flash..."
@@ -277,11 +307,11 @@ test-device: compile-all build flash run-device-tests
 
 run-device-tests:
 	@echo "Running device tests on $(PORT)..."
-	mpremote connect $(PORT) run run_device_tests.py
+	mpremote connect $(PORT) run tests/device/run_device_tests.py
 
 benchmark:
 	@echo "Running benchmarks: Native C vs Vanilla MicroPython..."
-	@python3 run_benchmarks.py --port $(PORT)
+	@python3 tests/device/run_benchmarks.py --port $(PORT)
 
 test-lvgl:
 	@echo "Testing LVGL on device..."
@@ -289,14 +319,22 @@ test-lvgl:
 
 run-lvgl-tests:
 	@echo "Running LVGL test suite on $(PORT)..."
-	mpremote connect $(PORT) run run_lvgl_tests.py
+	mpremote connect $(PORT) run tests/device/run_lvgl_tests.py
 
-run-nav-test:
-	@echo "Running visual navigation test on $(PORT)..."
-	mpremote connect $(PORT) run run_nav_test.py
-test-navigation:
-	@echo "Running ScreenManager navigation test on $(PORT)..."
-	mpremote connect $(PORT) run test_screen_navigation.py
+run-lvgl-mvu-tests:
+	@echo "Running LVGL MVU-only test suite on $(PORT)..."
+	mpremote connect $(PORT) run tests/device/run_lvgl_mvu_tests.py
+
+run-lvgl-tests-all: run-lvgl-tests run-lvgl-mvu-tests
+	@echo "LVGL full test pass complete"
+
+run-nav-tests:
+	@echo "Running navigation tests on $(PORT)..."
+	mpremote connect $(PORT) run tests/device/run_nav_tests.py
+
+run-screen-navigation-tests:
+	@echo "Running screen navigation tests on $(PORT)..."
+	mpremote connect $(PORT) run tests/device/run_screen_navigation_tests.py
 
 repl:
 	@echo "Opening MicroPython REPL on $(PORT)..."

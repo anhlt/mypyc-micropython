@@ -16,6 +16,7 @@ from .ir import (
     AttrAccessIR,
     BinOpIR,
     BoxIR,
+    CallIR,
     CompareIR,
     ConstIR,
     DictNewIR,
@@ -25,9 +26,11 @@ from .ir import (
     ListCompIR,
     ListNewIR,
     MethodCallIR,
+    ModuleRefIR,
     NameIR,
     ParamAttrIR,
     SelfAttrIR,
+    SelfMethodRefIR,
     SetItemIR,
     SetNewIR,
     SubscriptIR,
@@ -361,16 +364,21 @@ class ContainerEmitter:
     def _emit_get(self, instr: MethodCallIR, receiver: str) -> list[str]:
         result_name = instr.result.name if instr.result else "__get_discard"
         if len(instr.args) >= 2:
+            # dict.get(key, default) - use native mp_map_lookup for performance
             key_c = self._box_value_ir(instr.args[0])
             default_c = self._box_value_ir(instr.args[1])
             return [
-                f"    mp_obj_t {result_name} = "
-                f"mp_call_function_n_kw(mp_load_attr({receiver}, MP_QSTR_get), "
-                f"2, 0, (mp_obj_t[]){{{key_c}, {default_c}}});"
+                f"    mp_map_elem_t *__elem_{result_name} = mp_map_lookup(&((mp_obj_dict_t *)MP_OBJ_TO_PTR({receiver}))->map, {key_c}, MP_MAP_LOOKUP);",
+                f"    mp_obj_t {result_name} = __elem_{result_name} ? __elem_{result_name}->value : {default_c};"
             ]
         elif len(instr.args) == 1:
+            # dict.get(key) with no default returns None if key not found
+            # Use native mp_map_lookup for performance instead of method call
             key_c = self._box_value_ir(instr.args[0])
-            return [f"    mp_obj_t {result_name} = mp_obj_dict_get({receiver}, {key_c});"]
+            return [
+                f"    mp_map_elem_t *__elem_{result_name} = mp_map_lookup(&((mp_obj_dict_t *)MP_OBJ_TO_PTR({receiver}))->map, {key_c}, MP_MAP_LOOKUP);",
+                f"    mp_obj_t {result_name} = __elem_{result_name} ? __elem_{result_name}->value : mp_const_none;"
+            ]
         return ["    /* get() requires at least 1 arg */"]
 
     def _emit_zero_arg_method(self, instr: MethodCallIR, receiver: str) -> list[str]:
@@ -492,18 +500,40 @@ class ContainerEmitter:
     def _emit_generic_method_call(self, instr: MethodCallIR, receiver: str) -> list[str]:
         """Fallback for unknown methods: mp_load_method + mp_call_method."""
         n_args = len(instr.args)
-        method_size = 2 + n_args
-        parts = [f"mp_obj_t __method[{method_size}]; "]
-        parts.append(f"mp_load_method({receiver}, MP_QSTR_{instr.method}, __method); ")
-        for i, arg in enumerate(instr.args):
-            boxed = self._box_value_ir(arg)
-            parts.append(f"__method[{2 + i}] = {boxed}; ")
-        parts.append(f"mp_call_method_n_kw({n_args}, 0, __method); ")
-        block = "".join(parts)
+        n_kw = len(instr.kwargs)
+
+        # With kwargs: use array-based approach
+        if n_kw > 0:
+            # Total slots: __method[0]=func, __method[1]=self, then args, then kw pairs
+            total_slots = 2 + n_args + (n_kw * 2)
+            parts = [f"mp_obj_t __method[{total_slots}]; "]
+            parts.append(f"mp_load_method({receiver}, MP_QSTR_{instr.method}, __method); ")
+            # Positional args
+            for i, arg in enumerate(instr.args):
+                boxed = self._box_value_ir(arg)
+                parts.append(f"__method[{2 + i}] = {boxed}; ")
+            # Keyword args (interleaved: key, value)
+            kw_start = 2 + n_args
+            for i, (kw_name, kw_val) in enumerate(instr.kwargs):
+                boxed_val = self._box_value_ir(kw_val)
+                parts.append(f"__method[{kw_start + i * 2}] = MP_OBJ_NEW_QSTR(MP_QSTR_{kw_name}); ")
+                parts.append(f"__method[{kw_start + i * 2 + 1}] = {boxed_val}; ")
+            parts.append(f"mp_call_method_n_kw({n_args}, {n_kw}, __method); ")
+            block = "".join(parts)
+        else:
+            # No kwargs - original optimized path
+            method_size = 2 + n_args
+            parts = [f"mp_obj_t __method[{method_size}]; "]
+            parts.append(f"mp_load_method({receiver}, MP_QSTR_{instr.method}, __method); ")
+            for i, arg in enumerate(instr.args):
+                boxed = self._box_value_ir(arg)
+                parts.append(f"__method[{2 + i}] = {boxed}; ")
+            parts.append(f"mp_call_method_n_kw({n_args}, 0, __method); ")
+            block = "".join(parts)
 
         if instr.result:
             return [f"    mp_obj_t {instr.result.name} = ({{ {block}}});"]
-        return [f"    (void)({{ {block}}});"]
+        return [f"    (void)({{ {block}}}); "]
 
     # ------------------------------------------------------------------
     # Value helpers
@@ -515,6 +545,9 @@ class ContainerEmitter:
             return value.name
         elif isinstance(value, NameIR):
             return value.c_name
+        elif isinstance(value, ModuleRefIR):
+            # Import the module at runtime
+            return f"mp_import_name(MP_QSTR_{value.module_name}, mp_const_none, MP_OBJ_NEW_SMALL_INT(0))"
         elif isinstance(value, ConstIR):
             return self._const_to_c(value)
         elif isinstance(value, BinOpIR):
@@ -576,6 +609,13 @@ class ContainerEmitter:
             return "".join(parts)
         elif isinstance(value, SelfAttrIR):
             return f"self->{value.attr_path}"
+        elif isinstance(value, SelfMethodRefIR):
+            # Bound method reference: self.method -> bound method object
+            return (
+                f"mp_obj_new_bound_meth("
+                f"MP_OBJ_FROM_PTR(&{value.method_c_name}_obj), "
+                f"MP_OBJ_FROM_PTR(self))"
+            )
         elif isinstance(value, ParamAttrIR):
             return (
                 f"(({value.class_c_name}_obj_t *)MP_OBJ_TO_PTR({value.c_param_name}))"
@@ -587,6 +627,14 @@ class ContainerEmitter:
                 return f"{val_c}.f{value.rtuple_index}"
             slice_c = self._value_to_c(value.slice_)
             return f"mp_obj_subscr({val_c}, {self._box_expr(slice_c, value.slice_.ir_type)}, MP_OBJ_SENTINEL)"
+        elif isinstance(value, CallIR):
+            # Handle builtin calls that can appear in container contexts
+            if value.is_builtin and value.builtin_kind == "id":
+                # id(obj) -> (mp_int_t)(uintptr_t)(obj)
+                if value.args:
+                    arg_c = self._box_value_ir(value.args[0])
+                    return f"(mp_int_t)(uintptr_t)({arg_c})"
+            # For other calls, we can't easily emit them inline - fall through to unknown
         return "/* unknown value */"
 
     def _const_to_c(self, const: ConstIR) -> str:
