@@ -111,7 +111,34 @@ struct traits_Person_obj_t {
 };
 ```
 
-If we call `traits_Named_get_name_native` with a `Person` object, `self->name` reads from the wrong memory location.
+Here's what this looks like in memory:
+
+```
+MEMORY LAYOUT COMPARISON
+
+Named trait (standalone):              Person class (implements Named):
+
++---------------------------+           +---------------------------+
+| Offset 0:  mp_obj_base_t  |           | Offset 0:  mp_obj_base_t  |  <- Entity
+| (8 bytes)                 |           | (8 bytes)                 |
++---------------------------+           +---------------------------+
+| Offset 8:  vtable ptr     |           | Offset 8:  vtable ptr     |  <- Entity
+| (8 bytes)                 |           | (8 bytes)                 |
++---------------------------+           +---------------------------+
+| Offset 16: name (mp_obj_t)|  <--+     | Offset 16: id (mp_int_t)  |  <- Entity
+| (8 bytes)                 |     |     | (8 bytes)                 |
++---------------------------+     |     +---------------------------+
+                                  |     | Offset 24: name (mp_obj_t)|  <-- DIFFERENT!
+                                  |     | (8 bytes)                 |
+        get_name() expects -------+     +---------------------------+
+        name at offset 16               | Offset 32: age (mp_int_t) |
+                                         | (8 bytes)                 |
+                                         +---------------------------+
+```
+
+The `name` field is at **offset 16** in `Named`, but at **offset 24** in `Person`.
+
+If we call `traits_Named_get_name_native` with a `Person` object, `self->name` reads from offset 16, which is actually the `id` field!
 
 ### The Solution: Trait Method Wrappers
 
@@ -124,6 +151,24 @@ static mp_obj_t traits_Person_get_name_from_traits_Named_native(
 ) {
     return self->name;  // Correct offset for Person's layout
 }
+```
+
+The wrapper knows that for `Person`, the `name` field is at offset 24:
+
+```
+WRAPPER SOLUTION
+
+Original trait method:                  Generated wrapper for Person:
+
+traits_Named_get_name_native(self)      traits_Person_get_name_from_Named_native(self)
+|                                        |
+| self is traits_Named_obj_t *           | self is traits_Person_obj_t *
+| reads self->name at offset 16          | reads self->name at offset 24
+|                                        |
+v                                        v
++---------------------------+            +---------------------------+
+| Offset 16: ??? (WRONG!)   |            | Offset 24: name (CORRECT) |
++---------------------------+            +---------------------------+
 ```
 
 This wrapper has the right struct type and accesses the field at the correct offset.
@@ -186,6 +231,37 @@ struct Person_obj_t {
 };
 ```
 
+Here's the memory layout showing struct embedding:
+
+```
+SINGLE INHERITANCE: STRUCT EMBEDDING
+
+Entity_obj_t:                           Person_obj_t:
+
++---------------------------+           +---------------------------+
+| mp_obj_base_t base        |           | Entity_obj_t super:       |
+| (8 bytes)                 |           |   +---------------------+ |
++---------------------------+           |   | mp_obj_base_t base  | |
+| Entity_vtable_t *vtable   |           |   | (8 bytes)           | |
+| (8 bytes)                 |           |   +---------------------+ |
++---------------------------+    ====   |   | vtable ptr          | |
+| mp_int_t id               |    SAME   |   | (8 bytes)           | |
+| (8 bytes)                 |    ====   |   +---------------------+ |
++---------------------------+           |   | mp_int_t id         | |
+                                        |   | (8 bytes)           | |
+                                        |   +---------------------+ |
+                                        +---------------------------+
+                                        | mp_obj_t name             |
+                                        | (8 bytes)                 |
+                                        +---------------------------+
+                                        | mp_int_t age              |
+                                        | (8 bytes)                 |
+                                        +---------------------------+
+
+A Person_obj_t* can be cast to Entity_obj_t* because the
+first 24 bytes have identical layout.
+```
+
 This means a `Person_obj_t *` can be safely cast to `Entity_obj_t *` because they share the same prefix layout. But traits don't work this way - a `Person_obj_t *` cannot be cast to `Named_obj_t *` because their layouts are incompatible.
 
 ### Function Pointer Types in Vtables
@@ -228,6 +304,43 @@ MP_DEFINE_CONST_FUN_OBJ_1(Person_get_name_obj, Person_get_name_mp);
 ```
 
 The `locals_dict` (Python's method table) references `Person_get_name_obj`, not the native function directly.
+
+Here's the complete picture of how a method call flows:
+
+```
+METHOD CALL FLOW: person.get_name()
+
+Python call: person.get_name()
+                |
+                v
++----------------------------------+
+| MicroPython Runtime              |
+| 1. Look up 'get_name' in type    |
+| 2. Find Person_get_name_obj      |
++----------------------------------+
+                |
+                v
++----------------------------------+
+| Person_get_name_mp(self_in)      |  <-- MP wrapper
+| {                                |
+|   Person_obj_t *self =           |
+|     MP_OBJ_TO_PTR(self_in);      |      Unbox: mp_obj_t -> typed ptr
+|   return Person_get_name_native( |
+|     self);                       |
+| }                                |
++----------------------------------+
+                |
+                v
++----------------------------------+
+| Person_get_name_native(self)     |  <-- Native function
+| {                                |
+|   return self->name;             |      Direct field access at offset 24
+| }                                |
++----------------------------------+
+                |
+                v
+           mp_obj_t (the name string)
+```
 
 ## Part 3: Implementation
 
