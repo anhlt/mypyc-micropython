@@ -344,7 +344,7 @@ class ModuleEmitter:
                     f"    {{ MP_ROM_QSTR(MP_QSTR_{const_name}), MP_ROM_INT({const_value}) }},"
                 )
             elif isinstance(const_value, str):
-                escaped = const_value.replace('\\', '\\\\').replace('"', '\\"')
+                # Use QSTR for string constants (escaped for C compatibility)
                 lines.append(
                     f"    {{ MP_ROM_QSTR(MP_QSTR_{const_name}), MP_ROM_QSTR(MP_QSTR_{const_name}) }},"
                 )

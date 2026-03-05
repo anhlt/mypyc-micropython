@@ -1026,7 +1026,7 @@ class BaseEmitter:
             f"mp_obj_new_bound_meth(MP_OBJ_FROM_PTR(&{ref.method_c_name}_obj), MP_OBJ_FROM_PTR(self))"
         ), "mp_obj_t"
 
-        return f"self->{attr.attr_path}", attr.result_type.to_c_type_str()
+
 
     def _emit_param_attr(self, attr: ParamAttrIR) -> tuple[str, str]:
         expr = (

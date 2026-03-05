@@ -2,6 +2,7 @@
 
 Usage: mpremote connect /dev/cu.usbmodem101 run run_device_tests.py
 """
+# ruff: noqa: E402  # Module imports not at top - intentional for per-suite isolation
 
 import gc
 
