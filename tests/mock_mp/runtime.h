@@ -274,6 +274,14 @@ static inline mp_obj_t mp_obj_new_str(const char *data, size_t len) {
     return (mp_obj_t)obj;
 }
 
+static inline const char *mp_obj_str_get_str(mp_obj_t self_in) {
+    mp_obj_str_struct *self = (mp_obj_str_struct *)self_in;
+    if (self->tag != MP_MOCK_TAG_STR) {
+        mp_mock_abort("mp_obj_str_get_str: not a string");
+    }
+    return self->data;
+}
+
 static inline mp_obj_t mp_obj_new_list(size_t n, mp_obj_t *items) {
     mp_obj_list_struct *list = (mp_obj_list_struct *)malloc(sizeof(*list));
     if (list == NULL) {
@@ -596,6 +604,8 @@ static inline mp_obj_t mp_binary_op(mp_binary_op_t op, mp_obj_t lhs, mp_obj_t rh
 #define MP_QSTR_size    ((qstr)0x2011)
 #define MP_QSTR_text    ((qstr)0x2012)
 #define MP_QSTR_generator ((qstr)0x2013)
+#define MP_QSTR_id      ((qstr)0x2014)
+#define MP_QSTR_age     ((qstr)0x2015)
 #define MP_MOCK_TAG_ITER (0x173A)
 
 typedef struct {

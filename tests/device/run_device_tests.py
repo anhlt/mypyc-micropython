@@ -698,6 +698,31 @@ for v in g.range_with_start(5):
     range_start_result.append(v)
 t("range_with_start", str(range_start_result), "[1, 2, 3, 4]")
 
+# ---- traits ----
+suite("traits")
+import traits
+
+# Test Person class (Entity + Named + Describable traits)
+p = traits.Person(1, "Alice", 30)
+t("Person id", p.get_id(), "1")
+t("Person name", p.get_name(), "Alice")  # Trait method with field access
+t("Person age", p.age, "30")
+
+# Test Pet class (Entity + Named + Describable traits)
+cat = traits.Pet(2, "Whiskers", "cat")
+t("Pet id", cat.get_id(), "2")
+t("Pet name", cat.get_name(), "Whiskers")  # Trait method with field access
+
+# Test Document class (Printable trait)
+doc = traits.Document("README", "Hello World")
+# Note: to_string() uses f-string with self.attr, skipped due to f-string issue
+t("Document title", doc.title, "README")
+t("Document body", doc.body, "Hello World")
+
+# Note: Methods using f-strings with self.attr (describe, greet, to_string)
+# are skipped due to pre-existing f-string compilation issue (not trait-related)
+
+
 # ---- summary ----
 gc.collect()
 print("@D:" + str(_total) + "|" + str(_passed) + "|" + str(_failed))

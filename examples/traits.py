@@ -1,0 +1,129 @@
+"""Trait system example demonstrating mypyc-style multiple inheritance.
+
+Traits are interface-like classes that can be mixed into other classes.
+Unlike regular classes, traits:
+- Cannot be instantiated directly
+- Can be inherited by multiple classes
+- Enable a form of multiple inheritance
+
+Following mypyc's approach:
+- Only ONE concrete base class is allowed
+- Multiple traits are allowed
+- Traits must come after the concrete base in the inheritance list
+
+Uses mypy_extensions.trait decorator for compatibility with mypyc.
+"""
+
+from mypy_extensions import trait
+
+
+# Define a trait for objects that can be named
+@trait
+class Named:
+    """Trait for objects that have a name."""
+
+    name: str
+
+    def get_name(self) -> str:
+        return self.name
+
+
+# Define a trait for objects that can be described
+@trait
+class Describable:
+    """Trait for objects that can describe themselves."""
+
+    def describe(self) -> str:
+        return "An object"
+
+
+# Concrete base class
+class Entity:
+    """Base class for all entities."""
+
+    id: int
+
+    def __init__(self, id: int) -> None:
+        self.id = id
+
+    def get_id(self) -> int:
+        return self.id
+
+
+# Class that inherits from Entity and implements both traits
+class Person(Entity, Named, Describable):
+    """A person entity with name and description."""
+
+    age: int
+
+    def __init__(self, id: int, name: str, age: int) -> None:
+        self.id = id
+        self.name = name
+        self.age = age
+
+    def describe(self) -> str:
+        return f"Person {self.name}, age {self.age}"
+
+    def greet(self) -> str:
+        return f"Hello, I'm {self.name}"
+
+
+# Another class implementing the same traits
+class Pet(Entity, Named, Describable):
+    """A pet entity with name and description."""
+
+    species: str
+
+    def __init__(self, id: int, name: str, species: str) -> None:
+        self.id = id
+        self.name = name
+        self.species = species
+
+    def describe(self) -> str:
+        return f"{self.species} named {self.name}"
+
+    def make_sound(self) -> str:
+        if self.species == "dog":
+            return "Woof!"
+        elif self.species == "cat":
+            return "Meow!"
+        return "..."
+
+
+# Simple trait without a concrete base
+@trait
+class Printable:
+    """Trait for objects that can be printed."""
+
+    def to_string(self) -> str:
+        return "Printable object"
+
+
+class Document(Printable):
+    """A document that can be printed."""
+
+    title: str
+    body: str  # renamed from 'content' to avoid QSTR conflict
+
+    def __init__(self, title: str, body: str) -> None:
+        self.title = title
+        self.body = body
+
+    def to_string(self) -> str:
+        return f"Document: {self.title}"
+
+
+# Test functions
+def test_person() -> str:
+    p = Person(1, "Alice", 30)
+    return f"ID={p.get_id()}, Name={p.get_name()}, Desc={p.describe()}"
+
+
+def test_pet() -> str:
+    cat = Pet(2, "Whiskers", "cat")
+    return f"ID={cat.get_id()}, Name={cat.get_name()}, Sound={cat.make_sound()}"
+
+
+def test_document() -> str:
+    doc = Document("README", "Hello World")
+    return doc.to_string()

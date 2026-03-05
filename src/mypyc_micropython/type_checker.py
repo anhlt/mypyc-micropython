@@ -67,7 +67,8 @@ class ClassTypeInfo:
     fields: list[tuple[str, str]]  # (name, type) pairs
     methods: list[FunctionTypeInfo]
     base_class: str | None = None
-
+    traits: list[str] = field(default_factory=list)  # Trait base classes
+    is_trait: bool = False  # True if this is a trait
 
 @dataclass
 class TypeCheckResult:
@@ -401,13 +402,29 @@ def _extract_class_info_from_typeinfo(type_info: MypyTypeInfo) -> ClassTypeInfo:
     fields: list[tuple[str, str]] = []
     methods: list[FunctionTypeInfo] = []
     base_class: str | None = None
+    traits: list[str] = []
+    is_trait = False
+
+    # Check if this is a trait (protocol in mypy terms)
+    # Note: mypy_extensions.trait becomes a protocol-like type
+    if type_info.is_protocol:
+        is_trait = True
 
     if type_info.bases:
         for base in type_info.bases:
             base_name = str(base)
-            if base_name not in ("builtins.object", "object"):
-                base_class = base_name.split(".")[-1]
-                break
+            if base_name in ("builtins.object", "object"):
+                continue
+            short_name = base_name.split(".")[-1]
+            # Check if base is a protocol/trait
+            base_type = base.type if hasattr(base, "type") else None
+            if base_type and hasattr(base_type, "is_protocol") and base_type.is_protocol:
+                traits.append(short_name)
+            elif base_class is None:
+                base_class = short_name
+            else:
+                # Additional non-trait base - could be a trait defined elsewhere
+                traits.append(short_name)
 
     for member_name, sym in type_info.names.items():
         node = sym.node
@@ -431,8 +448,9 @@ def _extract_class_info_from_typeinfo(type_info: MypyTypeInfo) -> ClassTypeInfo:
         fields=fields,
         methods=methods,
         base_class=base_class,
+        traits=traits,
+        is_trait=is_trait,
     )
-
 
 def _extract_class_info_from_classdef(class_def: ClassDef) -> ClassTypeInfo:
     """Extract type information from a ClassDef node (fallback)."""
@@ -440,13 +458,31 @@ def _extract_class_info_from_classdef(class_def: ClassDef) -> ClassTypeInfo:
     fields: list[tuple[str, str]] = []
     methods: list[FunctionTypeInfo] = []
     base_class: str | None = None
+    traits: list[str] = []
+    is_trait = False
 
-    if class_def.base_type_exprs:
-        base_expr = class_def.base_type_exprs[0]
+    # Check for @trait or @mypy_extensions.trait decorator
+    for decorator in class_def.decorators:
+        if isinstance(decorator, NameExpr) and decorator.name == "trait":
+            is_trait = True
+            break
+        # Handle mypy_extensions.trait (as MemberExpr)
+        if hasattr(decorator, "name") and "trait" in str(decorator):
+            is_trait = True
+            break
+
+    # Process base classes
+    for base_expr in class_def.base_type_exprs:
         if hasattr(base_expr, "name"):
             base_name = base_expr.name
-            if base_name not in ("object", "Object"):
+            if base_name in ("object", "Object"):
+                continue
+            # First non-object, non-trait base becomes the concrete base
+            # Others are treated as traits (will be validated later)
+            if base_class is None:
                 base_class = base_name
+            else:
+                traits.append(base_name)
 
     for stmt in class_def.defs.body:
         if isinstance(stmt, FuncDef):
@@ -473,8 +509,9 @@ def _extract_class_info_from_classdef(class_def: ClassDef) -> ClassTypeInfo:
         fields=fields,
         methods=methods,
         base_class=base_class,
+        traits=traits,
+        is_trait=is_trait,
     )
-
 
 def format_type_errors(result: TypeCheckResult) -> str:
     """Format type check errors for display.

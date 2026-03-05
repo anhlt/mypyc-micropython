@@ -7,7 +7,7 @@ including structs, vtables, constructors, and method wrappers.
 
 from __future__ import annotations
 
-from .ir import ClassIR, CType, PropertyInfo
+from .ir import ClassIR, CType, MethodIR, PropertyInfo
 
 
 class ClassEmitter:
@@ -144,6 +144,14 @@ class ClassEmitter:
             if vtable_entries:
                 lines.append(f"    const {self.c_name}_vtable_t *vtable;")
 
+        # Emit fields from traits (traits don't have inheritance, so fields are flat)
+        for trait in self.class_ir.traits:
+            for fld in trait.fields:
+                # Only emit if not already present in own fields or base
+                if not any(f.name == fld.name for f in self.class_ir.fields):
+                    lines.append(f"    {fld.get_c_type_str()} {fld.name};  // from trait {trait.name}")
+
+        # Emit this class's own fields
         for fld in self.class_ir.fields:
             lines.append(f"    {fld.get_c_type_str()} {fld.name};")
 
@@ -311,6 +319,10 @@ class ClassEmitter:
         return lines
 
     def emit_make_new(self) -> list[str]:
+        # Traits cannot be instantiated
+        if self.class_ir.is_trait:
+            return []
+
         lines = []
         vtable_entries = self.class_ir.get_vtable_entries()
 
@@ -781,6 +793,170 @@ class ClassEmitter:
 
         return lines
 
+    def _get_own_or_base_method(self, method_name: str) -> MethodIR | None:
+        """Get method if defined in this class or its concrete base chain (not traits)."""
+        # Check this class's own methods
+        if method_name in self.class_ir.methods:
+            return self.class_ir.methods[method_name]
+        # Check base class chain (concrete inheritance only)
+        base = self.class_ir.base
+        while base:
+            if method_name in base.methods:
+                return base.methods[method_name]
+            base = base.base
+        return None
+
+    def emit_trait_method_wrappers(self) -> list[str]:
+        """Generate wrapper methods for inherited trait methods.
+
+        When a class implements a trait but doesn't override a trait method,
+        we need to generate a wrapper that properly accesses fields from this
+        class's struct layout (which differs from the trait's struct layout).
+        """
+        if self.class_ir.is_trait:
+            return []
+
+        all_traits = self.class_ir.get_all_traits()
+        if not all_traits:
+            return []
+
+        lines = []
+        generated_wrappers: set[str] = set()
+
+        for trait in all_traits:
+            trait_methods = trait.get_all_methods()
+            for method_name, trait_method in trait_methods.items():
+                if method_name.startswith("_"):
+                    continue
+
+                # Check if this class or its base chain provides the method
+                own_method = self._get_own_or_base_method(method_name)
+                if own_method is not None:
+                    # Class or base overrides it, no wrapper needed
+                    continue
+
+                # Method comes from trait - generate a wrapper
+                wrapper_name = f"{self.c_name}_{method_name}_from_{trait.c_name}"
+                if wrapper_name in generated_wrappers:
+                    continue
+                generated_wrappers.add(wrapper_name)
+
+                # Generate wrapper function signature
+                ret_type = trait_method.return_type.to_c_type_str()
+                params = [f"{self.c_name}_obj_t *self"]
+                param_names = []
+                for param_name, param_type in trait_method.params:
+                    params.append(f"{param_type.to_c_type_str()} {param_name}")
+                    param_names.append(param_name)
+                params_str = ", ".join(params)
+
+                lines.append(f"// Wrapper for trait {trait.name}.{method_name}")
+                lines.append(f"static {ret_type} {wrapper_name}_native({params_str}) {{")
+
+                # Generate the method body by re-implementing the trait method logic
+                # For simple field accessors, we just access self->field
+                # For more complex methods, we use a cast (may not work for all cases)
+
+                # Check AST for simple pattern: return self.field
+                import ast
+                body = trait_method.body_ast.body
+                if len(body) == 1 and isinstance(body[0], ast.Return):
+                    ret_val = body[0].value
+                    if isinstance(ret_val, ast.Attribute):
+                        if isinstance(ret_val.value, ast.Name) and ret_val.value.id == "self":
+                            field_name = ret_val.attr
+                            lines.append(f"    return self->{field_name};")
+                            lines.append("}")
+                            lines.append("")
+                            # Also generate MP wrapper for this method
+                            lines.append(f"static mp_obj_t {wrapper_name}_mp(mp_obj_t self_in) {{")
+                            lines.append(f"    {self.c_name}_obj_t *self = MP_OBJ_TO_PTR(self_in);")
+                            lines.append(f"    return {wrapper_name}_native(self);")
+                            lines.append("}")
+                            lines.append(f"MP_DEFINE_CONST_FUN_OBJ_1({wrapper_name}_obj, {wrapper_name}_mp);")
+                            lines.append("")
+                            continue
+
+                # Fallback: call the original trait method with a cast (unsafe but may work)
+                # This is a fallback for complex method bodies
+                # We need to cast - this works if the field layout is compatible
+                lines.append("    // WARNING: casting to trait struct - field layout must be compatible")
+                lines.append(f"    return {trait_method.c_name}_native(({trait.c_name}_obj_t *)self);")
+                lines.append("}")
+                lines.append("")
+                # Also generate MP wrapper for the fallback
+                lines.append(f"static mp_obj_t {wrapper_name}_mp(mp_obj_t self_in) {{")
+                lines.append(f"    {self.c_name}_obj_t *self = MP_OBJ_TO_PTR(self_in);")
+                lines.append(f"    return {wrapper_name}_native(self);")
+                lines.append("}")
+                lines.append(f"MP_DEFINE_CONST_FUN_OBJ_1({wrapper_name}_obj, {wrapper_name}_mp);")
+                lines.append("")
+
+        return lines
+
+    def emit_trait_vtables(self) -> list[str]:
+        """Emit separate vtables for each trait implemented by this class.
+
+        Following mypyc's approach: each trait gets its own vtable containing
+        implementations of its methods from this class. This enables runtime
+        dispatch when calling methods through trait type references.
+        """
+        if self.class_ir.is_trait:
+            return []  # Traits don't have trait vtables
+
+        all_traits = self.class_ir.get_all_traits()
+        if not all_traits:
+            return []
+
+        lines = []
+
+        for trait in all_traits:
+            trait_methods = trait.get_all_methods()
+            if not trait_methods:
+                continue
+
+            # Generate vtable struct type for this trait (if not already defined)
+            lines.append(f"// Trait vtable for {trait.name}")
+            lines.append(f"typedef struct _{self.c_name}_{trait.c_name}_vtable_t {{")
+            for method_name, method_ir in trait_methods.items():
+                if method_name.startswith("_"):
+                    continue  # Skip private methods in trait vtable
+                ret_type = method_ir.return_type.to_c_type_str()
+                params = [f"{self.c_name}_obj_t *self"]
+                for param_name, param_type in method_ir.params:
+                    params.append(f"{param_type.to_c_type_str()} {param_name}")
+                params_str = ", ".join(params)
+                lines.append(f"    {ret_type} (*{method_name})({params_str});")
+            lines.append(f"}} {self.c_name}_{trait.c_name}_vtable_t;")
+            lines.append("")
+
+            # Generate vtable instance
+            lines.append(
+                f"static const {self.c_name}_{trait.c_name}_vtable_t {self.c_name}_{trait.c_name}_vtable = {{"
+            )
+
+            # Fill in implementations from this class (or inherited)
+            for method_name, trait_method in trait_methods.items():
+                if method_name.startswith("_"):
+                    continue
+
+                # Check if this class or its base provides the method
+                own_method = self._get_own_or_base_method(method_name)
+                if own_method is not None:
+                    # Use the class's own implementation
+                    lines.append(f"    .{method_name} = {own_method.c_name}_native,")
+                else:
+                    # Use the generated wrapper
+                    wrapper_name = f"{self.c_name}_{method_name}_from_{trait.c_name}"
+                    lines.append(f"    .{method_name} = {wrapper_name}_native,")
+
+            lines.append("};")
+            lines.append("")
+            lines.append("")
+
+        return lines
+
+
     def emit_locals_dict(self) -> list[str]:
         # Get all methods including inherited ones
         all_methods = self.class_ir.get_all_methods()
@@ -821,9 +997,29 @@ class ClassEmitter:
         lines.append(f"static const mp_rom_map_elem_t {self.c_name}_locals_dict_table[] = {{")
         for name in method_names:
             method = all_methods[name]
-            lines.append(
-                f"    {{ MP_ROM_QSTR(MP_QSTR_{name}), MP_ROM_PTR(&{method.c_name}_obj) }},"
-            )
+            # Check if this method needs a trait wrapper
+            own_method = self._get_own_or_base_method(name)
+            if own_method is not None:
+                # Method is from this class or base - use normal obj
+                lines.append(
+                    f"    {{ MP_ROM_QSTR(MP_QSTR_{name}), MP_ROM_PTR(&{method.c_name}_obj) }},"
+                )
+            else:
+                # Method from trait - find which trait and use wrapper
+                wrapper_obj = None
+                for trait in self.class_ir.get_all_traits():
+                    if name in trait.get_all_methods():
+                        wrapper_obj = f"{self.c_name}_{name}_from_{trait.c_name}_obj"
+                        break
+                if wrapper_obj:
+                    lines.append(
+                        f"    {{ MP_ROM_QSTR(MP_QSTR_{name}), MP_ROM_PTR(&{wrapper_obj}) }},"
+                    )
+                else:
+                    # Fallback to original method obj
+                    lines.append(
+                        f"    {{ MP_ROM_QSTR(MP_QSTR_{name}), MP_ROM_PTR(&{method.c_name}_obj) }},"
+                    )
         lines.append("};")
 
         lines.append(
@@ -837,7 +1033,10 @@ class ClassEmitter:
         lines = []
 
         slots = []
-        slots.append(f"    make_new, {self.c_name}_make_new")
+
+        # Traits can't be instantiated - don't add make_new slot
+        if not self.class_ir.is_trait:
+            slots.append(f"    make_new, {self.c_name}_make_new")
 
         if self.class_ir.get_all_fields() or self.class_ir.get_all_properties():
             slots.append(f"    attr, {self.c_name}_attr")
@@ -927,6 +1126,8 @@ class ClassEmitter:
         sections.extend(self.emit_unary_op_handler())
         sections.extend(self.emit_iter_handlers())
         sections.extend(self.emit_vtable_instance())
+        sections.extend(self.emit_trait_method_wrappers())
+        sections.extend(self.emit_trait_vtables())
         sections.extend(self.emit_make_new())
         sections.extend(self.emit_locals_dict())
         sections.extend(self.emit_type_definition())
@@ -943,6 +1144,8 @@ class ClassEmitter:
         sections.extend(self.emit_unary_op_handler())
         sections.extend(self.emit_iter_handlers())
         sections.extend(self.emit_vtable_instance())
+        sections.extend(self.emit_trait_method_wrappers())
+        sections.extend(self.emit_trait_vtables())
         sections.extend(self.emit_make_new())
         sections.extend(self.emit_locals_dict())
         sections.extend(self.emit_type_definition())

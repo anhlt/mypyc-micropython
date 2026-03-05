@@ -127,12 +127,18 @@ class IRPrinter:
         if cls.base_name:
             lines.append(f"{self._i()}Base: {cls.base_name}")
 
+        if cls.is_trait:
+            lines.append(f"{self._i()}@trait")
+
+        if cls.trait_names:
+            lines.append(f"{self._i()}Traits: {', '.join(cls.trait_names)}")
+
         if cls.is_dataclass:
             lines.append(f"{self._i()}@dataclass")
 
         if cls.is_final_class:
             lines.append(f"{self._i()}@final")
-        if cls.fields:
+
             lines.append(f"{self._i()}Fields:")
             self._indent_inc()
             for field in cls.fields:
