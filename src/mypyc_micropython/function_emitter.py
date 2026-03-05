@@ -45,6 +45,7 @@ from .ir import (
     SelfAttrIR,
     SelfAugAssignIR,
     SelfMethodCallIR,
+    SelfMethodRefIR,
     SliceIR,
     StmtIR,
     SubscriptAssignIR,
@@ -554,6 +555,9 @@ class BaseEmitter:
             return self._emit_class_instantiation(value, native)
         elif isinstance(value, SelfAttrIR):
             return self._emit_self_attr(value)
+        elif isinstance(value, SelfMethodRefIR):
+            return self._emit_self_method_ref(value)
+            return self._emit_self_attr(value)
         elif isinstance(value, ParamAttrIR):
             return self._emit_param_attr(value)
         elif isinstance(value, SelfMethodCallIR):
@@ -736,8 +740,19 @@ class BaseEmitter:
             a = args[0][0]
             return f"(({a}) < 0 ? -({a}) : ({a}))", "mp_int_t"
         elif func == "int" and args:
-            return f"((mp_int_t)({args[0][0]}))", "mp_int_t"
+            arg_expr, arg_type = args[0]
+            # If already mp_int_t, just cast; otherwise convert from mp_obj_t
+            if arg_type == "mp_int_t":
+                return f"((mp_int_t)({arg_expr}))", "mp_int_t"
+            else:
+                return f"mp_obj_get_int({arg_expr})", "mp_int_t"
         elif func == "float" and args:
+            arg_expr, arg_type = args[0]
+            # If already mp_float_t, just cast; otherwise convert from mp_obj_t
+            if arg_type == "mp_float_t":
+                return f"((mp_float_t)({arg_expr}))", "mp_float_t"
+            else:
+                return f"mp_obj_get_float({arg_expr})", "mp_float_t"
             return f"((mp_float_t)({args[0][0]}))", "mp_float_t"
         elif func == "len" and args:
             arg_expr, arg_type = args[0]
@@ -1004,6 +1019,15 @@ class BaseEmitter:
     def _emit_self_attr(self, attr: SelfAttrIR) -> tuple[str, str]:
         return f"self->{attr.attr_path}", attr.result_type.to_c_type_str()
 
+    def _emit_self_method_ref(self, ref: SelfMethodRefIR) -> tuple[str, str]:
+        """Emit a bound method reference: self.method -> bound method object."""
+        # Create a bound method that captures both the method and self
+        return (
+            f"mp_obj_new_bound_meth(MP_OBJ_FROM_PTR(&{ref.method_c_name}_obj), MP_OBJ_FROM_PTR(self))"
+        ), "mp_obj_t"
+
+        return f"self->{attr.attr_path}", attr.result_type.to_c_type_str()
+
     def _emit_param_attr(self, attr: ParamAttrIR) -> tuple[str, str]:
         expr = (
             f"(({attr.class_c_name}_obj_t *)MP_OBJ_TO_PTR({attr.c_param_name}))->{attr.attr_path}"
@@ -1067,15 +1091,35 @@ class BaseEmitter:
         mod_name = call.module_name
         func_name = call.func_name
 
-        # Build boxed args
+        # Build boxed positional args
         boxed_args = []
         for arg in call.args:
             arg_expr, arg_type = self._emit_expr(arg, native)
             boxed_args.append(self._box_value(arg_expr, arg_type))
 
-        # Emit inline expression using compound statement expression (GCC extension)
-        # For cleaner code, use sequential calls:
+        # Build boxed keyword args (interleaved: key, value, key, value, ...)
+        boxed_kwargs = []
+        for kw_name, kw_val in call.kwargs:
+            boxed_kwargs.append(f"MP_OBJ_NEW_QSTR(MP_QSTR_{kw_name})")
+            kw_expr, kw_type = self._emit_expr(kw_val, native)
+            boxed_kwargs.append(self._box_value(kw_expr, kw_type))
+
         n_args = len(boxed_args)
+        n_kw = len(call.kwargs)
+
+        # If we have kwargs, must use mp_call_function_n_kw
+        if n_kw > 0:
+            all_args = boxed_args + boxed_kwargs
+            args_str = ", ".join(all_args)
+            return (
+                f"mp_call_function_n_kw("
+                f"mp_load_attr("
+                f"mp_import_name(MP_QSTR_{mod_name}, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)), "
+                f"MP_QSTR_{func_name}), "
+                f"{n_args}, {n_kw}, (const mp_obj_t[]){{{args_str}}})"
+            ), "mp_obj_t"
+
+        # No kwargs - use optimized paths
         if n_args == 0:
             return (
                 f"mp_call_function_0("
@@ -1497,6 +1541,13 @@ class MethodEmitter(BaseEmitter):
                     )
         return f"self->{attr.attr_path}", attr.result_type.to_c_type_str()
 
+    def _emit_self_method_ref(self, ref: SelfMethodRefIR) -> tuple[str, str]:
+        """Emit a bound method reference: self.method -> bound method object."""
+        return (
+            f"mp_obj_new_bound_meth(MP_OBJ_FROM_PTR(&{ref.method_c_name}_obj), MP_OBJ_FROM_PTR(self))"
+        ), "mp_obj_t"
+
+
     def emit_native(self, body: list[StmtIR]) -> str:
         method_ir = self.method_ir
         class_ir = self.class_ir
@@ -1717,20 +1768,19 @@ class MethodEmitter(BaseEmitter):
             None,
         )
 
-        if native:
-            lines.append(f"    self->{stmt.attr_path} = {value_expr};")
-        else:
-            if field:
-                if field.c_type == CType.MP_INT_T and value_type != "mp_int_t":
-                    lines.append(f"    self->{stmt.attr_path} = mp_obj_get_int({value_expr});")
-                elif field.c_type == CType.MP_FLOAT_T and value_type != "mp_float_t":
-                    lines.append(f"    self->{stmt.attr_path} = mp_obj_get_float({value_expr});")
-                elif field.c_type == CType.BOOL and value_type != "bool":
-                    lines.append(f"    self->{stmt.attr_path} = mp_obj_is_true({value_expr});")
-                else:
-                    lines.append(f"    self->{stmt.attr_path} = {value_expr};")
+        # Always apply type conversion when assigning to typed fields, even in native mode
+        # because the value might come from mp_obj_subscr etc. which returns mp_obj_t
+        if field:
+            if field.c_type == CType.MP_INT_T and value_type != "mp_int_t":
+                lines.append(f"    self->{stmt.attr_path} = mp_obj_get_int({value_expr});")
+            elif field.c_type == CType.MP_FLOAT_T and value_type != "mp_float_t":
+                lines.append(f"    self->{stmt.attr_path} = mp_obj_get_float({value_expr});")
+            elif field.c_type == CType.BOOL and value_type != "bool":
+                lines.append(f"    self->{stmt.attr_path} = mp_obj_is_true({value_expr});")
             else:
                 lines.append(f"    self->{stmt.attr_path} = {value_expr};")
+        else:
+            lines.append(f"    self->{stmt.attr_path} = {value_expr};")
         return lines
 
     def _emit_self_aug_assign(self, stmt: SelfAugAssignIR, native: bool = False) -> list[str]:

@@ -670,12 +670,14 @@ class TestBuiltinFunctions:
     def test_int_cast(self):
         source = "def to_int(x: float) -> int:\n    return int(x)\n"
         result = compile_source(source, "test", type_check=False)
-        assert "(mp_int_t)" in result
+        # int() on non-int types now properly uses mp_obj_get_int
+        assert "mp_obj_get_int" in result
 
     def test_float_cast(self):
         source = "def to_float(x: int) -> float:\n    return float(x)\n"
         result = compile_source(source, "test", type_check=False)
-        assert "(mp_float_t)" in result
+        # float() on non-float types now properly uses mp_obj_get_float
+        assert "mp_obj_get_float" in result
 
     def test_print_string(self):
         source = """
@@ -1282,7 +1284,11 @@ def get_value(d: dict, key: str):
     return d.get(key)
 """
         result = compile_source(source, "test", type_check=False)
-        assert "mp_obj_dict_get" in result
+        # dict.get(key) without default now properly returns None if key not found
+        # by calling the method with mp_const_none as default
+        assert "mp_call_function_n_kw" in result
+        assert "MP_QSTR_get" in result
+        assert "mp_const_none" in result
 
     def test_dict_get_with_default(self):
         source = """
@@ -1567,7 +1573,9 @@ def get_or_zero(d: dict, key: str) -> int:
 """
         result = compile_source(source, "test", type_check=False)
         assert "mp_obj_t d" in result
-        assert "mp_obj_dict_get" in result
+        # dict.get(key) properly uses method call with None default
+        assert "mp_call_function_n_kw" in result
+        assert "MP_QSTR_get" in result
 
     def test_dict_len_in_condition(self):
         source = """
@@ -1623,7 +1631,9 @@ def get_by_int(d: dict, key: int):
     return d.get(key)
 """
         result = compile_source(source, "test", type_check=False)
-        assert "mp_obj_dict_get" in result
+        # dict.get(key) with int key properly uses method call with None default
+        assert "mp_call_function_n_kw" in result
+        assert "MP_QSTR_get" in result
         assert "mp_obj_new_int(key)" in result
 
     def test_dict_get_with_default_int(self):
@@ -4976,6 +4986,36 @@ def combo(n: int) -> int:
         assert "MP_QSTR_factorial" in result
         assert "MP_QSTR_math_ops" in result
         assert "MP_QSTR_timed_sum" in result
+
+    def test_module_call_with_kwargs(self):
+        """Module call with keyword arguments: module.func(a, key=value)."""
+        source = '''
+import nav
+
+def create_nav() -> object:
+    return nav.Nav(capacity=8, builders=())  # noqa: type - demo kwargs
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should use mp_call_function_n_kw
+        assert "mp_call_function_n_kw" in result
+        # Should have keyword names as QSTRs
+        assert "MP_QSTR_capacity" in result
+        assert "MP_QSTR_builders" in result
+        # n_args=0, n_kw=2
+        assert "mp_call_function_n_kw(" in result
+
+    def test_module_call_mixed_args_kwargs(self):
+        """Module call with positional and keyword arguments."""
+        source = '''
+import nav
+
+def create_nav2(cap: int) -> object:
+    return nav.Nav(cap, builders=())  # noqa: type - demo mixed
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should use mp_call_function_n_kw with n_args=1, n_kw=1
+        assert "mp_call_function_n_kw(" in result
+        assert "MP_QSTR_builders" in result
 
 
 class TestPrivateMethodOptimization:

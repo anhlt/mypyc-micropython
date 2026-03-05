@@ -104,6 +104,21 @@ class ClassEmitter:
             lines.append("")
         return lines
 
+    def emit_method_obj_forward_declarations(self) -> list[str]:
+        """Emit forward declarations for method _obj symbols.
+
+        This is needed when bound method references (self.method) are used
+        before the method is defined. For example:
+            callback = self._build_home  # needs &ClassName_method_obj
+
+        NOTE: Currently disabled because forward declarations conflict with
+        MP_DEFINE_CONST_FUN_OBJ_X macros which create definitions.
+        Instead, we reorder method emission so non-__init__ methods come first.
+        """
+        # Disabled - see note above
+        return []
+
+
     def emit_struct(self) -> list[str]:
         lines = []
         vtable_entries = self.class_ir.get_vtable_entries()

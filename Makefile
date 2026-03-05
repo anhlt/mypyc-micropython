@@ -6,7 +6,7 @@
 BOARD ?= ESP32_GENERIC
 PORT ?= /dev/ttyACM0
 BAUD ?= 460800
-LVGL ?= 0
+LVGL ?= 1
 
 # Paths
 ROOT_DIR := $(shell pwd)

@@ -41,7 +41,6 @@ from mypyc_micropython.ir import (
     NameIR,
     PassIR,
     ReturnIR,
-    SelfAttrIR,
     SelfMethodCallIR,
     SubscriptAssignIR,
     SubscriptIR,
@@ -1234,6 +1233,70 @@ class TestEmitMethodCall:
         )
         c_code = FunctionEmitter(func_ir).emit()[0]
         assert "mp_obj_list_append(" in c_code
+
+    def test_emit_method_call_with_kwargs(self):
+        """Method call with keyword arguments: obj.method(a, b=1, c=2)."""
+        temp = make_temp("_tmp0")
+        func_ir = make_func(
+            params=[("obj", CType.MP_OBJ_T), ("a", CType.MP_INT_T)],
+            return_type=CType.MP_OBJ_T,
+            max_temp=1,
+            body=[
+                ExprStmtIR(
+                    expr=temp,
+                    prelude=[
+                        MethodCallIR(
+                            result=temp,
+                            receiver=make_name("obj", IRType.OBJ),
+                            method="configure",
+                            args=[make_name("a")],
+                            kwargs=[
+                                ("width", ConstIR(ir_type=IRType.INT, value=100)),
+                                ("height", ConstIR(ir_type=IRType.INT, value=200)),
+                            ],
+                        )
+                    ],
+                ),
+                ReturnIR(value=temp),
+            ],
+        )
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        # Should use mp_call_method_n_kw with n_args=1, n_kw=2
+        assert "mp_call_method_n_kw(1, 2," in c_code
+        # Should have keyword names as QSTRs
+        assert "MP_QSTR_width" in c_code
+        assert "MP_QSTR_height" in c_code
+
+    def test_emit_method_call_kwargs_only(self):
+        """Method call with only keyword arguments: obj.method(x=1)."""
+        temp = make_temp("_tmp0")
+        func_ir = make_func(
+            params=[("obj", CType.MP_OBJ_T)],
+            return_type=CType.MP_OBJ_T,
+            max_temp=1,
+            body=[
+                ExprStmtIR(
+                    expr=temp,
+                    prelude=[
+                        MethodCallIR(
+                            result=temp,
+                            receiver=make_name("obj", IRType.OBJ),
+                            method="set_value",
+                            args=[],
+                            kwargs=[
+                                ("value", ConstIR(ir_type=IRType.INT, value=42)),
+                            ],
+                        )
+                    ],
+                ),
+                ReturnIR(value=temp),
+            ],
+        )
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        # Should use mp_call_method_n_kw with n_args=0, n_kw=1
+        assert "mp_call_method_n_kw(0, 1," in c_code
+        assert "MP_QSTR_value" in c_code
+
 
 
 # ============================================================================

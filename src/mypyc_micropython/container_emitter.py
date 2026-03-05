@@ -30,6 +30,7 @@ from .ir import (
     NameIR,
     ParamAttrIR,
     SelfAttrIR,
+    SelfMethodRefIR,
     SetItemIR,
     SetNewIR,
     SubscriptIR,
@@ -371,8 +372,15 @@ class ContainerEmitter:
                 f"2, 0, (mp_obj_t[]){{{key_c}, {default_c}}});"
             ]
         elif len(instr.args) == 1:
+            # dict.get(key) with no default returns None if key not found
+            # Use method call with mp_const_none as default instead of mp_obj_dict_get
+            # which raises KeyError
             key_c = self._box_value_ir(instr.args[0])
-            return [f"    mp_obj_t {result_name} = mp_obj_dict_get({receiver}, {key_c});"]
+            return [
+                f"    mp_obj_t {result_name} = "
+                f"mp_call_function_n_kw(mp_load_attr({receiver}, MP_QSTR_get), "
+                f"2, 0, (mp_obj_t[]){{{key_c}, mp_const_none}});"
+            ]
         return ["    /* get() requires at least 1 arg */"]
 
     def _emit_zero_arg_method(self, instr: MethodCallIR, receiver: str) -> list[str]:
@@ -494,18 +502,40 @@ class ContainerEmitter:
     def _emit_generic_method_call(self, instr: MethodCallIR, receiver: str) -> list[str]:
         """Fallback for unknown methods: mp_load_method + mp_call_method."""
         n_args = len(instr.args)
-        method_size = 2 + n_args
-        parts = [f"mp_obj_t __method[{method_size}]; "]
-        parts.append(f"mp_load_method({receiver}, MP_QSTR_{instr.method}, __method); ")
-        for i, arg in enumerate(instr.args):
-            boxed = self._box_value_ir(arg)
-            parts.append(f"__method[{2 + i}] = {boxed}; ")
-        parts.append(f"mp_call_method_n_kw({n_args}, 0, __method); ")
-        block = "".join(parts)
+        n_kw = len(instr.kwargs)
+
+        # With kwargs: use array-based approach
+        if n_kw > 0:
+            # Total slots: __method[0]=func, __method[1]=self, then args, then kw pairs
+            total_slots = 2 + n_args + (n_kw * 2)
+            parts = [f"mp_obj_t __method[{total_slots}]; "]
+            parts.append(f"mp_load_method({receiver}, MP_QSTR_{instr.method}, __method); ")
+            # Positional args
+            for i, arg in enumerate(instr.args):
+                boxed = self._box_value_ir(arg)
+                parts.append(f"__method[{2 + i}] = {boxed}; ")
+            # Keyword args (interleaved: key, value)
+            kw_start = 2 + n_args
+            for i, (kw_name, kw_val) in enumerate(instr.kwargs):
+                boxed_val = self._box_value_ir(kw_val)
+                parts.append(f"__method[{kw_start + i * 2}] = MP_OBJ_NEW_QSTR(MP_QSTR_{kw_name}); ")
+                parts.append(f"__method[{kw_start + i * 2 + 1}] = {boxed_val}; ")
+            parts.append(f"mp_call_method_n_kw({n_args}, {n_kw}, __method); ")
+            block = "".join(parts)
+        else:
+            # No kwargs - original optimized path
+            method_size = 2 + n_args
+            parts = [f"mp_obj_t __method[{method_size}]; "]
+            parts.append(f"mp_load_method({receiver}, MP_QSTR_{instr.method}, __method); ")
+            for i, arg in enumerate(instr.args):
+                boxed = self._box_value_ir(arg)
+                parts.append(f"__method[{2 + i}] = {boxed}; ")
+            parts.append(f"mp_call_method_n_kw({n_args}, 0, __method); ")
+            block = "".join(parts)
 
         if instr.result:
             return [f"    mp_obj_t {instr.result.name} = ({{ {block}}});"]
-        return [f"    (void)({{ {block}}});"]
+        return [f"    (void)({{ {block}}}); "]
 
     # ------------------------------------------------------------------
     # Value helpers
@@ -581,6 +611,13 @@ class ContainerEmitter:
             return "".join(parts)
         elif isinstance(value, SelfAttrIR):
             return f"self->{value.attr_path}"
+        elif isinstance(value, SelfMethodRefIR):
+            # Bound method reference: self.method -> bound method object
+            return (
+                f"mp_obj_new_bound_meth("
+                f"MP_OBJ_FROM_PTR(&{value.method_c_name}_obj), "
+                f"MP_OBJ_FROM_PTR(self))"
+            )
         elif isinstance(value, ParamAttrIR):
             return (
                 f"(({value.class_c_name}_obj_t *)MP_OBJ_TO_PTR({value.c_param_name}))"

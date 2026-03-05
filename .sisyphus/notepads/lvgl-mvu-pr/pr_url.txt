@@ -1,0 +1,1 @@
+https://github.com/anhlt/mypyc-micropython/pull/36

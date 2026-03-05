@@ -56,21 +56,21 @@ def run_nav_push_pop_suite():
     refresh(5)
 
     app.dispatch(mvu.MSG_PUSH_SETTINGS)
-    app.tick(1, pump_timer=True)
+    app.tick(1, True)
     refresh(2)
     t("push active settings", app.active_screen_id, str(mvu.SCREEN_SETTINGS))
     t("push nav_size", app.nav_size, "2")
 
     app.dispatch(mvu.MSG_POP)
-    app.tick(1, pump_timer=True)
+    app.tick(1, True)
     refresh(2)
     t("pop active home", app.active_screen_id, str(mvu.SCREEN_HOME))
     t("pop nav_size", app.nav_size, "1")
 
     app.dispatch(mvu.MSG_PUSH_SETTINGS)
-    app.tick(1, pump_timer=True)
+    app.tick(1, True)
     app.dispatch(mvu.MSG_REPLACE_HOME)
-    app.tick(1, pump_timer=True)
+    app.tick(1, True)
     refresh(2)
     t("replace active home", app.active_screen_id, str(mvu.SCREEN_HOME))
 
@@ -88,7 +88,7 @@ def run_memory_soak_tick_20000_suite():
 
     for i in range(20000):
         app.dispatch(mvu.MSG_INCREMENT)
-        app.tick(1, pump_timer=True)
+        app.tick(1, True)
 
         if i % 128 == 0:
             gc.collect()
@@ -121,9 +121,9 @@ def run_memory_soak_nav_2000_suite():
         else:
             app.dispatch(mvu.MSG_REPLACE_HOME)
 
-        app.tick(1, pump_timer=True)
+        app.tick(1, True)
         app.dispatch(mvu.MSG_INCREMENT)
-        app.tick(1, pump_timer=True)
+        app.tick(1, True)
 
         if i % 64 == 0:
             gc.collect()
@@ -149,7 +149,7 @@ def run_remount_no_drift_suite():
     for i in range(500):
         app.mount()
         app.dispatch(mvu.MSG_INCREMENT)
-        app.tick(1, pump_timer=True)
+        app.tick(1, True)
         app.dispose()
 
         if i % 50 == 0:

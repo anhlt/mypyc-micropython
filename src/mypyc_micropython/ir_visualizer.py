@@ -59,6 +59,7 @@ from .ir import (
     SelfAttrIR,
     SelfAugAssignIR,
     SelfMethodCallIR,
+    SelfMethodRefIR,
     SetItemIR,
     SetNewIR,
     SliceIR,
@@ -535,9 +536,11 @@ class IRPrinter:
             return f"{self._i()}{instr.result.name} = DictNew({{{entries}}})"
         elif isinstance(instr, MethodCallIR):
             args = ", ".join(self.print_value(a) for a in instr.args)
+            kwargs_str = ", ".join(f"{k}={self.print_value(v)}" for k, v in instr.kwargs)
+            all_args = args + (", " + kwargs_str if args and kwargs_str else kwargs_str)
             result_str = f"{instr.result.name} = " if instr.result else ""
             return (
-                f"{self._i()}{result_str}{self.print_value(instr.receiver)}.{instr.method}({args})"
+                f"{self._i()}{result_str}{self.print_value(instr.receiver)}.{instr.method}({all_args})"
             )
         elif isinstance(instr, GetItemIR):
             return f"{self._i()}{instr.result.name} = {self.print_value(instr.container)}[{self.print_value(instr.key)}]"
@@ -597,6 +600,8 @@ class IRPrinter:
             return f"({self.print_value(value.body)} if {self.print_value(value.test)} else {self.print_value(value.orelse)})"
         elif isinstance(value, SelfAttrIR):
             return f"self.{value.attr_name}"
+        elif isinstance(value, SelfMethodRefIR):
+            return f"self.{value.method_name}  # bound method ref"
         elif isinstance(value, ParamAttrIR):
             return f"{value.param_name}.{value.attr_name}"
         elif isinstance(value, SelfMethodCallIR):
@@ -615,7 +620,9 @@ class IRPrinter:
             return f"{lower}:{upper}{step}"
         elif isinstance(value, ModuleCallIR):
             args = ", ".join(self.print_value(a) for a in value.args)
-            return f"{value.module_name}.{value.func_name}({args})"
+            kwargs_str = ", ".join(f"{k}={self.print_value(v)}" for k, v in value.kwargs)
+            all_args = args + (", " + kwargs_str if args and kwargs_str else kwargs_str)
+            return f"{value.module_name}.{value.func_name}({all_args})"
         elif isinstance(value, ModuleAttrIR):
             return f"{value.module_name}.{value.attr_name}"
         else:

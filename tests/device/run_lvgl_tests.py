@@ -180,8 +180,9 @@ except Exception as e:
 suite("lvgl_mvu")
 
 try:
-    import lvgl_mvu as mvu
     import gc
+
+    import lvgl_mvu as mvu
 
     # Create app with initial parameters
     app = mvu.App(0, 8, 32)  # screen_width, screen_height, buffer_size

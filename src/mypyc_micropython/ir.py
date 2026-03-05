@@ -610,13 +610,14 @@ class SetItemIR(InstrIR):
 
 @dataclass
 class MethodCallIR(InstrIR):
-    """receiver.method(args)  →  optional result."""
+    """receiver.method(args, **kwargs)  ->  optional result."""
 
     result: TempIR | None
     receiver: ValueIR
     method: str
     args: list[ValueIR]
-
+    # Keyword arguments: list of (name, value) pairs
+    kwargs: list[tuple[str, ValueIR]] = field(default_factory=list)
 
 @dataclass
 class BoxIR(InstrIR):
@@ -1016,6 +1017,25 @@ class SelfAttrIR(ExprIR):
 
 
 @dataclass
+class SelfMethodRefIR(ExprIR):
+    """Bound method reference on self: self.method (not a call).
+
+    When used as a value (not called), this creates a bound method object.
+    Example: callback = self._build_home
+
+    Generated C code:
+        mp_obj_new_bound_meth(
+            MP_OBJ_FROM_PTR(&ClassName_method_obj),
+            MP_OBJ_FROM_PTR(self)
+        )
+    """
+
+    method_name: str  # Python method name (e.g., "_build_home")
+    method_c_name: str  # Full C function obj name (e.g., "module_App__build_home_obj")
+    class_c_name: str  # C class name (e.g., "module_App")
+
+
+@dataclass
 class ParamAttrIR(ExprIR):
     """Attribute access on a typed class parameter: param.attr (for functions).
 
@@ -1078,7 +1098,7 @@ class ModuleImportIR(InstrIR):
 
 @dataclass
 class ModuleCallIR(ExprIR):
-    """Call a function on an imported module: module.func(args).
+    """Call a function on an imported module: module.func(args, **kwargs).
 
     Generated C:
         mp_obj_t mod = mp_import_name(MP_QSTR_math, mp_const_none, MP_OBJ_NEW_SMALL_INT(0));
@@ -1090,7 +1110,9 @@ class ModuleCallIR(ExprIR):
     func_name: str  # Function name (e.g., 'sqrt')
     args: list[ValueIR]
     arg_preludes: list[list[InstrIR]] = field(default_factory=list)
-
+    # Keyword arguments: list of (name, value) pairs
+    kwargs: list[tuple[str, ValueIR]] = field(default_factory=list)
+    kwarg_preludes: list[list[InstrIR]] = field(default_factory=list)
 
 @dataclass
 class ModuleAttrIR(ExprIR):

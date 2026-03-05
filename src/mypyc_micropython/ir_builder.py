@@ -64,6 +64,7 @@ from .ir import (
     SelfAttrIR,
     SelfAugAssignIR,
     SelfMethodCallIR,
+    SelfMethodRefIR,
     SetNewIR,
     SliceIR,
     StmtIR,
@@ -1261,7 +1262,7 @@ class IRBuilder:
     def _build_module_call(
         self, expr: ast.Call, alias: str, locals_: list[str]
     ) -> tuple[ValueIR, list]:
-        """Build IR for a call on an imported module: module.func(args)."""
+        """Build IR for a call on an imported module: module.func(args, **kwargs)."""
         if not isinstance(expr.func, ast.Attribute):
             return ConstIR(ir_type=IRType.OBJ, value=None), []
 
@@ -1269,13 +1270,26 @@ class IRBuilder:
         func_name = expr.func.attr
         self._uses_imports = True
 
+        # Process positional arguments
         args: list[ValueIR] = []
         arg_preludes: list[list] = []
         for arg in expr.args:
             val, prelude = self._build_expr(arg, locals_)
             args.append(val)
             arg_preludes.append(prelude)
+
+        # Process keyword arguments
+        kwargs: list[tuple[str, ValueIR]] = []
+        kwarg_preludes: list[list] = []
+        for kw in expr.keywords:
+            if kw.arg is None:  # **kwargs - not supported
+                continue
+            val, prelude = self._build_expr(kw.value, locals_)
+            kwargs.append((kw.arg, val))
+            kwarg_preludes.append(prelude)
+
         all_preludes = [p for pl in arg_preludes for p in pl]
+        all_preludes.extend([p for pl in kwarg_preludes for p in pl])
 
         return ModuleCallIR(
             ir_type=IRType.OBJ,
@@ -1283,6 +1297,8 @@ class IRBuilder:
             func_name=func_name,
             args=args,
             arg_preludes=arg_preludes,
+            kwargs=kwargs,
+            kwarg_preludes=kwarg_preludes,
         ), all_preludes
 
     def _build_class_instantiation(
@@ -2617,6 +2633,7 @@ class IRBuilder:
                 attr_name = expr.attr
 
                 if var_name == "self":
+                    # First check if it's a field
                     for fld, path in class_ir.get_all_fields_with_path():
                         if fld.name == attr_name:
                             result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
@@ -2626,6 +2643,16 @@ class IRBuilder:
                                 attr_path=path,
                                 result_type=result_type,
                             ), []
+                    # Check if it's a method reference (bound method)
+                    if attr_name in class_ir.methods:
+                        method_ir = class_ir.methods[attr_name]
+                        return SelfMethodRefIR(
+                            ir_type=IRType.OBJ,
+                            method_name=attr_name,
+                            method_c_name=method_ir.c_name,
+                            class_c_name=class_ir.c_name,
+                        ), []
+                    # Fallback to dynamic attribute access
                     return SelfAttrIR(
                         ir_type=IRType.OBJ,
                         attr_name=attr_name,
@@ -2859,6 +2886,32 @@ class IRBuilder:
                 orelse_prelude=orelse_prelude,
             ), test_prelude + body_prelude + orelse_prelude
 
+        # Handle Tuple with recursive method context to capture preludes
+        if isinstance(expr, ast.Tuple):
+            if not expr.elts:
+                return ConstIR(ir_type=IRType.OBJ, value=()), []
+            items: list[ValueIR] = []
+            all_preludes: list = []
+            for elt in expr.elts:
+                val, prelude = self._build_method_expr(elt, locals_, class_ir, native)
+                items.append(val)
+                all_preludes.extend(prelude)
+            temp_name = self._fresh_temp()
+            result = TempIR(ir_type=IRType.OBJ, name=temp_name)
+            return result, all_preludes + [TupleNewIR(result=result, items=items)]
+
+        # Handle List with recursive method context to capture preludes
+        if isinstance(expr, ast.List):
+            items: list[ValueIR] = []
+            all_preludes: list = []
+            for elt in expr.elts:
+                val, prelude = self._build_method_expr(elt, locals_, class_ir, native)
+                items.append(val)
+                all_preludes.extend(prelude)
+            temp_name = self._fresh_temp()
+            result = TempIR(ir_type=IRType.OBJ, name=temp_name)
+            return result, all_preludes + [ListNewIR(result=result, items=items)]
+
         # Handle Subscript (e.g., self.items[i])
         if isinstance(expr, ast.Subscript):
             value, value_prelude = self._build_method_expr(expr.value, locals_, class_ir, native)
@@ -2905,15 +2958,25 @@ class IRBuilder:
                 raise TypeError(
                     f"Cannot access private method '{method_name}' from outside its class"
                 )
+
+            # Process positional arguments
             args: list[ValueIR] = []
             for arg in expr.args:
                 val, _ = self._build_method_expr(arg, locals_, class_ir, native)
                 args.append(val)
 
+            # Process keyword arguments
+            kwargs: list[tuple[str, ValueIR]] = []
+            for kw in expr.keywords:
+                if kw.arg is None:  # **kwargs - not supported
+                    continue
+                val, _ = self._build_method_expr(kw.value, locals_, class_ir, native)
+                kwargs.append((kw.arg, val))
+
             temp_name = self._fresh_temp()
             result = TempIR(ir_type=IRType.OBJ, name=temp_name)
             method_call = MethodCallIR(
-                result=result, receiver=receiver, method=method_name, args=args
+                result=result, receiver=receiver, method=method_name, args=args, kwargs=kwargs
             )
             return result, recv_prelude + [method_call]
 

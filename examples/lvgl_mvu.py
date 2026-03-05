@@ -155,13 +155,12 @@ class App:
         self._active_root = None
         self._nav_pending = NAV_NONE
         self._refs_by_root = {}
-        self._nav = nav.Nav(
-            nav_capacity=NAV_CAPACITY,
-            builders=(
-                (SCREEN_HOME, self._build_home),
-                (SCREEN_SETTINGS, self._build_settings),
-            ),
+        # Bound method references for screen builders
+        builders: tuple[tuple[int, object], ...] = (
+            (SCREEN_HOME, self._build_home),
+            (SCREEN_SETTINGS, self._build_settings),
         )
+        self._nav = nav.Nav(NAV_CAPACITY, builders, None)
 
     def _count_text_for(self, value: int) -> str:
         if value <= 0:

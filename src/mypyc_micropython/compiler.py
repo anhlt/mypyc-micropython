@@ -318,9 +318,17 @@ def _compile_module_parts(
         forward_decls.extend(class_emitter.emit_forward_declarations())
         forward_decls.extend(class_emitter.emit_type_forward_declarations())
         forward_decls.extend(class_emitter.emit_native_forward_declarations())
+        forward_decls.extend(class_emitter.emit_method_obj_forward_declarations())
         struct_code.extend(class_emitter.emit_struct())
 
-        for method_ir in class_ir.methods.values():
+        # Process methods in order: non-__init__ first, then __init__
+        # This ensures bound method objects (e.g., self._build_home) are defined
+        # before being referenced in __init__
+        methods_ordered = sorted(
+            class_ir.methods.values(),
+            key=lambda m: (m.name == "__init__", m.name)
+        )
+        for method_ir in methods_ordered:
             method_emitter = MethodEmitter(method_ir, class_ir)
 
             # Private (__method) methods: emit native-only, no MP wrapper.
