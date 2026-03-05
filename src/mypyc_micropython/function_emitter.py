@@ -1029,6 +1029,12 @@ class BaseEmitter:
 
 
     def _emit_param_attr(self, attr: ParamAttrIR) -> tuple[str, str]:
+        # For trait-typed parameters, use dynamic attribute lookup
+        # because the struct layout depends on the implementing class at runtime
+        if attr.is_trait_type:
+            expr = f"mp_load_attr({attr.c_param_name}, MP_QSTR_{attr.attr_name})"
+            return expr, "mp_obj_t"
+
         expr = (
             f"(({attr.class_c_name}_obj_t *)MP_OBJ_TO_PTR({attr.c_param_name}))->{attr.attr_path}"
         )

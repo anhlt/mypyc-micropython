@@ -127,3 +127,27 @@ def test_pet() -> str:
 def test_document() -> str:
     doc = Document("README", "Hello World")
     return doc.to_string()
+
+
+# Function accepting trait-typed parameter
+def greet_named(obj: Named) -> str:
+    """Accept any object implementing Named trait."""
+    return obj.get_name()
+
+
+def get_name_direct(obj: Named) -> str:
+    """Direct attribute access on trait-typed parameter."""
+    return obj.name
+
+
+def test_trait_param() -> str:
+    """Test passing different types to trait-typed parameter."""
+    p = Person(1, "Alice", 30)
+    cat = Pet(2, "Whiskers", "cat")
+    # Both Person and Pet implement Named trait
+    p_name: str = greet_named(p)
+    cat_name: str = greet_named(cat)
+    # Direct attribute access
+    p_direct: str = get_name_direct(p)
+    cat_direct: str = get_name_direct(cat)
+    return p_name + "," + cat_name + "," + p_direct + "," + cat_direct

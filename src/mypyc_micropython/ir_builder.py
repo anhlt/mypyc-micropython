@@ -1486,6 +1486,7 @@ class IRBuilder:
                             attr_path=path,
                             class_c_name=class_ir.c_name,
                             result_type=result_type,
+                            is_trait_type=class_ir.is_trait,
                         ), []
 
                 return ParamAttrIR(
@@ -1496,6 +1497,7 @@ class IRBuilder:
                     attr_path=attr_name,
                     class_c_name=class_ir.c_name,
                     result_type=IRType.OBJ,
+                    is_trait_type=class_ir.is_trait,
                 ), []
 
         if isinstance(expr.value, ast.Attribute):
@@ -2721,6 +2723,7 @@ class IRBuilder:
                                 attr_path=path,
                                 class_c_name=param_class_ir.c_name,
                                 result_type=result_type,
+                                is_trait_type=param_class_ir.is_trait,
                             ), []
 
                     return ParamAttrIR(
@@ -2731,6 +2734,7 @@ class IRBuilder:
                         attr_path=attr_name,
                         class_c_name=param_class_ir.c_name,
                         result_type=IRType.OBJ,
+                        is_trait_type=param_class_ir.is_trait,
                     ), []
 
             # Handle chained attribute access: self.attr1.attr2 or param.attr1.attr2

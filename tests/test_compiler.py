@@ -5899,3 +5899,49 @@ class Person(Named):
         assert "make_new, test_Named_make_new" not in result
         # Person should have make_new
         assert "test_Person_make_new" in result
+
+
+    def test_trait_typed_parameter_attribute_access(self):
+        """Test that attribute access on trait-typed parameters uses dynamic lookup."""
+        source = '''
+from mypy_extensions import trait
+
+@trait
+class Named:
+    name: str
+    def get_name(self) -> str:
+        return self.name
+
+class Person(Named):
+    age: int
+    def __init__(self, name: str, age: int) -> None:
+        self.name = name
+        self.age = age
+
+def get_name_from_trait(obj: Named) -> str:
+    return obj.name
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Trait-typed parameter should use mp_load_attr, not direct struct access
+        assert "mp_load_attr(obj, MP_QSTR_name)" in result
+        # Should NOT have direct struct access for trait param
+        assert "((test_Named_obj_t *)MP_OBJ_TO_PTR(obj))->name" not in result
+
+    def test_concrete_class_param_uses_direct_access(self):
+        """Test that non-trait class params still use direct struct access."""
+        source = '''
+class Point:
+    x: int
+    y: int
+    def __init__(self, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+
+def get_x(p: Point) -> int:
+    return p.x
+'''
+        result = compile_source(source, "test")
+        # Regular class should use direct struct access
+        assert "((test_Point_obj_t *)MP_OBJ_TO_PTR(p))->x" in result
+        # Should NOT use mp_load_attr for regular class
+        assert "mp_load_attr(p, MP_QSTR_x)" not in result

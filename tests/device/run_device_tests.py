@@ -719,9 +719,20 @@ doc = traits.Document("README", "Hello World")
 t("Document title", doc.title, "README")
 t("Document body", doc.body, "Hello World")
 
+# Test trait-typed parameters (polymorphism)
+# greet_named accepts any Named implementor
+t("greet_named(Person)", traits.greet_named(p), "Alice")
+t("greet_named(Pet)", traits.greet_named(cat), "Whiskers")
+
+# Direct attribute access on trait-typed parameter
+t("get_name_direct(Person)", traits.get_name_direct(p), "Alice")
+t("get_name_direct(Pet)", traits.get_name_direct(cat), "Whiskers")
+
+# Test trait param function
+t("test_trait_param", traits.test_trait_param(), "Alice,Whiskers,Alice,Whiskers")
+
 # Note: Methods using f-strings with self.attr (describe, greet, to_string)
 # are skipped due to pre-existing f-string compilation issue (not trait-related)
-
 
 # ---- summary ----
 gc.collect()

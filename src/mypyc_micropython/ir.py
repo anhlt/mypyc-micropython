@@ -1100,6 +1100,10 @@ class ParamAttrIR(ExprIR):
     accessing p.x requires unboxing the mp_obj_t to the class struct pointer.
 
     Generated C code: ((ClassName_obj_t *)MP_OBJ_TO_PTR(param))->attr
+
+    For trait-typed parameters, we must use dynamic attribute lookup since the
+    actual struct layout depends on the implementing class at runtime:
+        mp_load_attr(param, MP_QSTR_attr)
     """
 
     param_name: str  # Python parameter name (e.g., "p1")
@@ -1108,7 +1112,7 @@ class ParamAttrIR(ExprIR):
     attr_path: str  # C access path (e.g., "x" or "super._id" for inherited fields)
     class_c_name: str  # C class name (e.g., "module_Point")
     result_type: IRType
-
+    is_trait_type: bool = False  # True if param type is a trait (use dynamic lookup)
 
 @dataclass
 class SelfMethodCallIR(ExprIR):

@@ -609,7 +609,8 @@ class IRPrinter:
         elif isinstance(value, SelfMethodRefIR):
             return f"self.{value.method_name}  # bound method ref"
         elif isinstance(value, ParamAttrIR):
-            return f"{value.param_name}.{value.attr_name}"
+            trait_marker = " # trait" if value.is_trait_type else ""
+            return f"{value.param_name}.{value.attr_name}{trait_marker}"
         elif isinstance(value, SelfMethodCallIR):
             args = ", ".join(self.print_value(a) for a in value.args)
             return f"self.{value.method_name}({args})"
