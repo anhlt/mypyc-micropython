@@ -46,6 +46,8 @@ from .ir import (
     SelfAugAssignIR,
     SelfMethodCallIR,
     SelfMethodRefIR,
+    SiblingClassInstantiationIR,
+    SiblingModuleCallIR,
     SliceIR,
     StmtIR,
     SubscriptAssignIR,
@@ -572,7 +574,10 @@ class BaseEmitter:
             return self._emit_module_call(value, native)
         elif isinstance(value, ModuleAttrIR):
             return self._emit_module_attr(value)
-        return "/* unsupported */", "mp_obj_t"
+        elif isinstance(value, SiblingModuleCallIR):
+            return self._emit_sibling_module_call(value, native)
+        elif isinstance(value, SiblingClassInstantiationIR):
+            return self._emit_sibling_class_instantiation(value, native)
 
     def _emit_const(self, const: ConstIR) -> tuple[str, str]:
         val = const.value
@@ -1173,6 +1178,61 @@ class BaseEmitter:
             f"MP_QSTR_{attr.attr_name})"
         ), "mp_obj_t"
 
+    def _emit_sibling_module_call(self, call: SiblingModuleCallIR, native: bool = False) -> tuple[str, str]:
+        """Emit C code for calling a function on a sibling module.
+
+        Since sibling modules are compiled together in the same package,
+        we generate a direct C function call instead of mp_import_name.
+
+        Generated C pattern:
+            {c_prefix}_{func_name}(arg1, arg2, ...)
+        """
+        del native  # Always generates boxed call for sibling modules
+
+        # Build boxed args
+        boxed_args = []
+        for arg in call.args:
+            arg_expr, arg_type = self._emit_expr(arg)
+            boxed_args.append(self._box_value(arg_expr, arg_type))
+
+        args_str = ", ".join(boxed_args)
+        c_func_name = f"{call.c_prefix}_{call.func_name}"
+
+        if args_str:
+            return f"{c_func_name}({args_str})", "mp_obj_t"
+        else:
+            return f"{c_func_name}()", "mp_obj_t"
+
+    def _emit_sibling_class_instantiation(self, inst: SiblingClassInstantiationIR, native: bool = False) -> tuple[str, str]:
+        """Emit C code for instantiating a class from a sibling module.
+
+        Since sibling modules are compiled together in the same package,
+        we generate a direct call to the class's make_new function.
+
+        Generated C pattern:
+            {c_prefix}_{class_name}_make_new(&{c_prefix}_{class_name}_type, n_args, 0, args_array)
+        """
+        del native  # Always generates boxed call
+
+        # Build boxed args
+        boxed_args = []
+        for arg in inst.args:
+            arg_expr, arg_type = self._emit_expr(arg)
+            boxed_args.append(self._box_value(arg_expr, arg_type))
+
+        c_class_name = f"{inst.c_prefix}_{inst.class_name}"
+        n_args = len(boxed_args)
+
+        if n_args == 0:
+            return f"{c_class_name}_make_new(&{c_class_name}_type, 0, 0, NULL)", "mp_obj_t"
+        else:
+            args_array = ", ".join(boxed_args)
+            return (
+                f"{c_class_name}_make_new(&{c_class_name}_type, {n_args}, 0, (const mp_obj_t[]){{{args_array}}})",
+                "mp_obj_t"
+            )
+
+
     def _box_value(self, expr: str, expr_type: str) -> str:
         if expr_type == "mp_int_t":
             return f"mp_obj_new_int({expr})"
@@ -1225,6 +1285,12 @@ class FunctionEmitter(BaseEmitter):
 
         func_code = c_sig + " {\n" + "\n".join(body_lines) + "\n}\n" + obj_def
         return func_code, obj_def
+
+    def emit_forward_declaration(self) -> str:
+        """Emit a forward declaration for this function."""
+        c_sig, _ = self._emit_signature()
+        return c_sig + ";"
+
 
     def _emit_signature(self) -> tuple[str, str]:
         num_args = len(self.func_ir.params)

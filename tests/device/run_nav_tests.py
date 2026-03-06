@@ -2,8 +2,9 @@ import gc
 import time
 
 import lvgl as lv
-import lvgl_nav
-import lvgl_screens as ls
+import lvui
+
+# using lvui.screens
 
 _total = 0
 _passed = 0
@@ -29,7 +30,7 @@ def suite(name):
 
 def refresh(iterations=5):
     for _ in range(iterations):
-        ls.timer_handler()
+        lvui.screens.timer_handler()
         time.sleep_ms(10)
 
 
@@ -63,7 +64,7 @@ class ScreenManager:
             (self.SCREEN_SETTINGS, self._build_settings),
             (self.SCREEN_DISPLAY, self._build_display),
         )
-        self.nav = lvgl_nav.Nav(8, builders, None)
+        self.nav = lvui.nav.Nav(8, builders, None)
 
     def init(self):
         lv.init_display()
@@ -98,7 +99,7 @@ class ScreenManager:
         color = self._colors.get(screen_id, 0x333333)
         name = self._id_to_name[screen_id]
 
-        screen = ls.create_screen()
+        screen = lvui.screens.create_screen()
         lv.lv_obj_set_style_bg_color(screen, lv.lv_color_hex(color), 0)
 
         stack_text = self._get_stack_text()
@@ -245,7 +246,7 @@ try:
     t("pop_at_root", popped is None, "True")
 
     sm.cleanup()
-    blank = ls.create_screen()
+    blank = lvui.screens.create_screen()
     lv.lv_screen_load(blank)
     refresh(5)
     mem_end = gc.mem_free()

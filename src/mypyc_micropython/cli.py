@@ -49,7 +49,10 @@ def main() -> int:
         )
     else:
         result = compile_to_micropython(
-            source_path, output_dir, type_check=type_check, strict_type_check=type_check
+            source_path,
+            output_dir,
+            type_check=type_check,
+            strict_type_check=type_check,
         )
 
     if not result.success:

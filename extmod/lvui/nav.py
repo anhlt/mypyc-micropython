@@ -2,7 +2,7 @@ import time
 from typing import Callable
 
 import lvgl as lv
-import lvgl_screens as ls
+import screens as ls
 
 OVER_LEFT = 1
 OVER_RIGHT = 2

@@ -22,7 +22,7 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
-from mypyc_micropython.c_bindings.stub_parser import StubParser
+from mypyc_micropython.c_bindings.core.stub_parser import StubParser
 from mypyc_micropython.compiler import (
     compile_source,
     generate_micropython_cmake,
@@ -31,7 +31,7 @@ from mypyc_micropython.compiler import (
 
 
 LVGL_STUB = (
-    project_root / "src" / "mypyc_micropython" / "c_bindings" / "stubs" / "lvgl" / "lvgl.pyi"
+    project_root / "src" / "mypyc_micropython" / "c_bindings" / "libraries" / "lvgl" / "stubs" / "lvgl.pyi"
 )
 
 

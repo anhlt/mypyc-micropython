@@ -1285,6 +1285,57 @@ class ModuleRefIR(ExprIR):
     module_name: str  # Python module name (e.g., 'lvgl_nav')
 
 
+@dataclass
+class SiblingModuleRefIR(ExprIR):
+    """Reference to a sibling module within the same package.
+
+    Instead of generating mp_import_name, this generates direct C function calls
+    since the sibling module's functions are in the same compiled C file.
+
+    Example: When mvu.py imports lvgl_screens and calls ls.create_screen(),
+    instead of importing at runtime, we call lvui_screens_create_screen() directly.
+    """
+
+    c_prefix: str  # C name prefix for the sibling module (e.g., 'lvui_screens')
+
+
+@dataclass
+class SiblingModuleCallIR(ExprIR):
+    """Call a function on a sibling module within the same package.
+
+    Instead of generating mp_import_name + mp_load_attr + mp_call_function,
+    this generates a direct C function call since sibling modules are compiled
+    together in the same package.
+
+    Example: When mvu.py calls ls.create_screen() where ls is screens,
+    generates: lvui_screens_create_screen() directly.
+
+    Generated C: {c_prefix}_{func_name}(args...)
+    """
+
+    c_prefix: str  # C name prefix for the sibling module (e.g., 'lvui_screens')
+    func_name: str  # Function name (e.g., 'create_screen')
+    args: list[ValueIR]
+    arg_preludes: list[list[InstrIR]] = field(default_factory=list)
+
+
+@dataclass
+class SiblingClassInstantiationIR(ExprIR):
+    """Instantiate a class from a sibling module within the same package.
+
+    Instead of generating mp_import_name and mp_call_function,
+    this generates a direct call to the class's make_new function.
+
+    Example: When mvu.py calls nav.Nav(capacity, builders, None),
+    generates: lvui_nav_Nav_make_new(&lvui_nav_Nav_type, 3, 0, (const mp_obj_t[]){...})
+
+    Generated C: {c_prefix}_{class_name}_make_new(&{c_prefix}_{class_name}_type, n_args, 0, args_array)
+    """
+
+    c_prefix: str  # C name prefix for the sibling module (e.g., 'lvui_nav')
+    class_name: str  # Class name (e.g., 'Nav')
+    args: list[ValueIR]
+    arg_preludes: list[list[InstrIR]] = field(default_factory=list)
 
 
 @dataclass

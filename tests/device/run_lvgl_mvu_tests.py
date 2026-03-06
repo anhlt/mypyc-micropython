@@ -2,8 +2,9 @@ import gc
 import time
 
 import lvgl as lv
-import lvgl_mvu as mvu
-import lvgl_screens as ls
+import lvui
+
+# using lvui.screens
 
 _total = 0
 _passed = 0
@@ -29,57 +30,57 @@ def suite(name):
 
 def refresh(iterations=5):
     for _ in range(iterations):
-        ls.timer_handler()
+        lvui.screens.timer_handler()
         time.sleep_ms(10)
 
 
 def run_mount_dispose_suite():
     suite("mvu_mount_dispose")
-    app = mvu.App(0, 8, 32)
+    app = lvui.mvu.App(0, 8, 32)
 
     root = app.mount()
     refresh(5)
     t("mount returns root", root is not None, "True")
     t("mount nav_size", app.nav_size, "1")
-    t("mount active is home", app.active_screen_id, str(mvu.SCREEN_HOME))
+    t("mount active is home", app.active_screen_id, str(lvui.mvu.SCREEN_HOME))
 
     app.dispose()
     refresh(3)
     t("dispose nav_size reset", app.nav_size, "0")
-    t("dispose active reset", app.active_screen_id, str(mvu.SCREEN_HOME))
+    t("dispose active reset", app.active_screen_id, str(lvui.mvu.SCREEN_HOME))
 
 
 def run_nav_push_pop_suite():
     suite("mvu_nav_push_pop")
-    app = mvu.App(0, 8, 32)
+    app = lvui.mvu.App(0, 8, 32)
     app.mount()
     refresh(5)
 
-    app.dispatch(mvu.MSG_PUSH_SETTINGS)
+    app.dispatch(lvui.mvu.MSG_PUSH_SETTINGS)
     app.tick(1, True)
     refresh(2)
-    t("push active settings", app.active_screen_id, str(mvu.SCREEN_SETTINGS))
+    t("push active settings", app.active_screen_id, str(lvui.mvu.SCREEN_SETTINGS))
     t("push nav_size", app.nav_size, "2")
 
-    app.dispatch(mvu.MSG_POP)
+    app.dispatch(lvui.mvu.MSG_POP)
     app.tick(1, True)
     refresh(2)
-    t("pop active home", app.active_screen_id, str(mvu.SCREEN_HOME))
+    t("pop active home", app.active_screen_id, str(lvui.mvu.SCREEN_HOME))
     t("pop nav_size", app.nav_size, "1")
 
-    app.dispatch(mvu.MSG_PUSH_SETTINGS)
+    app.dispatch(lvui.mvu.MSG_PUSH_SETTINGS)
     app.tick(1, True)
-    app.dispatch(mvu.MSG_REPLACE_HOME)
+    app.dispatch(lvui.mvu.MSG_REPLACE_HOME)
     app.tick(1, True)
     refresh(2)
-    t("replace active home", app.active_screen_id, str(mvu.SCREEN_HOME))
+    t("replace active home", app.active_screen_id, str(lvui.mvu.SCREEN_HOME))
 
     app.dispose()
 
 
 def run_memory_soak_tick_20000_suite():
     suite("mvu_memory_soak_tick_20000")
-    app = mvu.App(0, 8, 32)
+    app = lvui.mvu.App(0, 8, 32)
     app.mount()
 
     gc.collect()
@@ -87,7 +88,7 @@ def run_memory_soak_tick_20000_suite():
     min_free = baseline
 
     for i in range(20000):
-        app.dispatch(mvu.MSG_INCREMENT)
+        app.dispatch(lvui.mvu.MSG_INCREMENT)
         app.tick(1, True)
 
         if i % 128 == 0:
@@ -105,7 +106,7 @@ def run_memory_soak_tick_20000_suite():
 
 def run_memory_soak_nav_2000_suite():
     suite("mvu_memory_soak_nav_2000")
-    app = mvu.App(0, 8, 32)
+    app = lvui.mvu.App(0, 8, 32)
     app.mount()
 
     gc.collect()
@@ -115,14 +116,14 @@ def run_memory_soak_nav_2000_suite():
     for i in range(2000):
         mod = i % 3
         if mod == 0:
-            app.dispatch(mvu.MSG_PUSH_SETTINGS)
+            app.dispatch(lvui.mvu.MSG_PUSH_SETTINGS)
         elif mod == 1:
-            app.dispatch(mvu.MSG_POP)
+            app.dispatch(lvui.mvu.MSG_POP)
         else:
-            app.dispatch(mvu.MSG_REPLACE_HOME)
+            app.dispatch(lvui.mvu.MSG_REPLACE_HOME)
 
         app.tick(1, True)
-        app.dispatch(mvu.MSG_INCREMENT)
+        app.dispatch(lvui.mvu.MSG_INCREMENT)
         app.tick(1, True)
 
         if i % 64 == 0:
@@ -140,7 +141,7 @@ def run_memory_soak_nav_2000_suite():
 
 def run_remount_no_drift_suite():
     suite("mvu_remount_no_drift")
-    app = mvu.App(0, 8, 32)
+    app = lvui.mvu.App(0, 8, 32)
 
     gc.collect()
     baseline = gc.mem_free()
@@ -148,7 +149,7 @@ def run_remount_no_drift_suite():
 
     for i in range(500):
         app.mount()
-        app.dispatch(mvu.MSG_INCREMENT)
+        app.dispatch(lvui.mvu.MSG_INCREMENT)
         app.tick(1, True)
         app.dispose()
 

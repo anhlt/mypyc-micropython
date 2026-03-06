@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from mypyc_micropython.c_bindings.c_ir import CLibraryDef
+    from mypyc_micropython.c_bindings.core.c_ir import CLibraryDef
 
     from .type_checker import ClassTypeInfo, FunctionTypeInfo
 
@@ -68,6 +68,9 @@ from .ir import (
     SelfMethodCallIR,
     SelfMethodRefIR,
     SetNewIR,
+    SiblingClassInstantiationIR,
+    SiblingModuleCallIR,
+    SiblingModuleRefIR,
     SliceIR,
     StmtIR,
     SubscriptAssignIR,
@@ -195,6 +198,7 @@ class IRBuilder:
         known_classes: dict[str, ClassIR] | None = None,
         mypy_types: "MypyTypeInfo | None" = None,
         external_libs: dict[str, CLibraryDef] | None = None,
+        sibling_modules: dict[str, str] | None = None,  # maps old name -> package prefix
     ):
         self.module_name = module_name
         self.c_name = sanitize_name(module_name)
@@ -218,6 +222,7 @@ class IRBuilder:
         self._imported_modules: set[str] = set()
         self._uses_external_libs: set[str] = set()
         self._module_constants: dict[str, int | float | str | bool | None] = {}
+        self._sibling_modules: dict[str, str] = sibling_modules or {}  # maps import name -> C prefix
 
     def _fresh_temp(self) -> str:
         self._temp_counter += 1
@@ -1041,6 +1046,10 @@ class IRBuilder:
         # Check for import aliases - return ModuleRefIR for imported modules
         if name in self._import_aliases:
             module_name = self._import_aliases[name]
+            # Check if this is a sibling module in the same package
+            if module_name in self._sibling_modules:
+                c_prefix = self._sibling_modules[module_name]
+                return SiblingModuleRefIR(ir_type=IRType.OBJ, c_prefix=c_prefix)
             self._uses_imports = True
             return ModuleRefIR(ir_type=IRType.OBJ, module_name=module_name)
 
@@ -1281,7 +1290,7 @@ class IRBuilder:
     def _build_clib_call(
         self, expr: ast.Call, alias: str, locals_: list[str]
     ) -> tuple[ValueIR, list]:
-        from .c_bindings.c_ir import CType as CBindingsCType
+        from .c_bindings.core.c_ir import CType as CBindingsCType
         from .ir import CLibCallIR
 
         if not isinstance(expr.func, ast.Attribute):
@@ -1356,6 +1365,26 @@ class IRBuilder:
 
         all_preludes = [p for pl in arg_preludes for p in pl]
         all_preludes.extend([p for pl in kwarg_preludes for p in pl])
+
+        # Check if this is a sibling module in the same package
+        if module_name in self._sibling_modules:
+            c_prefix = self._sibling_modules[module_name]
+            # Check if this is a class instantiation (class names start with uppercase)
+            if func_name and func_name[0].isupper():
+                return SiblingClassInstantiationIR(
+                    ir_type=IRType.OBJ,
+                    c_prefix=c_prefix,
+                    class_name=func_name,
+                    args=args,
+                    arg_preludes=arg_preludes,
+                ), all_preludes
+            return SiblingModuleCallIR(
+                ir_type=IRType.OBJ,
+                c_prefix=c_prefix,
+                func_name=func_name,
+                args=args,
+                arg_preludes=arg_preludes,
+            ), all_preludes
 
         return ModuleCallIR(
             ir_type=IRType.OBJ,
@@ -3063,6 +3092,15 @@ class IRBuilder:
     ) -> tuple[ValueIR, list]:
         """Build a general call expression in method context."""
         if isinstance(expr.func, ast.Attribute):
+            # Check if this is a call on an imported module
+            if isinstance(expr.func.value, ast.Name):
+                var_name = expr.func.value.id
+                if var_name in self._import_aliases:
+                    module_name = self._import_aliases[var_name]
+                    if module_name in self._external_libs:
+                        return self._build_clib_call(expr, var_name, locals_)
+                    return self._build_module_call(expr, var_name, locals_)
+
             receiver, recv_prelude = self._build_method_expr(
                 expr.func.value, locals_, class_ir, native
             )

@@ -139,7 +139,6 @@ def compile_to_micropython(
             success=False,
             errors=[f"Source file not found: {source_path}"],
         )
-
     module_name = source_path.stem
 
     if output_dir is None:
@@ -237,6 +236,7 @@ def _compile_module_parts(
     type_check: bool,
     strict: bool,
     external_libs: dict[str, Any] | None = None,
+    sibling_modules: dict[str, str] | None = None,  # maps import name -> C prefix
 ) -> _ModuleCompileParts:
     from .async_emitter import AsyncEmitter
     from .class_emitter import ClassEmitter
@@ -260,7 +260,10 @@ def _compile_module_parts(
     c_name = sanitize_name(module_name)
     module_ir = ModuleIR(name=module_name, c_name=c_name)
 
-    ir_builder = IRBuilder(module_name, mypy_types=mypy_types, external_libs=external_libs)
+    ir_builder = IRBuilder(
+        module_name, mypy_types=mypy_types, external_libs=external_libs,
+        sibling_modules=sibling_modules,
+    )
     function_irs: list[FuncIR] = []
     function_code: list[str] = []
     forward_decls: list[str] = []
@@ -295,6 +298,10 @@ def _compile_module_parts(
                 emitter = GeneratorEmitter(func_ir)
             else:
                 emitter = FunctionEmitter(func_ir)
+
+            # Generate forward declaration for this function
+            forward_decls.append(emitter.emit_forward_declaration())
+
             code, _ = emitter.emit()
             function_code.append(code)
 
@@ -449,6 +456,7 @@ def _scan_package_recursive(
     type_check: bool,
     strict: bool,
     accumulated_parts: _ModuleCompileParts,
+    sibling_modules: dict[str, str] | None = None,  # maps import name -> C prefix
 ) -> list[_PackageSubmodule]:
     """Recursively scan a package directory and compile all .py files and sub-packages.
 
@@ -469,6 +477,7 @@ def _scan_package_recursive(
             symbol_prefix,
             type_check=type_check,
             strict=strict,
+            sibling_modules=sibling_modules,
         )
         submodules.append(
             _PackageSubmodule(
@@ -511,6 +520,7 @@ def _scan_package_recursive(
             sub_prefix,
             type_check=type_check,
             strict=strict,
+            sibling_modules=sibling_modules,
         )
 
         accumulated_parts.forward_decls.extend(init_parts.forward_decls)
@@ -538,6 +548,7 @@ def _scan_package_recursive(
             type_check=type_check,
             strict=strict,
             accumulated_parts=accumulated_parts,
+            sibling_modules=sibling_modules,
         )
 
         submodules.append(
@@ -612,12 +623,24 @@ def compile_package(
             strict=strict_type_check,
         )
 
+        # Build sibling modules map: maps import name -> C prefix
+        # This allows submodules to import each other by name (e.g., 'import screens')
+        # and have those imports resolved to direct C function calls
+        sibling_modules: dict[str, str] = {}
+        for py_file in package_path.glob("*.py"):
+            if py_file.name == "__init__.py":
+                continue
+            submod_name = py_file.stem
+            c_prefix = sanitize_name(f"{module_name}_{submod_name}")
+            sibling_modules[submod_name] = c_prefix
+
         submodules = _scan_package_recursive(
             package_path,
             module_name,
             type_check=type_check,
             strict=strict_type_check,
             accumulated_parts=parent_parts,
+            sibling_modules=sibling_modules,
         )
 
         module_emitter = ModuleEmitter(

@@ -64,6 +64,9 @@ from .ir import (
     SelfMethodRefIR,
     SetItemIR,
     SetNewIR,
+    SiblingClassInstantiationIR,
+    SiblingModuleCallIR,
+    SiblingModuleRefIR,
     SliceIR,
     StmtIR,
     SubscriptAssignIR,
@@ -686,6 +689,14 @@ class IRPrinter:
             return f"{value.module_name}.{value.func_name}({all_args})"
         elif isinstance(value, ModuleAttrIR):
             return f"{value.module_name}.{value.attr_name}"
+        elif isinstance(value, SiblingModuleCallIR):
+            args = ", ".join(self.print_value(a) for a in value.args)
+            return f"{value.c_prefix}.{value.func_name}({args})"
+        elif isinstance(value, SiblingClassInstantiationIR):
+            args = ", ".join(self.print_value(a) for a in value.args)
+            return f"{value.c_prefix}.{value.class_name}({args})"
+        elif isinstance(value, SiblingModuleRefIR):
+            return f"<sibling:{value.c_prefix}>"
         else:
             return f"<{type(value).__name__}>"
 

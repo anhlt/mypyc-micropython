@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .c_bindings.c_ir import CType
+from .c_bindings.core.c_ir import CType
 from .ir import FuncIR, ModuleIR, RTuple
 
 C_RESERVED_WORDS = {
@@ -79,6 +79,9 @@ class ModuleEmitter:
     ):
         self.module_ir = module_ir
         self.c_name = module_ir.c_name
+        # QSTR name is always the c_name (flat, no dots)
+        # Dotted imports are handled via Python wrapper packages
+        self.qstr_name = module_ir.c_name
         self._uses_print = uses_print
         self._uses_list_opt = uses_list_opt
         self._uses_builtins = uses_builtins
@@ -474,5 +477,6 @@ class ModuleEmitter:
             f"    .globals = (mp_obj_dict_t *)&{self.c_name}_module_globals,",
             "};",
             "",
-            f"MP_REGISTER_MODULE(MP_QSTR_{self.c_name}, {self.c_name}_user_cmodule);",
+            # Module name in QSTR uses flat c_name (no dots)
+            f"MP_REGISTER_MODULE(MP_QSTR_{self.qstr_name}, {self.c_name}_user_cmodule);",
         ]
