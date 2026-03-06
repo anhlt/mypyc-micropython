@@ -679,7 +679,7 @@ Implemented:
 **Supported:**
 - [x] `yield from` for sub-iterator delegation (uses `mp_getiter`/`mp_iternext` pattern)
 
-**Restrictions (raise `NotImplementedError`):
+**Restrictions (raise `NotImplementedError`):**
 - `yield` as expression (receiving values) not supported
 - `try`/`with` inside generators not supported
 - Generator methods (classes with `yield`) not supported
