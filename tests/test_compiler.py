@@ -6070,6 +6070,7 @@ async def fetch_with_delay() -> int:
         assert "mp_obj_t result;" in result
         # Should store result from stop_iteration_arg after await completes
         assert "self->result = MP_STATE_THREAD(stop_iteration_arg);" in result
+
     def test_await_module_function_multiple_args(self):
         """Test await on module.func() with multiple arguments."""
         source = '''

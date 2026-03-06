@@ -15,7 +15,6 @@ The state machine approach is identical to generators:
 
 from __future__ import annotations
 
-from .function_emitter import sanitize_name
 from .generator_emitter import _GEN_DONE_STATE, GeneratorEmitter
 from .ir import (
     AwaitIR,
@@ -353,7 +352,7 @@ class AsyncEmitter(GeneratorEmitter):
             f"    {{ MP_ROM_QSTR(MP_QSTR_send), MP_ROM_PTR(&{c_name}_coro_send_obj) }},",
             f"    {{ MP_ROM_QSTR(MP_QSTR___await__), MP_ROM_PTR(&{c_name}_coro_await_obj) }},",
             f"    {{ MP_ROM_QSTR(MP_QSTR_close), MP_ROM_PTR(&{c_name}_coro_close_obj) }},",
-            f"    {{ MP_ROM_QSTR(MP_QSTR_throw), MP_ROM_PTR(&{c_name}_coro_throw_obj) }},"
+            f"    {{ MP_ROM_QSTR(MP_QSTR_throw), MP_ROM_PTR(&{c_name}_coro_throw_obj) }},",
             "};",
             f"static MP_DEFINE_CONST_DICT({c_name}_coro_locals_dict, {c_name}_coro_locals_dict_table);",
             "",
@@ -387,34 +386,3 @@ class AsyncEmitter(GeneratorEmitter):
         lines.append("    return MP_OBJ_FROM_PTR(coro);")
         lines.append("}")
         return lines, obj_def
-
-    def _emit_wrapper_signature(self) -> tuple[str, str]:
-        """Emit wrapper signature (same as generator)."""
-        num_args = len(self.func_ir.params)
-        arg_names = [sanitize_name(param[0]) for param in self.func_ir.params]
-
-        if num_args == 0:
-            return (
-                f"static mp_obj_t {self.func_ir.c_name}(void)",
-                f"MP_DEFINE_CONST_FUN_OBJ_0({self.func_ir.c_name}_obj, {self.func_ir.c_name});",
-            )
-        if num_args == 1:
-            return (
-                f"static mp_obj_t {self.func_ir.c_name}(mp_obj_t {arg_names[0]}_obj)",
-                f"MP_DEFINE_CONST_FUN_OBJ_1({self.func_ir.c_name}_obj, {self.func_ir.c_name});",
-            )
-        if num_args == 2:
-            return (
-                f"static mp_obj_t {self.func_ir.c_name}(mp_obj_t {arg_names[0]}_obj, mp_obj_t {arg_names[1]}_obj)",
-                f"MP_DEFINE_CONST_FUN_OBJ_2({self.func_ir.c_name}_obj, {self.func_ir.c_name});",
-            )
-        if num_args == 3:
-            return (
-                "static mp_obj_t "
-                f"{self.func_ir.c_name}(mp_obj_t {arg_names[0]}_obj, mp_obj_t {arg_names[1]}_obj, mp_obj_t {arg_names[2]}_obj)",
-                f"MP_DEFINE_CONST_FUN_OBJ_3({self.func_ir.c_name}_obj, {self.func_ir.c_name});",
-            )
-        return (
-            f"static mp_obj_t {self.func_ir.c_name}(size_t n_args, const mp_obj_t *args)",
-            f"MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN({self.func_ir.c_name}_obj, {num_args}, {num_args}, {self.func_ir.c_name});",
-        )

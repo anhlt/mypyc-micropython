@@ -808,19 +808,21 @@ class AwaitModuleCallIR(StmtIR):
     This handles the common pattern of awaiting on a function from an
     imported module, such as `await asyncio.sleep(1)`.
 
-    Generated C code:
+    Generated C code uses yield-from semantics:
         // Import module at runtime
-        mp_obj_t _mod = mp_import_name(qstr_from_str("module"), mp_const_none, MP_OBJ_NEW_SMALL_INT(0));
-        // Get function attribute
+        mp_obj_t _mod = mp_import_name(qstr_from_str("module"), ...);
+        // Get function and call it to get awaitable
         mp_obj_t _fn = mp_load_attr(_mod, qstr_from_str("func"));
-        // Call function with args
-        mp_obj_t _coro = mp_call_function_N(_fn, args...);
-        // Yield to event loop
-        self->state = N;
-        return _coro;
-    state_N:
-        // Resume here when awaitable completes
-        result = self->send_value;
+        self->_await_iter = mp_call_function_N(_fn, args...);
+
+        // Drive awaitable via mp_iternext until completion
+        mp_obj_t _val = mp_iternext(self->_await_iter);
+        if (_val != MP_OBJ_STOP_ITERATION) {
+            self->state = N;  // Stay at same state
+            return _val;      // Yield to event loop
+        }
+        // Awaitable completed - get result
+        result = MP_STATE_THREAD(stop_iteration_arg);
     """
 
     module_name: str  # e.g., "asyncio"

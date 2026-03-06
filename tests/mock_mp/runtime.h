@@ -66,7 +66,6 @@ typedef struct {
 
 /* Forward declaration for stop_iteration_arg (used by mp_iternext and mp_make_stop_iteration) */
 static __thread mp_obj_t _mock_stop_iteration_arg;
-
 static inline bool mp_obj_is_true(mp_obj_t obj) {
     if (obj == mp_const_true) return true;
     if (obj == mp_const_false || obj == mp_const_none) return false;
@@ -648,14 +647,47 @@ static inline mp_obj_t mp_iternext(mp_obj_t iter_obj) {
     mp_obj_iter_struct *iter = (mp_obj_iter_struct *)iter_obj;
     if (iter->tag != MP_MOCK_TAG_ITER) {
         /* Unknown iterator type - simulate async awaitable behavior:
-         * First call: yield mp_const_none
-         * Second call: return MP_OBJ_STOP_ITERATION */
-        static __thread int _async_iter_call_count = 0;
-        _async_iter_call_count++;
-        if (_async_iter_call_count == 1) {
-            return mp_const_none;  /* Yield once */
+         * First call for a given awaitable object: yield mp_const_none
+         * Second call for the same object: return MP_OBJ_STOP_ITERATION.
+         *
+         * Track call counts per awaitable object using a small static table
+         * keyed by iter_obj, instead of a single global counter. */
+        enum { MAX_ASYNC_AWAITABLES = 64 };
+        static __thread mp_obj_t tracked_objs[MAX_ASYNC_AWAITABLES];
+        static __thread int tracked_counts[MAX_ASYNC_AWAITABLES];
+
+        int slot = -1;
+        int free_slot = -1;
+        for (int i = 0; i < MAX_ASYNC_AWAITABLES; i++) {
+            if (tracked_objs[i] == iter_obj) {
+                slot = i;
+                break;
+            }
+            if (tracked_objs[i] == MP_OBJ_NULL && free_slot == -1) {
+                free_slot = i;
+            }
+        }
+
+        if (slot == -1) {
+            /* New awaitable object: use a free slot if available,
+             * otherwise reuse slot 0 as a simple fallback. */
+            if (free_slot != -1) {
+                slot = free_slot;
+            } else {
+                slot = 0;
+            }
+            tracked_objs[slot] = iter_obj;
+            tracked_counts[slot] = 0;
+        }
+
+        tracked_counts[slot]++;
+        if (tracked_counts[slot] == 1) {
+            /* First iteration for this awaitable: yield once. */
+            return mp_const_none;
         } else {
-            _async_iter_call_count = 0;  /* Reset for next awaitable */
+            /* Second (or later) iteration: stop and free the slot. */
+            tracked_objs[slot] = MP_OBJ_NULL;
+            tracked_counts[slot] = 0;
             _mock_stop_iteration_arg = mp_const_none;
             return MP_OBJ_STOP_ITERATION;
         }
@@ -1454,7 +1486,7 @@ static inline mp_obj_t mp_call_function_1_ext(mp_obj_t fun, mp_obj_t arg) {
 
 /* Async/coroutine support */
 static inline mp_obj_t mp_make_stop_iteration(mp_obj_t value) {
-    (void)value;
+    _mock_stop_iteration_arg = value;
     return MP_OBJ_STOP_ITERATION;
 }
 
@@ -1464,8 +1496,7 @@ static inline void nlr_raise(mp_obj_t exc) {
     /* In real MicroPython this does a longjmp, but for testing we just return */
 }
 
-/* Mock MP_STATE_THREAD for stop_iteration_arg */
-static __thread mp_obj_t _mock_stop_iteration_arg = NULL;
+/* MP_STATE_THREAD macro for stop_iteration_arg (variable declared at top of file) */
 #define MP_STATE_THREAD(x) _mock_##x
 
 /* VM return kinds for mp_resume */

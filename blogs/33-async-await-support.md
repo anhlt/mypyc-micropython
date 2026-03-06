@@ -39,12 +39,12 @@ The key difference: `await` doesn't just suspend and return a value. It delegate
 Consider this Python code:
 
 ```python
-async def countdown_with_delay(start: int) -> str:
+async def countdown_with_delay(start: int) -> int:
     count = start
     while count > 0:
         await asyncio.sleep(0)  # Each await is a suspension point
         count = count - 1
-    return "done"
+    return count  # Returns 0 when done
 ```
 
 The `await asyncio.sleep(0)` doesn't just return the sleep object to the event loop. It:
@@ -388,7 +388,7 @@ Or directly:
 >>> asyncio.run(async_demo.delayed_double(21))
 42
 >>> asyncio.run(async_demo.countdown_with_delay(5))
-'done'
+0
 ```
 
 ## Summary

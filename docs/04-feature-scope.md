@@ -456,13 +456,9 @@ f"{x + y}"  # ❌ Complex expressions in f-strings
 "{:04d}".format(42)  # ❌ Complex format specs
 ```
 
-## Out-of-Scope Features
+## Async/Await Support
 
-These features will NOT be supported and will raise compilation errors.
-
-### Async/Await ✅ (Basic)
-
-Basic async/await is now supported. Async functions are compiled to coroutine objects
+Basic async/await is supported. Async functions are compiled to coroutine objects
 that work with MicroPython's `uasyncio` event loop.
 
 **Supported:**
@@ -471,16 +467,17 @@ that work with MicroPython's `uasyncio` event loop.
 async def simple_coro() -> int:
     return 42
 
-# Async with await
+# Async with await on module functions
 async def fetch_data() -> int:
-    result = await some_async_func()
-    return result
+    await asyncio.sleep(0)  # Yields to event loop
+    return 42
 
 # Multiple sequential awaits
 async def multi_step() -> int:
-    a = await first_op()
-    b = await second_op()
-    return a + b
+    await asyncio.sleep(0)
+    a = 10
+    await asyncio.sleep(0)
+    return a + 32
 
 # Running with uasyncio
 import asyncio
@@ -509,6 +506,11 @@ async def with_try():
         pass
 ```
 
+---
+
+## Out-of-Scope Features
+
+These features will NOT be supported and will raise compilation errors.
 ### Metaclasses ❌
 
 ```python

@@ -30,11 +30,10 @@ async def simple_return() -> int:
 
 
 async def compute_sum(n: int) -> int:
-    """Compute sum from 0 to n-1 with simulated async work.
+    """Compute sum from 0 to n-1.
 
-    Each iteration awaits, allowing other tasks to run.
-    In real usage, await would be on actual async operations
-    like sleep_ms(), socket reads, etc.
+    This is a simple async function with no await points - it demonstrates
+    that async functions can also perform synchronous computation.
     """
     total: int = 0
     i: int = 0
@@ -45,9 +44,10 @@ async def compute_sum(n: int) -> int:
 
 
 async def sequential_operations() -> int:
-    """Demonstrates multiple sequential await points.
+    """Async function performing simple sequential arithmetic.
 
-    Each await compiles to a separate state in the state machine.
+    This coroutine has no await points and simply returns the sum
+    of two integers. Demonstrates basic async function structure.
     """
     a: int = 10
     b: int = 20
