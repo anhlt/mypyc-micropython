@@ -743,6 +743,39 @@ t("test_trait_identity", traits.test_trait_param(), "Alice,Whiskers,Alice,Whiske
 # Note: Methods using f-strings with self.attr (describe, greet, to_string)
 # are skipped due to pre-existing f-string compilation issue (not trait-related)
 
+
+# ---- async_demo ----
+suite("async_demo")
+import async_demo
+import asyncio
+
+# Test basic async functions (no await asyncio.sleep)
+coro = async_demo.simple_return()
+t("simple_return returns coroutine", hasattr(coro, '__await__'), "True")
+t("simple_return has send", hasattr(coro, 'send'), "True")
+t("simple_return has close", hasattr(coro, 'close'), "True")
+t("simple_return has throw", hasattr(coro, 'throw'), "True")
+
+# Run simple async functions with asyncio.run
+result = asyncio.run(async_demo.simple_return())
+t("simple_return result", result, "42")
+
+result = asyncio.run(async_demo.with_parameters(10, 20))
+t("with_parameters(10,20)", result, "30")
+
+result = asyncio.run(async_demo.compute_sum(10))
+t("compute_sum(10)", result, "45")
+
+result = asyncio.run(async_demo.sequential_operations())
+t("sequential_operations", result, "30")
+
+# Test async functions WITH await asyncio.sleep()
+# These use the new yield-from semantics with mp_resume()
+result = asyncio.run(async_demo.delayed_double(21))
+t("delayed_double(21)", result, "42")
+
+result = asyncio.run(async_demo.countdown_with_delay(5))
+t("countdown_with_delay(5)", result, "0")
 # ---- summary ----
 gc.collect()
 print("@D:" + str(_total) + "|" + str(_passed) + "|" + str(_failed))

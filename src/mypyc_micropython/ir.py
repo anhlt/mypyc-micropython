@@ -510,6 +510,7 @@ class FuncIR:
     list_vars: dict[str, str | None] = field(default_factory=dict)
     max_temp: int = 0  # Highest temp counter used by IR builder
     is_generator: bool = False
+    is_async: bool = False  # async def function (compiles like generator with __await__)
     # Default arguments: maps param index to DefaultArg
     defaults: dict[int, DefaultArg] = field(default_factory=dict)
     star_args: ParamIR | None = None
@@ -780,6 +781,54 @@ class YieldIR(StmtIR):
     prelude: list[InstrIR] = field(default_factory=list)
     state_id: int = 0
 
+@dataclass
+class AwaitIR(StmtIR):
+    """Await expression: await awaitable.
+
+    Suspends execution until the awaitable completes.
+    Compiled similarly to yield from - delegates to sub-iterator.
+
+    Generated C uses the same state machine as generators:
+        self->state = N;
+        return awaitable;  // Yield to event loop
+    state_N:
+        // Resume here when awaitable completes
+        result = send_value;  // Value sent back by event loop
+    """
+
+    value: ValueIR  # The awaitable expression
+    result: str | None = None  # Variable to store result (None if discarded)
+    prelude: list[InstrIR] = field(default_factory=list)
+    state_id: int = 0  # Resumption point after await
+
+@dataclass
+class AwaitModuleCallIR(StmtIR):
+    """Await a module function call: await module.func(args).
+
+    This handles the common pattern of awaiting on a function from an
+    imported module, such as `await asyncio.sleep(1)`.
+
+    Generated C code:
+        // Import module at runtime
+        mp_obj_t _mod = mp_import_name(qstr_from_str("module"), mp_const_none, MP_OBJ_NEW_SMALL_INT(0));
+        // Get function attribute
+        mp_obj_t _fn = mp_load_attr(_mod, qstr_from_str("func"));
+        // Call function with args
+        mp_obj_t _coro = mp_call_function_N(_fn, args...);
+        // Yield to event loop
+        self->state = N;
+        return _coro;
+    state_N:
+        // Resume here when awaitable completes
+        result = self->send_value;
+    """
+
+    module_name: str  # e.g., "asyncio"
+    func_name: str  # e.g., "sleep"
+    args: list[ValueIR] = field(default_factory=list)
+    arg_preludes: list[list[InstrIR]] = field(default_factory=list)  # Prelude for each arg
+    result: str | None = None  # Variable to store result (None if discarded)
+    state_id: int = 0  # Resumption point after await
 
 @dataclass
 class IfIR(StmtIR):

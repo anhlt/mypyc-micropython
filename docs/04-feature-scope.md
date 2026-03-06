@@ -460,16 +460,53 @@ f"{x + y}"  # ❌ Complex expressions in f-strings
 
 These features will NOT be supported and will raise compilation errors.
 
-### Async/Await ❌
+### Async/Await ✅ (Basic)
 
+Basic async/await is now supported. Async functions are compiled to coroutine objects
+that work with MicroPython's `uasyncio` event loop.
+
+**Supported:**
 ```python
-# NOT SUPPORTED
-async def fetch_data() -> str:
-    await some_coroutine()
-    return "data"
+# Simple async function
+async def simple_coro() -> int:
+    return 42
 
-# Reason: MicroPython's async implementation differs significantly
-# from CPython. Users should use MicroPython's native uasyncio.
+# Async with await
+async def fetch_data() -> int:
+    result = await some_async_func()
+    return result
+
+# Multiple sequential awaits
+async def multi_step() -> int:
+    a = await first_op()
+    b = await second_op()
+    return a + b
+
+# Running with uasyncio
+import asyncio
+result = asyncio.run(fetch_data())
+```
+
+**NOT Supported:**
+```python
+# async for (async iteration)
+async for item in async_iterator:
+    pass  # Not supported
+
+# async with (async context managers)
+async with async_resource() as r:
+    pass  # Not supported
+
+# Async generators (yield in async def)
+async def async_gen():
+    yield 1  # Not supported
+
+# Exception handling in coroutines
+async def with_try():
+    try:
+        await something()  # Limited support
+    except:
+        pass
 ```
 
 ### Metaclasses ❌

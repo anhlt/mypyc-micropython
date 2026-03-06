@@ -316,6 +316,17 @@ make test-device BOARD=ESP32_GENERIC_C6 PORT=/dev/cu.usbmodem2101
 make run-device-tests PORT=/dev/cu.usbmodem2101
 ```
 
+**WARNING**: When running `make run-device-tests`, NEVER pipe the output through `grep`, `tail`, or other filters. The device test output is streaming and can cause the connection to hang or miss critical output. Always capture the full output:
+```bash
+# CORRECT: Full output, no filtering
+make run-device-tests PORT=/dev/cu.usbmodem2101
+
+# WRONG: Can cause hangs or missed output
+make run-device-tests PORT=/dev/cu.usbmodem2101 | tail -50    # DON'T DO THIS
+make run-device-tests PORT=/dev/cu.usbmodem2101 | grep async  # DON'T DO THIS
+```
+
+
 Test pattern in `tests/device/run_device_tests.py` (uses `t(name, got, expected)` helper and `suite(name)` for grouping):
 ```python
 suite("special_methods")
