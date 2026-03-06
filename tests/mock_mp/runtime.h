@@ -64,6 +64,8 @@ typedef struct {
 #define mp_const_false MP_OBJ_NEW_IMMEDIATE_OBJ(1)    /* = 14 */
 #define mp_const_true  MP_OBJ_NEW_IMMEDIATE_OBJ(3)    /* = 30 */
 
+/* Forward declaration for stop_iteration_arg (used by mp_iternext and mp_make_stop_iteration) */
+static __thread mp_obj_t _mock_stop_iteration_arg;
 static inline bool mp_obj_is_true(mp_obj_t obj) {
     if (obj == mp_const_true) return true;
     if (obj == mp_const_false || obj == mp_const_none) return false;
@@ -478,6 +480,17 @@ static inline mp_obj_t mp_obj_list_append(mp_obj_t list_obj, mp_obj_t item) {
 
 typedef uintptr_t qstr;
 
+/* Dynamic qstr lookup - returns a hash of the string for simple implementation */
+static inline qstr qstr_from_str(const char *str) {
+    /* Simple hash function for mock - real MicroPython does proper lookup */
+    qstr hash = 0x5381;
+    while (*str) {
+        hash = ((hash << 5) + hash) + (unsigned char)*str++;
+    }
+    return hash;
+}
+
+
 typedef enum {
     MP_BINARY_OP_LESS,
     MP_BINARY_OP_MORE,
@@ -629,9 +642,55 @@ static inline mp_obj_t mp_getiter(mp_obj_t obj, void *buf) {
 }
 
 static inline mp_obj_t mp_iternext(mp_obj_t iter_obj) {
+    /* For async testing: handle any object that isn't a known iterator
+     * by simulating yield-once-then-stop behavior using a counter */
     mp_obj_iter_struct *iter = (mp_obj_iter_struct *)iter_obj;
     if (iter->tag != MP_MOCK_TAG_ITER) {
-        mp_mock_abort("expected iterator");
+        /* Unknown iterator type - simulate async awaitable behavior:
+         * First call for a given awaitable object: yield mp_const_none
+         * Second call for the same object: return MP_OBJ_STOP_ITERATION.
+         *
+         * Track call counts per awaitable object using a small static table
+         * keyed by iter_obj, instead of a single global counter. */
+        enum { MAX_ASYNC_AWAITABLES = 64 };
+        static __thread mp_obj_t tracked_objs[MAX_ASYNC_AWAITABLES];
+        static __thread int tracked_counts[MAX_ASYNC_AWAITABLES];
+
+        int slot = -1;
+        int free_slot = -1;
+        for (int i = 0; i < MAX_ASYNC_AWAITABLES; i++) {
+            if (tracked_objs[i] == iter_obj) {
+                slot = i;
+                break;
+            }
+            if (tracked_objs[i] == MP_OBJ_NULL && free_slot == -1) {
+                free_slot = i;
+            }
+        }
+
+        if (slot == -1) {
+            /* New awaitable object: use a free slot if available,
+             * otherwise reuse slot 0 as a simple fallback. */
+            if (free_slot != -1) {
+                slot = free_slot;
+            } else {
+                slot = 0;
+            }
+            tracked_objs[slot] = iter_obj;
+            tracked_counts[slot] = 0;
+        }
+
+        tracked_counts[slot]++;
+        if (tracked_counts[slot] == 1) {
+            /* First iteration for this awaitable: yield once. */
+            return mp_const_none;
+        } else {
+            /* Second (or later) iteration: stop and free the slot. */
+            tracked_objs[slot] = MP_OBJ_NULL;
+            tracked_counts[slot] = 0;
+            _mock_stop_iteration_arg = mp_const_none;
+            return MP_OBJ_STOP_ITERATION;
+        }
     }
 
     mp_obj_t container = iter->container;
@@ -1035,14 +1094,14 @@ static inline mp_obj_t mp_call_function_n_kw(mp_obj_t fun, size_t n_args, size_t
 #define MP_ROM_QSTR(x) ((mp_obj_t)(uintptr_t)0)
 #define MP_ROM_PTR(x) ((mp_obj_t)(x))
 
-#define MP_DEFINE_CONST_FUN_OBJ_0(obj_name, fun_name) static const int obj_name = 0
-#define MP_DEFINE_CONST_FUN_OBJ_1(obj_name, fun_name) static const int obj_name = 0
-#define MP_DEFINE_CONST_FUN_OBJ_2(obj_name, fun_name) static const int obj_name = 0
-#define MP_DEFINE_CONST_FUN_OBJ_3(obj_name, fun_name) static const int obj_name = 0
-#define MP_DEFINE_CONST_FUN_OBJ_VAR(obj_name, min, fun_name) static const int obj_name = 0
+#define MP_DEFINE_CONST_FUN_OBJ_0(obj_name, fun_name) const int obj_name = 0
+#define MP_DEFINE_CONST_FUN_OBJ_1(obj_name, fun_name) const int obj_name = 0
+#define MP_DEFINE_CONST_FUN_OBJ_2(obj_name, fun_name) const int obj_name = 0
+#define MP_DEFINE_CONST_FUN_OBJ_3(obj_name, fun_name) const int obj_name = 0
+#define MP_DEFINE_CONST_FUN_OBJ_VAR(obj_name, min, fun_name) const int obj_name = 0
 #define MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(obj_name, min, max, fun_name) \
-    static const int obj_name = 0
-#define MP_DEFINE_CONST_FUN_OBJ_KW(obj_name, min, fun_name) static const int obj_name = 0
+    const int obj_name = 0
+#define MP_DEFINE_CONST_FUN_OBJ_KW(obj_name, min, fun_name) const int obj_name = 0
 #define MP_DEFINE_CONST_DICT(dict_name, table_name) const int dict_name = 0
 #define MP_TYPE_FLAG_NONE (0)
 #define MP_TYPE_FLAG_ITER_IS_ITERNEXT (1)
@@ -1321,5 +1380,168 @@ static void mp_obj_print_helper(const mp_print_t *print, mp_obj_t obj, mp_print_
 }
 #define MP_OBJ_FROM_PTR(p) ((mp_obj_t)(p))
 #define MP_OBJ_TO_PTR(o) ((void *)(o))
+
+
+/* Mock module/attribute loading for await module.fn() pattern */
+/* These need to match qstr_from_str hash for the corresponding strings */
+/* Using djb2 hash: hash = ((hash << 5) + hash) + c, starting with 0x5381 */
+
+/* Hash for "asyncio": computed from qstr_from_str("asyncio") */
+static inline qstr _qstr_hash_asyncio(void) { return qstr_from_str("asyncio"); }
+static inline qstr _qstr_hash_sleep(void) { return qstr_from_str("sleep"); }
+static inline qstr _qstr_hash_sleep_ms(void) { return qstr_from_str("sleep_ms"); }
+
+/* Mock coroutine returned by asyncio.sleep() */
+#define MP_MOCK_TAG_SLEEP_CORO (0xC0A0)
+
+typedef struct {
+    int tag;
+    mp_int_t delay;
+} mp_mock_sleep_coro_t;
+
+static inline mp_obj_t mp_mock_sleep(mp_obj_t delay_obj) {
+    mp_mock_sleep_coro_t *coro = (mp_mock_sleep_coro_t *)malloc(sizeof(*coro));
+    if (coro == NULL) {
+        mp_mock_abort("out of memory");
+    }
+    coro->tag = MP_MOCK_TAG_SLEEP_CORO;
+    coro->delay = mp_obj_get_int(delay_obj);
+    return (mp_obj_t)coro;
+}
+
+/* Mock asyncio module object */
+#define MP_MOCK_TAG_ASYNCIO_MOD (0xA5C0)
+#define MP_MOCK_TAG_SLEEP_FN (0x5EEF)
+
+typedef struct {
+    int tag;
+} mp_mock_asyncio_mod_t;
+
+typedef struct {
+    int tag;
+} mp_mock_sleep_fn_t;
+
+static mp_mock_asyncio_mod_t _mp_mock_asyncio_mod = { MP_MOCK_TAG_ASYNCIO_MOD };
+static mp_mock_sleep_fn_t _mp_mock_sleep_fn = { MP_MOCK_TAG_SLEEP_FN };
+
+static inline mp_obj_t mp_import_name(qstr name, mp_obj_t fromlist, mp_obj_t level) {
+    (void)fromlist;
+    (void)level;
+    /* Match dynamically computed qstr hash for "asyncio" */
+    if (name == _qstr_hash_asyncio()) {
+        return (mp_obj_t)&_mp_mock_asyncio_mod;
+    }
+    mp_mock_abort("mp_import_name: unknown module");
+    return mp_const_none;
+}
+
+static inline mp_obj_t mp_load_attr(mp_obj_t obj, qstr attr) {
+    mp_mock_asyncio_mod_t *mod = (mp_mock_asyncio_mod_t *)obj;
+    /* Match dynamically computed qstr hash for "sleep" or "sleep_ms" */
+    if (mod->tag == MP_MOCK_TAG_ASYNCIO_MOD && 
+        (attr == _qstr_hash_sleep() || attr == _qstr_hash_sleep_ms())) {
+        return (mp_obj_t)&_mp_mock_sleep_fn;
+    }
+    mp_mock_abort("mp_load_attr: unknown attr");
+    return mp_const_none;
+}
+
+/* Extend mp_call_function_1 to handle mock sleep function */
+static inline mp_obj_t mp_call_function_1_ext(mp_obj_t fun, mp_obj_t arg) {
+    mp_mock_sleep_fn_t *fn = (mp_mock_sleep_fn_t *)fun;
+    if (fn->tag == MP_MOCK_TAG_SLEEP_FN) {
+        return mp_mock_sleep(arg);
+    }
+    /* Delegate to the original implementation for builtins */
+    mp_builtin_obj_t *builtin = (mp_builtin_obj_t *)fun;
+    if (builtin->tag == MP_MOCK_BUILTIN_TAG_MIN) {
+        mp_mock_abort("min() requires at least 2 arguments");
+    }
+    if (builtin->tag == MP_MOCK_BUILTIN_TAG_MAX) {
+        mp_mock_abort("max() requires at least 2 arguments");
+    }
+    if (builtin->tag == MP_MOCK_BUILTIN_TAG_SUM) {
+        mp_obj_t args[1] = { arg };
+        return mp_mock_builtin_sum(1, args);
+    }
+    if (builtin->tag == MP_MOCK_BUILTIN_TAG_SORTED) {
+        return mp_mock_sorted(arg);
+    }
+    if (builtin->tag == MP_MOCK_TYPE_TAG_ENUMERATE) {
+        return mp_mock_enumerate_make(arg, 0);
+    }
+    if (builtin->tag == MP_MOCK_TYPE_TAG_ZIP) {
+        mp_obj_t args[] = { arg };
+        return mp_mock_zip_make(1, args);
+    }
+    if (builtin->tag == MP_MOCK_TYPE_TAG_LIST) {
+        return mp_mock_list_from_iter(arg);
+    }
+    mp_mock_abort("mp_call_function_1_ext: unknown builtin");
+    return mp_const_none;
+}
+
+/* Override the original mp_call_function_1 */
+#define mp_call_function_1 mp_call_function_1_ext
+
+/* Async/coroutine support */
+static inline mp_obj_t mp_make_stop_iteration(mp_obj_t value) {
+    _mock_stop_iteration_arg = value;
+    return MP_OBJ_STOP_ITERATION;
+}
+
+/* Exception handling stubs for throw() */
+static inline void nlr_raise(mp_obj_t exc) {
+    (void)exc;
+    /* In real MicroPython this does a longjmp, but for testing we just return */
+}
+
+/* MP_STATE_THREAD macro for stop_iteration_arg (variable declared at top of file) */
+#define MP_STATE_THREAD(x) _mock_##x
+
+/* VM return kinds for mp_resume */
+typedef enum {
+    MP_VM_RETURN_NORMAL = 0,
+    MP_VM_RETURN_YIELD = 1,
+    MP_VM_RETURN_EXCEPTION = 2,
+} mp_vm_return_kind_t;
+
+/* Mock mp_resume call counter for simulating yield-then-complete behavior */
+static __thread int _mock_mp_resume_call_count = 0;
+
+/* Mock mp_resume - drives an awaitable/generator
+ * For testing, we simulate yield-on-first-call, complete-on-second:
+ * - First call: return YIELD with mp_const_none
+ * - Second call: return NORMAL with mp_const_none
+ */
+static inline mp_vm_return_kind_t mp_resume(mp_obj_t self_in, mp_obj_t send_value, mp_obj_t throw_value, mp_obj_t *ret_val) {
+    (void)self_in;
+    (void)send_value;
+    (void)throw_value;
+    
+    _mock_mp_resume_call_count++;
+    
+    if (_mock_mp_resume_call_count == 1) {
+        /* First call - simulate yield */
+        *ret_val = mp_const_none;
+        return MP_VM_RETURN_YIELD;
+    } else {
+        /* Subsequent calls - simulate completion */
+        *ret_val = mp_const_none;
+        _mock_stop_iteration_arg = mp_const_none;
+        _mock_mp_resume_call_count = 0;  /* Reset for next coroutine */
+        return MP_VM_RETURN_NORMAL;
+    }
+}
+/* mp_raise_StopIteration - in tests we just abort since we don't have proper exception handling */
+__attribute__((noreturn))
+static inline void mp_raise_StopIteration(mp_obj_t arg) {
+    (void)arg;
+    /* In a real test with proper exception support, this would longjmp */
+    /* For now, we just print and abort since C tests call iternext directly */
+    fprintf(stderr, "StopIteration raised with arg\n");
+    abort();
+}
+
 
 #endif

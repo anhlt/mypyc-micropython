@@ -238,6 +238,7 @@ def _compile_module_parts(
     strict: bool,
     external_libs: dict[str, Any] | None = None,
 ) -> _ModuleCompileParts:
+    from .async_emitter import AsyncEmitter
     from .class_emitter import ClassEmitter
     from .function_emitter import FunctionEmitter, MethodEmitter
     from .generator_emitter import GeneratorEmitter
@@ -282,14 +283,18 @@ def _compile_module_parts(
         elif isinstance(node, ast.ClassDef):
             class_ir = ir_builder.build_class(node)
             module_ir.add_class(class_ir)
-        elif isinstance(node, ast.FunctionDef):
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             func_ir = ir_builder.build_function(node)
             function_irs.append(func_ir)
             module_ir.add_function(func_ir)
 
-            emitter = (
-                GeneratorEmitter(func_ir) if func_ir.is_generator else FunctionEmitter(func_ir)
-            )
+            # Select appropriate emitter based on function type
+            if func_ir.is_async:
+                emitter = AsyncEmitter(func_ir)
+            elif func_ir.is_generator:
+                emitter = GeneratorEmitter(func_ir)
+            else:
+                emitter = FunctionEmitter(func_ir)
             code, _ = emitter.emit()
             function_code.append(code)
 

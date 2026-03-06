@@ -24,6 +24,8 @@ from .ir import (
     AttrAccessIR,
     AttrAssignIR,
     AugAssignIR,
+    AwaitIR,
+    AwaitModuleCallIR,
     BinOpIR,
     BreakIR,
     CallIR,
@@ -78,6 +80,7 @@ from .ir import (
     UnaryOpIR,
     ValueIR,
     WhileIR,
+    YieldFromIR,
     YieldIR,
 )
 
@@ -271,7 +274,7 @@ class IRBuilder:
         """Set of module names that have been imported."""
         return self._imported_modules
 
-    def build_function(self, node: ast.FunctionDef) -> FuncIR:
+    def build_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> FuncIR:
         self._temp_counter = 0
         self._var_types = {}
         self._star_c_names: dict[str, str] = {}
@@ -285,16 +288,12 @@ class IRBuilder:
         self._class_typed_params = {}
         self._mypy_local_types = {}
 
+
+        # Check if this is an async function
+        is_async = isinstance(node, ast.AsyncFunctionDef)
+
         is_generator = any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(node))
         if is_generator:
-            yield_from_node = next(
-                (n for n in ast.walk(node) if isinstance(n, ast.YieldFrom)),
-                None,
-            )
-            if yield_from_node is not None:
-                raise NotImplementedError(
-                    f"yield from is not supported (line {yield_from_node.lineno})"
-                )
 
             unsupported_node = next(
                 (n for n in ast.walk(node) if isinstance(n, (ast.Try, ast.With, ast.AsyncWith))),
@@ -414,6 +413,7 @@ class IRBuilder:
             body_ast=node,
             body=body_ir,
             is_generator=is_generator,
+            is_async=is_async,
             is_method=False,
             class_ir=None,
             locals_={
@@ -481,6 +481,17 @@ class IRBuilder:
                     prelude=prelude,
                     state_id=self._next_yield_state_id(),
                 )
+            # Handle yield from expression as statement
+            if isinstance(stmt.value, ast.YieldFrom):
+                iterable, prelude = self._build_expr(stmt.value.value, locals_)
+                return YieldFromIR(
+                    iterable=iterable,
+                    prelude=prelude,
+                    state_id=self._next_yield_state_id(),
+                )
+            # Handle await expression as statement (result discarded)
+            if isinstance(stmt.value, ast.Await):
+                return self._build_await(stmt.value, None, locals_)
             if isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str):
                 return None
             if (
@@ -498,6 +509,50 @@ class IRBuilder:
             return ReturnIR(value=None, prelude=[])
         value, prelude = self._build_expr(stmt.value, locals_)
         return ReturnIR(value=value, prelude=prelude)
+
+    def _build_await(
+        self, await_node: ast.Await, result_var: str | None, locals_: list[str]
+    ) -> AwaitIR | AwaitModuleCallIR:
+        """Build IR for await expression.
+
+        Detects two patterns:
+        1. await module.func(args) -> AwaitModuleCallIR (runtime module call)
+        2. await expr -> AwaitIR (awaiting an existing awaitable)
+        """
+        awaited = await_node.value
+
+        # Pattern 1: await module.func(args) - e.g., await asyncio.sleep(1)
+        if isinstance(awaited, ast.Call) and isinstance(awaited.func, ast.Attribute):
+            attr = awaited.func
+            if isinstance(attr.value, ast.Name):
+                module_name = attr.value.id
+                func_name = attr.attr
+
+                # Build arguments
+                args: list[ValueIR] = []
+                arg_preludes: list[list] = []
+                for arg in awaited.args:
+                    value, prelude = self._build_expr(arg, locals_)
+                    args.append(value)
+                    arg_preludes.append(prelude)
+
+                return AwaitModuleCallIR(
+                    module_name=module_name,
+                    func_name=func_name,
+                    args=args,
+                    arg_preludes=arg_preludes,
+                    result=result_var,
+                    state_id=self._next_yield_state_id(),
+                )
+
+        # Pattern 2: await expr - awaiting an existing awaitable
+        value, prelude = self._build_expr(awaited, locals_)
+        return AwaitIR(
+            value=value,
+            result=result_var,
+            prelude=prelude,
+            state_id=self._next_yield_state_id(),
+        )
 
     def _build_if(self, stmt: ast.If, locals_: list[str]) -> IfIR:
         test, test_prelude = self._build_expr(stmt.test, locals_)
@@ -746,6 +801,15 @@ class IRBuilder:
 
         var_name = target.id
         c_var_name = sanitize_name(var_name)
+        # Handle await expression in assignment: result = await something
+        if isinstance(stmt.value, ast.Await):
+            is_new_var = var_name not in locals_
+            if is_new_var:
+                locals_.append(var_name)
+                c_type = "mp_obj_t"  # await always returns mp_obj_t
+                self._var_types[var_name] = c_type
+            return self._build_await(stmt.value, c_var_name, locals_)
+
         value, prelude = self._build_expr(stmt.value, locals_)
         is_new_var = var_name not in locals_
         if is_new_var:
@@ -898,7 +962,9 @@ class IRBuilder:
 
     def _build_expr(self, expr: ast.expr, locals_: list[str]) -> tuple[ValueIR, list]:
         if isinstance(expr, ast.YieldFrom):
-            raise NotImplementedError(f"yield from is not supported (line {expr.lineno})")
+            raise NotImplementedError(
+                f"yield from as expression is not supported (use as statement instead) (line {expr.lineno})"
+            )
         if isinstance(expr, ast.Yield):
             raise NotImplementedError(
                 f"yield as an expression is not supported (line {expr.lineno})"

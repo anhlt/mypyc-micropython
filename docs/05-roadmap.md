@@ -676,13 +676,14 @@ Implemented:
 - [x] Generator struct stores all local variables and loop state
 - [x] `return` in generator emits `MP_OBJ_STOP_ITERATION`
 
+**Supported:**
+- [x] `yield from` for sub-iterator delegation (uses `mp_getiter`/`mp_iternext` pattern)
+
 **Restrictions (raise `NotImplementedError`):**
-- `yield from` not supported
 - `yield` as expression (receiving values) not supported
 - `try`/`with` inside generators not supported
 - Generator methods (classes with `yield`) not supported
 - Generator expressions not supported
-
 See [Blog 24: Generator Implementation](/blogs/24-generator-implementation.md) for detailed C code generation.
 
 ### 5.3 Comprehensions

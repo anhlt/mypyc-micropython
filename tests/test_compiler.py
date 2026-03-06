@@ -4309,15 +4309,62 @@ def gen(n: int):
         assert "static mp_obj_t test_gen_gen_iternext" in result
         assert "self->i = 1" in result  # start value initialized
 
-    def test_yield_from_raises_not_implemented(self):
+    def test_yield_from_compiles(self):
+        """Test that yield from now compiles successfully."""
         source = """
 def gen(items: list):
     yield from items
 """
+        result = compile_source(source, "test", type_check=False)
+        # Check generator struct has _yield_iter field
+        assert "typedef struct _test_gen_gen_t" in result
+        assert "mp_obj_t _yield_iter;" in result  # yield from iterator field
+        # Check iternext uses mp_getiter and mp_iternext for yield from
+        assert "mp_getiter" in result
+        assert "mp_iternext" in result
+        assert "MP_OBJ_STOP_ITERATION" in result
+
+    def test_yield_from_flatten_nested_list(self):
+        """Test yield from with nested iteration (flatten pattern)."""
+        source = """
+def flatten(nested: list):
+    for inner in nested:
+        yield from inner
+"""
+        result = compile_source(source, "test", type_check=False)
+        # Check generator struct
+        assert "typedef struct _test_flatten_gen_t" in result
+        assert "mp_obj_t _yield_iter;" in result
+        # Check nested iteration: both for-iter and yield from
+        assert "mp_getiter" in result
+        assert "mp_iternext" in result
+        # Check state machine has entry for yield from
+        assert "case 1:" in result  # state 1 for yield from
+
+    def test_yield_from_with_regular_yield(self):
+        """Test generator mixing yield and yield from."""
+        source = """
+def gen(prefix: int, items: list):
+    yield prefix
+    yield from items
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "typedef struct _test_gen_gen_t" in result
+        assert "mp_obj_t _yield_iter;" in result
+        # Both yield and yield from states
+        assert "case 1:" in result
+        assert "case 2:" in result
+
+    def test_yield_from_as_expression_raises_not_implemented(self):
+        """Test that yield from as expression (with result) is not supported."""
+        source = """
+def gen(items: list):
+    result = yield from items
+    print(result)
+"""
         with pytest.raises(NotImplementedError) as exc_info:
             compile_source(source, "test", type_check=False)
-        assert "yield from is not supported" in str(exc_info.value)
-        assert "line 3" in str(exc_info.value)
+        assert "yield from as expression is not supported" in str(exc_info.value)
 
     def test_generator_for_iter_compiles(self):
         """Test that for-iter (non-range) loops in generators compile successfully."""
@@ -5945,3 +5992,149 @@ def get_x(p: Point) -> int:
         assert "((test_Point_obj_t *)MP_OBJ_TO_PTR(p))->x" in result
         # Should NOT use mp_load_attr for regular class
         assert "mp_load_attr(p, MP_QSTR_x)" not in result
+
+
+class TestAsyncFunctions:
+    """Tests for async/await support."""
+
+    def test_simple_async_function_compiles(self):
+        """Test that a simple async function compiles to coroutine type."""
+        source = '''
+async def simple_coro() -> int:
+    return 42
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should have coroutine struct
+        assert "typedef struct _test_simple_coro_coro_t" in result
+        assert "mp_obj_base_t base;" in result
+        assert "uint16_t state;" in result
+        assert "mp_obj_t send_value;" in result
+        # Should have iternext function
+        assert "static mp_obj_t test_simple_coro_coro_iternext" in result
+        # Should have send method
+        assert "static mp_obj_t test_simple_coro_coro_send" in result
+        # Should have __await__ method
+        assert "static mp_obj_t test_simple_coro_coro_await" in result
+        # Should have coroutine type
+        assert "MP_QSTR_coroutine" in result
+
+    def test_async_function_with_await_compiles(self):
+        """Test that await expressions compile correctly."""
+        source = '''
+async def fetch_data() -> int:
+    result = await some_async_op()
+    return result
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should have result field in struct
+        assert "mp_obj_t result;" in result
+        # Should have multiple states for await resumption
+        assert "case 1: goto state_1;" in result
+        # Should store send_value in result
+        assert "self->result = self->send_value;" in result
+
+    def test_async_function_with_await_discarded(self):
+        """Test that await without assignment works."""
+        source = '''
+async def do_something() -> None:
+    await some_async_op()
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should compile without result storage
+        assert "static mp_obj_t test_do_something_coro_iternext" in result
+        # Should have state for await
+        assert "case 1: goto state_1;" in result
+
+    def test_async_function_multiple_awaits(self):
+        """Test that multiple await expressions each get their own state."""
+        source = '''
+async def multi_await() -> int:
+    x = await first_op()
+    y = await second_op()
+    return x + y
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should have multiple states
+        assert "case 1: goto state_1;" in result
+        assert "case 2: goto state_2;" in result
+        # Should have x and y fields
+        assert "mp_obj_t x;" in result
+        assert "mp_obj_t y;" in result
+
+    def test_async_function_with_parameters(self):
+        """Test async function with parameters."""
+        source = '''
+async def process(n: int) -> int:
+    result = await compute(n)
+    return result
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should have parameter in struct
+        assert "mp_int_t n;" in result
+        # Wrapper should take parameter
+        assert "static mp_obj_t test_process(mp_obj_t n_obj)" in result
+        # Should initialize coro fields from args
+        assert "coro->n = mp_obj_get_int(n_obj);" in result
+
+    def test_async_coroutine_type_has_all_methods(self):
+        """Test that coroutine type has send and __await__ in locals dict."""
+        source = '''
+async def my_coro() -> None:
+    pass
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should have locals dict with both methods
+        assert "MP_QSTR_send" in result
+        assert "MP_QSTR___await__" in result
+        assert "_coro_locals_dict" in result
+
+    def test_await_module_function_call(self):
+        """Test await on module.func() pattern like asyncio.sleep()."""
+        source = '''
+async def with_sleep() -> int:
+    await asyncio.sleep(0)
+    return 42
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should import module at runtime using qstr_from_str for dynamic lookup
+        assert 'mp_import_name(qstr_from_str("asyncio")' in result
+        # Should get sleep function from module using qstr_from_str
+        assert 'mp_load_attr(_mod, qstr_from_str("sleep"))' in result
+        # Should call sleep with argument
+        assert "mp_call_function_1(_fn, mp_obj_new_int(0))" in result
+        # Should have state for await resumption
+        assert "case 1: goto state_1;" in result
+
+    def test_await_module_function_with_result(self):
+        """Test await on module.func() with result stored."""
+        source = '''
+async def fetch_with_delay() -> int:
+    result = await asyncio.sleep_ms(100)
+    return 42
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should have result field
+        assert "mp_obj_t result;" in result
+        # Should store result from stop_iteration_arg after await completes
+        assert "self->result = MP_STATE_THREAD(stop_iteration_arg);" in result
+
+    def test_await_module_function_multiple_args(self):
+        """Test await on module.func() with multiple arguments."""
+        source = '''
+async def fetch_data() -> int:
+    await some_module.fetch(1, 2)
+    return 0
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should call with two arguments
+        assert "mp_call_function_2(_fn," in result
+
+    def test_await_module_function_no_args(self):
+        """Test await on module.func() with no arguments."""
+        source = '''
+async def ping() -> None:
+    await network.ping()
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should call with zero arguments
+        assert "mp_call_function_0(_fn)" in result

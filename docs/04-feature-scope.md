@@ -180,15 +180,26 @@ def iter_items(items: list[object]):
         yield x
 ```
 
+**Supported (yield from):**
+```python
+# yield from - delegate to sub-iterator
+def chain(*iterables):
+    for it in iterables:
+        yield from it  # Supported!
+
+# Nested delegation
+def flatten(nested):
+    for item in nested:
+        if isinstance(item, list):
+            yield from flatten(item)
+        else:
+            yield item
+```
+
 **NOT Supported:**
 ```python
 # Generator expressions
 gen = (x * x for x in range(10))  # Not supported
-
-# yield from
-def chain(*iterables):
-    for it in iterables:
-        yield from it  # Not supported
 
 # Generator with send/throw
 def echo():
@@ -201,7 +212,6 @@ def gen_with_try():
         yield 1  # Not supported - try in generators
     finally:
         pass
-```
 ```
 
 ### isinstance() ⚠️ (Planned)
@@ -456,22 +466,61 @@ f"{x + y}"  # ❌ Complex expressions in f-strings
 "{:04d}".format(42)  # ❌ Complex format specs
 ```
 
+## Async/Await Support
+
+Basic async/await is supported. Async functions are compiled to coroutine objects
+that work with MicroPython's `uasyncio` event loop.
+
+**Supported:**
+```python
+# Simple async function
+async def simple_coro() -> int:
+    return 42
+
+# Async with await on module functions
+async def fetch_data() -> int:
+    await asyncio.sleep(0)  # Yields to event loop
+    return 42
+
+# Multiple sequential awaits
+async def multi_step() -> int:
+    await asyncio.sleep(0)
+    a = 10
+    await asyncio.sleep(0)
+    return a + 32
+
+# Running with uasyncio
+import asyncio
+result = asyncio.run(fetch_data())
+```
+
+**NOT Supported:**
+```python
+# async for (async iteration)
+async for item in async_iterator:
+    pass  # Not supported
+
+# async with (async context managers)
+async with async_resource() as r:
+    pass  # Not supported
+
+# Async generators (yield in async def)
+async def async_gen():
+    yield 1  # Not supported
+
+# Exception handling in coroutines
+async def with_try():
+    try:
+        await something()  # Limited support
+    except:
+        pass
+```
+
+---
+
 ## Out-of-Scope Features
 
 These features will NOT be supported and will raise compilation errors.
-
-### Async/Await ❌
-
-```python
-# NOT SUPPORTED
-async def fetch_data() -> str:
-    await some_coroutine()
-    return "data"
-
-# Reason: MicroPython's async implementation differs significantly
-# from CPython. Users should use MicroPython's native uasyncio.
-```
-
 ### Metaclasses ❌
 
 ```python

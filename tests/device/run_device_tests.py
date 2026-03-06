@@ -698,6 +698,27 @@ for v in g.range_with_start(5):
     range_start_result.append(v)
 t("range_with_start", str(range_start_result), "[1, 2, 3, 4]")
 
+# Test yield from generators
+delegate_result = []
+for v in g.delegate_to_list([100, 200, 300]):
+    delegate_result.append(v)
+t("delegate_to_list", str(delegate_result), "[100, 200, 300]")
+
+flatten_result = []
+for v in g.flatten([[1, 2], [3, 4, 5]]):
+    flatten_result.append(v)
+t("flatten", str(flatten_result), "[1, 2, 3, 4, 5]")
+
+chain_result = []
+for v in g.chain_iterables([1, 2], [3, 4, 5]):
+    chain_result.append(v)
+t("chain_iterables", str(chain_result), "[1, 2, 3, 4, 5]")
+
+prefix_result = []
+for v in g.prefix_and_delegate(0, [10, 20], 99):
+    prefix_result.append(v)
+t("prefix_and_delegate", str(prefix_result), "[0, 10, 20, 99]")
+
 # ---- traits ----
 suite("traits")
 import traits
@@ -742,6 +763,41 @@ t("test_trait_identity", traits.test_trait_param(), "Alice,Whiskers,Alice,Whiske
 
 # Note: Methods using f-strings with self.attr (describe, greet, to_string)
 # are skipped due to pre-existing f-string compilation issue (not trait-related)
+
+
+# ---- async_demo ----
+suite("async_demo")
+import asyncio
+
+import async_demo
+
+# Test basic async functions (no await asyncio.sleep)
+coro = async_demo.simple_return()
+t("simple_return returns coroutine", hasattr(coro, '__await__'), "True")
+t("simple_return has send", hasattr(coro, 'send'), "True")
+t("simple_return has close", hasattr(coro, 'close'), "True")
+t("simple_return has throw", hasattr(coro, 'throw'), "True")
+
+# Run simple async functions with asyncio.run
+result = asyncio.run(async_demo.simple_return())
+t("simple_return result", result, "42")
+
+result = asyncio.run(async_demo.with_parameters(10, 20))
+t("with_parameters(10,20)", result, "30")
+
+result = asyncio.run(async_demo.compute_sum(10))
+t("compute_sum(10)", result, "45")
+
+result = asyncio.run(async_demo.sequential_operations())
+t("sequential_operations", result, "30")
+
+# Test async functions WITH await asyncio.sleep()
+# These use the new yield-from semantics with mp_resume()
+result = asyncio.run(async_demo.delayed_double(21))
+t("delayed_double(21)", result, "42")
+
+result = asyncio.run(async_demo.countdown_with_delay(5))
+t("countdown_with_delay(5)", result, "0")
 
 # ---- summary ----
 gc.collect()

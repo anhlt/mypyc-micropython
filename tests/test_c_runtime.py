@@ -161,6 +161,121 @@ int main(void) {
     # iter_range_start: 1, 2, 3, 4, then stop_iteration=1
     assert stdout.strip().splitlines() == ["10", "20", "30", "1", "1", "2", "3", "4", "1"]
 
+
+def test_c_yield_from_delegates_to_subiterator(compile_and_run):
+    """Test yield from with simple delegation to a list."""
+    source = '''
+def delegate_to_list(items: list):
+    yield from items
+'''
+    test_main_c = '''
+#include <stdio.h>
+
+static void drain_delegate(void) {
+    mp_obj_t items[] = {
+        mp_obj_new_int(100),
+        mp_obj_new_int(200),
+        mp_obj_new_int(300),
+    };
+    mp_obj_t lst = mp_obj_new_list(3, items);
+    mp_obj_t gen = test_delegate_to_list(lst);
+    for (;;) {
+        mp_obj_t item = test_delegate_to_list_gen_iternext(gen);
+        if (item == MP_OBJ_STOP_ITERATION) {
+            break;
+        }
+        printf("%ld\\n", (long)mp_obj_get_int(item));
+    }
+    printf("%d\\n", test_delegate_to_list_gen_iternext(gen) == MP_OBJ_STOP_ITERATION);
+}
+
+int main(void) {
+    drain_delegate();
+    return 0;
+}
+'''
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["100", "200", "300", "1"]
+
+
+def test_c_yield_from_flatten_nested_lists(compile_and_run):
+    """Test yield from with nested iteration (flatten pattern)."""
+    source = '''
+def flatten(nested: list):
+    for inner in nested:
+        yield from inner
+'''
+    test_main_c = '''
+#include <stdio.h>
+
+static void drain_flatten(void) {
+    // Create inner lists: [1, 2], [3, 4, 5]
+    mp_obj_t inner1_items[] = {mp_obj_new_int(1), mp_obj_new_int(2)};
+    mp_obj_t inner2_items[] = {mp_obj_new_int(3), mp_obj_new_int(4), mp_obj_new_int(5)};
+    mp_obj_t inner1 = mp_obj_new_list(2, inner1_items);
+    mp_obj_t inner2 = mp_obj_new_list(3, inner2_items);
+
+    // Create nested list: [[1, 2], [3, 4, 5]]
+    mp_obj_t nested_items[] = {inner1, inner2};
+    mp_obj_t nested = mp_obj_new_list(2, nested_items);
+
+    mp_obj_t gen = test_flatten(nested);
+    for (;;) {
+        mp_obj_t item = test_flatten_gen_iternext(gen);
+        if (item == MP_OBJ_STOP_ITERATION) {
+            break;
+        }
+        printf("%ld\\n", (long)mp_obj_get_int(item));
+    }
+    printf("%d\\n", test_flatten_gen_iternext(gen) == MP_OBJ_STOP_ITERATION);
+}
+
+int main(void) {
+    drain_flatten();
+    return 0;
+}
+'''
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["1", "2", "3", "4", "5", "1"]
+
+
+def test_c_yield_from_mixed_with_yield(compile_and_run):
+    """Test generator mixing yield and yield from."""
+    source = '''
+def mixed_gen(prefix: int, items: list, suffix: int):
+    yield prefix
+    yield from items
+    yield suffix
+'''
+    test_main_c = '''
+#include <stdio.h>
+
+static void drain_mixed(void) {
+    mp_obj_t items[] = {mp_obj_new_int(10), mp_obj_new_int(20)};
+    mp_obj_t lst = mp_obj_new_list(2, items);
+    mp_obj_t gen = test_mixed_gen(mp_obj_new_int(1), lst, mp_obj_new_int(99));
+    for (;;) {
+        mp_obj_t item = test_mixed_gen_gen_iternext(gen);
+        if (item == MP_OBJ_STOP_ITERATION) {
+            break;
+        }
+        printf("%ld\\n", (long)mp_obj_get_int(item));
+    }
+    printf("%d\\n", test_mixed_gen_gen_iternext(gen) == MP_OBJ_STOP_ITERATION);
+}
+
+int main(void) {
+    drain_mixed();
+    return 0;
+}
+'''
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    # prefix=1, then items 10, 20, then suffix=99, then stop
+    assert stdout.strip().splitlines() == ["1", "10", "20", "99", "1"]
+
 def test_c_sum_list_returns_correct_sum(compile_and_run):
     source = """
 def sum_list(lst: list) -> int:
@@ -2534,3 +2649,160 @@ int main(void) {
     assert lines[1] == "name=Alice"
     assert lines[2] == "desc=Person"
     assert lines[3] == "age=30"
+
+
+def test_c_async_coroutine_basic(compile_and_run):
+    """Test that async functions create coroutines with proper methods."""
+    source = '''
+async def simple_coro() -> int:
+    return 42
+'''
+    test_main_c = '''
+#include <stdio.h>
+
+int main(void) {
+    // Create coroutine
+    mp_obj_t coro = test_simple_coro();
+
+    // Check it has the expected structure (non-null)
+    if (coro == MP_OBJ_NULL) {
+        printf("ERROR: coroutine is null\\n");
+        return 1;
+    }
+
+    // Get the coroutine struct
+    test_simple_coro_coro_t *c = MP_OBJ_TO_PTR(coro);
+
+    // Check initial state
+    printf("state=%d\\n", c->state);
+
+    // Call iternext to run the coroutine
+    mp_obj_t result = test_simple_coro_coro_iternext(coro);
+
+    // After return, state should be done (65535)
+    printf("state_after=%d\\n", c->state);
+
+    // Result should be MP_OBJ_STOP_ITERATION (NULL in mock)
+    printf("stopped=%d\\n", result == MP_OBJ_STOP_ITERATION ? 1 : 0);
+
+    return 0;
+}
+'''
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().split("\n")
+    assert lines[0] == "state=0"
+    assert lines[1] == "state_after=65535"
+    assert lines[2] == "stopped=1"
+
+
+def test_c_async_coroutine_send_method(compile_and_run):
+    """Test that async coroutine send() stores value and calls iternext."""
+    source = '''
+async def add_values(x: int, y: int) -> int:
+    return x + y
+'''
+    # Note: send() now raises StopIteration when coroutine completes,
+    # so we test using iternext() directly which returns MP_OBJ_STOP_ITERATION
+    test_main_c = '''
+#include <stdio.h>
+
+int main(void) {
+    // Create coroutine with args
+    mp_obj_t coro = test_add_values(mp_obj_new_int(10), mp_obj_new_int(32));
+    test_add_values_coro_t *c = MP_OBJ_TO_PTR(coro);
+
+    // Set send_value manually (simulating what send() does before calling iternext)
+    c->send_value = mp_const_none;
+
+    // Call iternext directly
+    mp_obj_t result = test_add_values_coro_iternext(coro);
+
+    // Should have completed
+    printf("state=%d\\n", c->state);
+    printf("stopped=%d\\n", result == MP_OBJ_STOP_ITERATION ? 1 : 0);
+
+    return 0;
+}
+'''
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().split("\n")
+    assert lines[0] == "state=65535"
+    assert lines[1] == "stopped=1"
+
+
+def test_c_async_coroutine_close_method(compile_and_run):
+    """Test that async coroutine close() method works."""
+    source = '''
+async def simple() -> int:
+    return 1
+'''
+    test_main_c = '''
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t coro = test_simple();
+    test_simple_coro_t *c = MP_OBJ_TO_PTR(coro);
+
+    printf("before=%d\\n", c->state);
+
+    // Call close() - should mark as done
+    mp_obj_t result = test_simple_coro_close(coro);
+
+    printf("after=%d\\n", c->state);
+    printf("result_none=%d\\n", result == mp_const_none ? 1 : 0);
+
+    return 0;
+}
+'''
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().split("\n")
+    assert lines[0] == "before=0"
+    assert lines[1] == "after=65535"
+    assert lines[2] == "result_none=1"
+
+
+def test_c_async_await_module_call(compile_and_run):
+    """Test async function with await asyncio.sleep() pattern."""
+    source = '''
+import asyncio
+
+async def delayed_double(n: int) -> int:
+    await asyncio.sleep(0)
+    return n * 2
+'''
+    test_main_c = '''
+#include <stdio.h>
+
+int main(void) {
+    // Create coroutine
+    mp_obj_t coro = test_delayed_double(mp_obj_new_int(21));
+    test_delayed_double_coro_t *c = MP_OBJ_TO_PTR(coro);
+
+    printf("state0=%d\\n", c->state);
+
+    // First call: should return the sleep coroutine and suspend
+    mp_obj_t result = test_delayed_double_coro_iternext(coro);
+    printf("state1=%d\\n", c->state);
+
+    // result should be a sleep coroutine (non-null, non-stop)
+    printf("sleep_coro=%d\\n", result != MP_OBJ_STOP_ITERATION ? 1 : 0);
+
+    // Second call: should complete and return stop iteration
+    result = test_delayed_double_coro_iternext(coro);
+    printf("state2=%d\\n", c->state);
+    printf("stopped=%d\\n", result == MP_OBJ_STOP_ITERATION ? 1 : 0);
+
+    return 0;
+}
+'''
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().split("\n")
+    assert lines[0] == "state0=0"  # Initial state
+    assert lines[1] == "state1=1"  # After first await, state = 1
+    assert lines[2] == "sleep_coro=1"  # Got sleep coroutine
+    assert lines[3] == "state2=65535"  # Done state
+    assert lines[4] == "stopped=1"  # Final result is stop

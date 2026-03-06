@@ -20,6 +20,8 @@ from .ir import (
     AttrAccessIR,
     AttrAssignIR,
     AugAssignIR,
+    AwaitIR,
+    AwaitModuleCallIR,
     BinOpIR,
     BoxIR,
     BreakIR,
@@ -75,6 +77,7 @@ from .ir import (
     UnboxIR,
     ValueIR,
     WhileIR,
+    YieldFromIR,
     YieldIR,
 )
 
@@ -239,6 +242,12 @@ class IRPrinter:
             return self._print_return(stmt)
         elif isinstance(stmt, YieldIR):
             return self._print_yield(stmt)
+        elif isinstance(stmt, YieldFromIR):
+            return self._print_yield_from(stmt)
+        elif isinstance(stmt, AwaitIR):
+            return self._print_await(stmt)
+        elif isinstance(stmt, AwaitModuleCallIR):
+            return self._print_await_module_call(stmt)
         elif isinstance(stmt, IfIR):
             return self._print_if(stmt)
         elif isinstance(stmt, WhileIR):
@@ -300,6 +309,51 @@ class IRPrinter:
             self._indent_dec()
         value_str = self.print_value(stmt.value) if stmt.value else "None"
         lines.append(f"{self._i()}yield {value_str} [state_id={stmt.state_id}]")
+        return "\n".join(lines)
+
+    def _print_yield_from(self, stmt: YieldFromIR) -> str:
+        lines = []
+        if stmt.prelude:
+            lines.append(f"{self._i()}# prelude:")
+            self._indent_inc()
+            for instr in stmt.prelude:
+                lines.append(self.print_instr(instr))
+            self._indent_dec()
+        iterable_str = self.print_value(stmt.iterable)
+        lines.append(f"{self._i()}yield from {iterable_str} [state_id={stmt.state_id}]")
+        return "\n".join(lines)
+
+    def _print_await(self, stmt: AwaitIR) -> str:
+        lines = []
+        if stmt.prelude:
+            lines.append(f"{self._i()}# prelude:")
+            self._indent_inc()
+            for instr in stmt.prelude:
+                lines.append(self.print_instr(instr))
+            self._indent_dec()
+        value_str = self.print_value(stmt.value)
+        if stmt.result:
+            lines.append(f"{self._i()}{stmt.result} = await {value_str} [state_id={stmt.state_id}]")
+        else:
+            lines.append(f"{self._i()}await {value_str} [state_id={stmt.state_id}]")
+        return "\n".join(lines)
+
+    def _print_await_module_call(self, stmt: AwaitModuleCallIR) -> str:
+        lines = []
+        # Print arg preludes if any
+        for i, prelude in enumerate(stmt.arg_preludes):
+            if prelude:
+                lines.append(f"{self._i()}# arg[{i}] prelude:")
+                self._indent_inc()
+                for instr in prelude:
+                    lines.append(self.print_instr(instr))
+                self._indent_dec()
+        args_str = ", ".join(self.print_value(arg) for arg in stmt.args)
+        call_str = f"{stmt.module_name}.{stmt.func_name}({args_str})"
+        if stmt.result:
+            lines.append(f"{self._i()}{stmt.result} = await {call_str} [state_id={stmt.state_id}]")
+        else:
+            lines.append(f"{self._i()}await {call_str} [state_id={stmt.state_id}]")
         return "\n".join(lines)
 
     def _print_if(self, stmt: IfIR) -> str:

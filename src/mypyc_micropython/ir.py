@@ -493,7 +493,7 @@ class FuncIR:
     c_name: str
     params: list[tuple[str, CType]]
     return_type: CType
-    body_ast: ast.FunctionDef | None = None
+    body_ast: ast.FunctionDef | ast.AsyncFunctionDef | None = None
     body: list[StmtIR] = field(default_factory=list)
     is_method: bool = False
     class_ir: ClassIR | None = None
@@ -510,6 +510,7 @@ class FuncIR:
     list_vars: dict[str, str | None] = field(default_factory=dict)
     max_temp: int = 0  # Highest temp counter used by IR builder
     is_generator: bool = False
+    is_async: bool = False  # async def function (compiles like generator with __await__)
     # Default arguments: maps param index to DefaultArg
     defaults: dict[int, DefaultArg] = field(default_factory=dict)
     star_args: ParamIR | None = None
@@ -780,6 +781,86 @@ class YieldIR(StmtIR):
     prelude: list[InstrIR] = field(default_factory=list)
     state_id: int = 0
 
+@dataclass
+class YieldFromIR(StmtIR):
+    """Yield from expression: yield from iterable.
+
+    Delegates iteration to a sub-iterator. All values yielded by the
+    sub-iterator are yielded directly. When the sub-iterator is exhausted,
+    execution continues after the yield from.
+
+    Generated C uses mp_iternext loop (same pattern as async await):
+        // Initialize sub-iterator
+        self->_yield_iter = mp_getiter(iterable, NULL);
+
+        // Drive sub-iterator via mp_iternext until completion
+    state_N:
+        mp_obj_t _val = mp_iternext(self->_yield_iter);
+        if (_val != MP_OBJ_STOP_ITERATION) {
+            self->state = N;  // Stay at same state
+            return _val;      // Yield the value
+        }
+        // Sub-iterator exhausted - continue execution
+    """
+
+    iterable: ValueIR  # The iterable expression to delegate to
+    prelude: list[InstrIR] = field(default_factory=list)
+    state_id: int = 0  # Resumption point for yield from loop
+
+@dataclass
+class AwaitIR(StmtIR):
+    """Await expression: await awaitable.
+
+    Suspends execution until the awaitable completes.
+    For simple await expressions, the awaitable is returned to the event loop,
+    which will drive it to completion and send back the result.
+
+    Generated C:
+        self->state = N;
+        return awaitable;  // Yield to event loop
+    state_N:
+        // Resume here when awaitable completes
+        result = send_value;  // Value sent back by event loop
+
+    Note: For await on module calls (await asyncio.sleep(1)), use AwaitModuleCallIR
+    which implements yield-from semantics with mp_iternext.
+    """
+
+    value: ValueIR  # The awaitable expression
+    result: str | None = None  # Variable to store result (None if discarded)
+    prelude: list[InstrIR] = field(default_factory=list)
+    state_id: int = 0  # Resumption point after await
+
+@dataclass
+class AwaitModuleCallIR(StmtIR):
+    """Await a module function call: await module.func(args).
+
+    This handles the common pattern of awaiting on a function from an
+    imported module, such as `await asyncio.sleep(1)`.
+
+    Generated C code uses yield-from semantics:
+        // Import module at runtime
+        mp_obj_t _mod = mp_import_name(qstr_from_str("module"), ...);
+        // Get function and call it to get awaitable
+        mp_obj_t _fn = mp_load_attr(_mod, qstr_from_str("func"));
+        self->_await_iter = mp_call_function_N(_fn, args...);
+
+        // Drive awaitable via mp_iternext until completion
+        mp_obj_t _val = mp_iternext(self->_await_iter);
+        if (_val != MP_OBJ_STOP_ITERATION) {
+            self->state = N;  // Stay at same state
+            return _val;      // Yield to event loop
+        }
+        // Awaitable completed - get result
+        result = MP_STATE_THREAD(stop_iteration_arg);
+    """
+
+    module_name: str  # e.g., "asyncio"
+    func_name: str  # e.g., "sleep"
+    args: list[ValueIR] = field(default_factory=list)
+    arg_preludes: list[list[InstrIR]] = field(default_factory=list)  # Prelude for each arg
+    result: str | None = None  # Variable to store result (None if discarded)
+    state_id: int = 0  # Resumption point after await
 
 @dataclass
 class IfIR(StmtIR):

@@ -14,6 +14,7 @@ from .ir import (
     ReturnIR,
     StmtIR,
     ValueIR,
+    YieldFromIR,
     YieldIR,
 )
 
@@ -45,6 +46,9 @@ class GeneratorEmitter(BaseEmitter):
             "    mp_obj_base_t base;",
             "    uint16_t state;",
         ]
+        # Add _yield_iter field if there's any yield from
+        if self._has_yield_from(self.func_ir.body):
+            lines.append("    mp_obj_t _yield_iter;  // Active sub-iterator for yield from")
         for field_name, field_type in self._all_gen_fields().items():
             lines.append(f"    {field_type.to_c_type_str()} {field_name};")
         lines.append(f"}} {self.func_ir.c_name}_gen_t;")
@@ -78,6 +82,9 @@ class GeneratorEmitter(BaseEmitter):
             if isinstance(stmt, YieldIR):
                 lines.extend(self._emit_statement(stmt))
                 continue
+            if isinstance(stmt, YieldFromIR):
+                lines.extend(self._emit_statement(stmt))
+                continue
             lines.append("    {")
             for line in self._emit_statement(stmt):
                 lines.append(line)
@@ -106,6 +113,10 @@ class GeneratorEmitter(BaseEmitter):
             f"    {self.func_ir.c_name}_gen_t *gen = mp_obj_malloc({self.func_ir.c_name}_gen_t, &{self.func_ir.c_name}_gen_type);"
         )
         lines.append("    gen->state = 0;")
+
+        # Initialize _yield_iter if yield from is used
+        if self._has_yield_from(self.func_ir.body):
+            lines.append("    gen->_yield_iter = mp_const_none;")
 
         for name, c_type in self._all_gen_fields().items():
             if self._is_param_field(name):
@@ -152,6 +163,8 @@ class GeneratorEmitter(BaseEmitter):
         del native
         if isinstance(stmt, YieldIR):
             return self._emit_yield(stmt)
+        if isinstance(stmt, YieldFromIR):
+            return self._emit_yield_from(stmt)
         if isinstance(stmt, ReturnIR):
             return self._emit_return(stmt)
         return super()._emit_statement(stmt, native=False)
@@ -168,6 +181,49 @@ class GeneratorEmitter(BaseEmitter):
         lines.append(f"    return {yield_expr};")
         lines.append("    }")
         lines.append(f"state_{stmt.state_id}:")
+        return lines
+
+    def _emit_yield_from(self, stmt: YieldFromIR) -> list[str]:
+        """Emit yield from expression.
+
+        yield from iterable compiles to:
+        1. Initialize sub-iterator from iterable (on first entry)
+        2. Call mp_iternext() to get next value
+        3. If value (not STOP_ITERATION), stay at same state and yield it
+        4. If STOP_ITERATION, clear _yield_iter and continue execution
+        """
+        lines = []
+
+        # State label comes first (for re-entry)
+        lines.append(f"state_{stmt.state_id}:")
+        lines.append("    {")
+
+        # Emit prelude for iterable expression
+        lines.extend(self._emit_prelude(stmt.prelude))
+
+        # Check if this is first entry (_yield_iter not yet created)
+        lines.append("    if (self->_yield_iter == mp_const_none) {")
+
+        # Initialize sub-iterator from iterable
+        iter_expr, _ = self._emit_expr(stmt.iterable)
+        lines.append(f"        self->_yield_iter = mp_getiter({iter_expr}, NULL);")
+        lines.append("    }")
+
+        # Get next value from sub-iterator
+        lines.append("    mp_obj_t _val = mp_iternext(self->_yield_iter);")
+
+        # Check if sub-iterator yielded or completed
+        lines.append("    if (_val != MP_OBJ_STOP_ITERATION) {")
+        lines.append("        // Sub-iterator yielded - stay at this state and yield the value")
+        lines.append(f"        self->state = {stmt.state_id};")
+        lines.append("        return _val;")
+        lines.append("    }")
+
+        # Sub-iterator completed - clear _yield_iter and continue
+        lines.append("    // Sub-iterator exhausted")
+        lines.append("    self->_yield_iter = mp_const_none;")
+        lines.append("    }")
+
         return lines
 
     def _emit_return(self, stmt: ReturnIR, native: bool = False) -> list[str]:
@@ -273,6 +329,8 @@ class GeneratorEmitter(BaseEmitter):
             for stmt in stmts:
                 if isinstance(stmt, YieldIR):
                     state_ids.add(stmt.state_id)
+                elif isinstance(stmt, YieldFromIR):
+                    state_ids.add(stmt.state_id)
                 elif hasattr(stmt, "body") and isinstance(getattr(stmt, "body"), list):
                     walk(getattr(stmt, "body"))
                     if hasattr(stmt, "orelse") and isinstance(getattr(stmt, "orelse"), list):
@@ -280,6 +338,22 @@ class GeneratorEmitter(BaseEmitter):
 
         walk(body)
         return sorted(state_ids)
+
+    def _has_yield_from(self, body: list[StmtIR]) -> bool:
+        """Check if the body contains any YieldFromIR."""
+        def walk(stmts: list[StmtIR]) -> bool:
+            for stmt in stmts:
+                if isinstance(stmt, YieldFromIR):
+                    return True
+                if hasattr(stmt, "body") and isinstance(getattr(stmt, "body"), list):
+                    if walk(getattr(stmt, "body")):
+                        return True
+                    if hasattr(stmt, "orelse") and isinstance(getattr(stmt, "orelse"), list):
+                        if walk(getattr(stmt, "orelse")):
+                            return True
+            return False
+
+        return walk(body)
 
     def _all_gen_fields(self) -> dict[str, CType]:
         fields: dict[str, CType] = {}
