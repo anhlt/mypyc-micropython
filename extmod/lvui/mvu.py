@@ -1,6 +1,6 @@
 import lvgl as lv
-import lvgl_nav as nav
-import lvgl_screens as ls
+import nav
+import screens as ls
 
 SCREEN_HOME = 0
 SCREEN_SETTINGS = 1

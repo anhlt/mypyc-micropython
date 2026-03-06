@@ -40,6 +40,12 @@ class GeneratorEmitter(BaseEmitter):
         )
         return full_code, obj_def
 
+    def emit_forward_declaration(self) -> str:
+        """Emit a forward declaration for this generator function."""
+        signature, _ = self._emit_wrapper_signature()
+        return signature + ";"
+
+
     def _emit_generator_struct(self) -> list[str]:
         lines = [
             f"typedef struct _{self.func_ir.c_name}_gen_t {{",

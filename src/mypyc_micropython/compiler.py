@@ -115,6 +115,7 @@ def compile_to_micropython(
     type_check: bool = True,
     strict_type_check: bool = True,
     external_libs: dict[str, Any] | None = None,
+    module_name: str | None = None,
 ) -> CompilationResult:
     """Compile typed Python file to MicroPython usermod folder.
 
@@ -139,11 +140,13 @@ def compile_to_micropython(
             success=False,
             errors=[f"Source file not found: {source_path}"],
         )
-
-    module_name = source_path.stem
+    # Use provided module_name or derive from filename
+    effective_name = module_name if module_name else source_path.stem
+    # For output dir, use sanitized name (dots -> underscores)
+    output_name = effective_name.replace(".", "_")
 
     if output_dir is None:
-        output_dir = source_path.parent / f"usermod_{module_name}"
+        output_dir = source_path.parent / f"usermod_{output_name}"
     output_dir = Path(output_dir)
 
     tc_result: TypeCheckResult | None = None
@@ -151,7 +154,7 @@ def compile_to_micropython(
         tc_result = type_check_file(source_path, strict=strict_type_check)
         if not tc_result.success:
             return CompilationResult(
-                module_name=module_name,
+                module_name=effective_name,
                 c_code="",
                 h_code=None,
                 mk_code="",
@@ -165,21 +168,22 @@ def compile_to_micropython(
         source_code = source_path.read_text()
         c_code = compile_source(
             source_code,
-            module_name,
+            effective_name,
             type_check=type_check,
             strict=strict_type_check,
             external_libs=external_libs,
         )
-        mk_code = generate_micropython_mk(module_name)
-        cmake_code = generate_micropython_cmake(module_name)
+        mk_code = generate_micropython_mk(effective_name)
+        cmake_code = generate_micropython_cmake(effective_name)
 
         output_dir.mkdir(parents=True, exist_ok=True)
-        (output_dir / f"{module_name}.c").write_text(c_code)
+        # Use output_name (sanitized) for filename
+        (output_dir / f"{output_name}.c").write_text(c_code)
         (output_dir / "micropython.mk").write_text(mk_code)
         (output_dir / "micropython.cmake").write_text(cmake_code)
 
         return CompilationResult(
-            module_name=module_name,
+            module_name=effective_name,
             c_code=c_code,
             h_code=None,
             mk_code=mk_code,
@@ -190,7 +194,7 @@ def compile_to_micropython(
 
     except Exception as e:
         return CompilationResult(
-            module_name=module_name,
+            module_name=effective_name,
             c_code="",
             h_code=None,
             mk_code="",
@@ -237,6 +241,7 @@ def _compile_module_parts(
     type_check: bool,
     strict: bool,
     external_libs: dict[str, Any] | None = None,
+    sibling_modules: dict[str, str] | None = None,  # maps import name -> C prefix
 ) -> _ModuleCompileParts:
     from .async_emitter import AsyncEmitter
     from .class_emitter import ClassEmitter
@@ -260,7 +265,10 @@ def _compile_module_parts(
     c_name = sanitize_name(module_name)
     module_ir = ModuleIR(name=module_name, c_name=c_name)
 
-    ir_builder = IRBuilder(module_name, mypy_types=mypy_types, external_libs=external_libs)
+    ir_builder = IRBuilder(
+        module_name, mypy_types=mypy_types, external_libs=external_libs,
+        sibling_modules=sibling_modules,
+    )
     function_irs: list[FuncIR] = []
     function_code: list[str] = []
     forward_decls: list[str] = []
@@ -295,6 +303,10 @@ def _compile_module_parts(
                 emitter = GeneratorEmitter(func_ir)
             else:
                 emitter = FunctionEmitter(func_ir)
+
+            # Generate forward declaration for this function
+            forward_decls.append(emitter.emit_forward_declaration())
+
             code, _ = emitter.emit()
             function_code.append(code)
 
@@ -449,6 +461,7 @@ def _scan_package_recursive(
     type_check: bool,
     strict: bool,
     accumulated_parts: _ModuleCompileParts,
+    sibling_modules: dict[str, str] | None = None,  # maps import name -> C prefix
 ) -> list[_PackageSubmodule]:
     """Recursively scan a package directory and compile all .py files and sub-packages.
 
@@ -469,6 +482,7 @@ def _scan_package_recursive(
             symbol_prefix,
             type_check=type_check,
             strict=strict,
+            sibling_modules=sibling_modules,
         )
         submodules.append(
             _PackageSubmodule(
@@ -511,6 +525,7 @@ def _scan_package_recursive(
             sub_prefix,
             type_check=type_check,
             strict=strict,
+            sibling_modules=sibling_modules,
         )
 
         accumulated_parts.forward_decls.extend(init_parts.forward_decls)
@@ -538,6 +553,7 @@ def _scan_package_recursive(
             type_check=type_check,
             strict=strict,
             accumulated_parts=accumulated_parts,
+            sibling_modules=sibling_modules,
         )
 
         submodules.append(
@@ -612,12 +628,24 @@ def compile_package(
             strict=strict_type_check,
         )
 
+        # Build sibling modules map: maps import name -> C prefix
+        # This allows submodules to import each other by name (e.g., 'import screens')
+        # and have those imports resolved to direct C function calls
+        sibling_modules: dict[str, str] = {}
+        for py_file in package_path.glob("*.py"):
+            if py_file.name == "__init__.py":
+                continue
+            submod_name = py_file.stem
+            c_prefix = sanitize_name(f"{module_name}_{submod_name}")
+            sibling_modules[submod_name] = c_prefix
+
         submodules = _scan_package_recursive(
             package_path,
             module_name,
             type_check=type_check,
             strict=strict_type_check,
             accumulated_parts=parent_parts,
+            sibling_modules=sibling_modules,
         )
 
         module_emitter = ModuleEmitter(

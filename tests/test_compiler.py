@@ -4615,7 +4615,7 @@ class TestExternalLibCalls:
     @staticmethod
     def _make_test_lib():
         """Create a minimal CLibraryDef for testing."""
-        from mypyc_micropython.c_bindings.c_ir import (
+        from mypyc_micropython.c_bindings.core.c_ir import (
             CEnumDef,
             CFuncDef,
             CLibraryDef,
@@ -4817,7 +4817,7 @@ def chain_calls() -> int:
         """Test passing enum value as function argument."""
         lib = self._make_test_lib()
         # Add a function that takes an int param for alignment
-        from mypyc_micropython.c_bindings.c_ir import (
+        from mypyc_micropython.c_bindings.core.c_ir import (
             CFuncDef,
             CParamDef,
             CType,
@@ -4851,7 +4851,7 @@ def align_center() -> int:
 
     def test_header_file_generation(self):
         """Test that CEmitter can generate a header file."""
-        from mypyc_micropython.c_bindings.c_emitter import CEmitter
+        from mypyc_micropython.c_bindings.core.c_emitter import CEmitter
 
         lib = self._make_test_lib()
         emitter = CEmitter(lib, emit_public=True)
@@ -4864,7 +4864,7 @@ def align_center() -> int:
 
     def test_public_wrappers_not_static(self):
         """Test that emit_public=True removes static from wrappers."""
-        from mypyc_micropython.c_bindings.c_emitter import CEmitter
+        from mypyc_micropython.c_bindings.core.c_emitter import CEmitter
 
         lib = self._make_test_lib()
         emitter = CEmitter(lib, emit_public=True)
@@ -4875,7 +4875,7 @@ def align_center() -> int:
 
     def test_private_wrappers_are_static(self):
         """Test that emit_public=False (default) keeps static wrappers."""
-        from mypyc_micropython.c_bindings.c_emitter import CEmitter
+        from mypyc_micropython.c_bindings.core.c_emitter import CEmitter
 
         lib = self._make_test_lib()
         emitter = CEmitter(lib)  # default: emit_public=False

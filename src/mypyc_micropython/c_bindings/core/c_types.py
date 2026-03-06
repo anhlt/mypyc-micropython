@@ -7,7 +7,7 @@ They are used by:
 3. mypy/pyright for validation
 
 Usage in .pyi files:
-    from mypyc_micropython.c_bindings.c_types import c_ptr, c_int, c_struct
+    from mypyc_micropython.c_bindings.core.c_types import c_ptr, c_int, c_struct
 
     @c_struct("lv_obj_t")
     class LvObj: ...

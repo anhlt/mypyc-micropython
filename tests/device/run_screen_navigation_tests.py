@@ -2,8 +2,8 @@ import gc
 import time
 
 import lvgl as lv
-import lvgl_nav
-import lvgl_screens as ls
+import lvui
+# using lvui.screens
 
 SCREEN_HOME = 0
 SCREEN_SETTINGS = 1
@@ -26,52 +26,52 @@ ALLOWED_CHILDREN: tuple[tuple[int, tuple[int, ...]], ...] = (
 
 
 def build_home():
-    scr = ls.create_screen()
-    cont = ls.create_container(scr, 280, 200)
-    ls.set_flex_column(cont)
+    scr = lvui.screens.create_screen()
+    cont = lvui.screens.create_container(scr, 280, 200)
+    lvui.screens.set_flex_column(cont)
 
-    ls.create_label(cont, "HOME")
-    ls.create_label(cont, "")
-    ls.create_button(cont, "-> Settings", 150, 35)
-    ls.create_button(cont, "-> About", 150, 35)
+    lvui.screens.create_label(cont, "HOME")
+    lvui.screens.create_label(cont, "")
+    lvui.screens.create_button(cont, "-> Settings", 150, 35)
+    lvui.screens.create_button(cont, "-> About", 150, 35)
     return scr
 
 
 def build_settings():
-    scr = ls.create_screen()
-    cont = ls.create_container(scr, 280, 200)
-    ls.set_flex_column(cont)
+    scr = lvui.screens.create_screen()
+    cont = lvui.screens.create_container(scr, 280, 200)
+    lvui.screens.set_flex_column(cont)
 
-    ls.create_label(cont, "SETTINGS")
-    ls.create_label(cont, "")
-    ls.create_slider(scr, 0, 100, 50)
-    ls.create_checkbox(cont, "Option A", True)
-    ls.create_checkbox(cont, "Option B", False)
+    lvui.screens.create_label(cont, "SETTINGS")
+    lvui.screens.create_label(cont, "")
+    lvui.screens.create_slider(scr, 0, 100, 50)
+    lvui.screens.create_checkbox(cont, "Option A", True)
+    lvui.screens.create_checkbox(cont, "Option B", False)
     return scr
 
 
 def build_about():
-    scr = ls.create_screen()
-    cont = ls.create_container(scr, 280, 200)
-    ls.set_flex_column(cont)
+    scr = lvui.screens.create_screen()
+    cont = lvui.screens.create_container(scr, 280, 200)
+    lvui.screens.set_flex_column(cont)
 
-    ls.create_label(cont, "ABOUT")
-    ls.create_label(cont, "")
-    ls.create_label(cont, "mypyc-micropython")
-    ls.create_label(cont, "Compiled Screen Manager")
-    ls.create_label(cont, "v1.0")
+    lvui.screens.create_label(cont, "ABOUT")
+    lvui.screens.create_label(cont, "")
+    lvui.screens.create_label(cont, "mypyc-micropython")
+    lvui.screens.create_label(cont, "Compiled Screen Manager")
+    lvui.screens.create_label(cont, "v1.0")
     return scr
 
 
 def build_deep_child():
-    scr = ls.create_screen()
-    cont = ls.create_container(scr, 280, 200)
-    ls.set_flex_column(cont)
+    scr = lvui.screens.create_screen()
+    cont = lvui.screens.create_container(scr, 280, 200)
+    lvui.screens.set_flex_column(cont)
 
-    ls.create_label(cont, "DEEP CHILD")
-    ls.create_label(cont, "")
-    ls.create_label(cont, "3 levels deep")
-    ls.create_arc(scr, 0, 100, 75)
+    lvui.screens.create_label(cont, "DEEP CHILD")
+    lvui.screens.create_label(cont, "")
+    lvui.screens.create_label(cont, "3 levels deep")
+    lvui.screens.create_arc(scr, 0, 100, 75)
     return scr
 
 
@@ -85,7 +85,7 @@ BUILDERS = (
 
 class ScreenManager:
     def __init__(self):
-        self.nav = lvgl_nav.Nav(
+        self.nav = lvui.nav.Nav(
             nav_capacity=8, builders=BUILDERS, allowed_children=ALLOWED_CHILDREN
         )
         self._stack = []
@@ -119,7 +119,7 @@ class ScreenManager:
 
 def refresh(n=10):
     for _ in range(n):
-        ls.timer_handler()
+        lvui.screens.timer_handler()
         time.sleep_ms(10)
 
 
@@ -153,7 +153,7 @@ def test_navigation():
     print("1. Starting at home...")
     mgr.start()
     refresh(15)
-    check("start() returns screen", ls.screen_active() is not None)
+    check("start() returns screen", lvui.screens.screen_active() is not None)
     check("current is 'home'", mgr.current_name() == "home")
 
     print("2. Navigating to settings...")

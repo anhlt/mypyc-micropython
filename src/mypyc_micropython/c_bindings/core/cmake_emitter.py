@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from mypyc_micropython.c_bindings.c_ir import CLibraryDef
+from mypyc_micropython.c_bindings.core.c_ir import CLibraryDef
 
 
 class CMakeEmitter:

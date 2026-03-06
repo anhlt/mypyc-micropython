@@ -1,33 +1,19 @@
-"""C library bindings via .pyi stub files.
-
-Generate MicroPython C bindings from Python .pyi stub files.
-
-Structure:
-- core/       - Generic infrastructure (library-agnostic)
-- libraries/  - Library-specific bindings (lvgl, etc.)
-"""
+"""Core C binding infrastructure - library-agnostic components."""
 
 from __future__ import annotations
 
-# Re-export from core for backward compatibility
-from mypyc_micropython.c_bindings.core import (
-    # Compiler
-    CBindingCompiler,
-    # IR types
+from mypyc_micropython.c_bindings.core.c_emitter import CEmitter
+from mypyc_micropython.c_bindings.core.c_ir import (
     CCallbackDef,
-    CEmitter,
     CEnumDef,
     CFuncDef,
     CLibraryDef,
-    CMakeEmitter,
-    CompilationResult,
     CParamDef,
     CStructDef,
     CType,
     CTypeDef,
-    # Parser
-    StubParser,
-    # C type markers
+)
+from mypyc_micropython.c_bindings.core.c_types import (
     c_bool,
     c_double,
     c_enum,
@@ -45,6 +31,9 @@ from mypyc_micropython.c_bindings.core import (
     c_uint32,
     c_void,
 )
+from mypyc_micropython.c_bindings.core.cmake_emitter import CMakeEmitter
+from mypyc_micropython.c_bindings.core.compiler import CBindingCompiler, CompilationResult
+from mypyc_micropython.c_bindings.core.stub_parser import StubParser
 
 __all__ = [
     # IR types

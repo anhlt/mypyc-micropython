@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from mypyc_micropython.c_bindings.compiler import CBindingCompiler
+from mypyc_micropython.c_bindings.core.compiler import CBindingCompiler
 
 
 def main() -> int:

@@ -16,8 +16,13 @@ MODULES_DIR := $(ROOT_DIR)/modules
 BUILD_DIR := $(ROOT_DIR)/build
 
 # LVGL paths
-LVGL_STUB_DIR := $(ROOT_DIR)/src/mypyc_micropython/c_bindings/stubs/lvgl
+LVGL_STUB_DIR := $(ROOT_DIR)/src/mypyc_micropython/c_bindings/libraries/lvgl/stubs
+LVGL_CONFIG_DIR := $(ROOT_DIR)/src/mypyc_micropython/c_bindings/libraries/lvgl/config
+LVGL_DRIVER_DIR := $(ROOT_DIR)/src/mypyc_micropython/c_bindings/libraries/lvgl/drivers
 LVGL_MODULE_DIR := $(MODULES_DIR)/usermod_lvgl
+
+# External modules (first-class application modules)
+EXTMOD_DIR := $(ROOT_DIR)/extmod
 
 # MicroPython port
 MP_PORT_DIR := $(MICROPYTHON_DIR)/ports/esp32
@@ -164,6 +169,12 @@ compile-all:
 		fi; \
 	done
 	@echo ""
+	@echo "Compiling extmod/lvui package..."
+	@if [ -f "$(EXTMOD_DIR)/lvui/__init__.py" ]; then \
+		echo "Compiling package $(EXTMOD_DIR)/lvui/ -> $(MODULES_DIR)/usermod_lvui/"; \
+		mpy-compile "$(EXTMOD_DIR)/lvui/" -o "$(MODULES_DIR)/usermod_lvui" || exit 1; \
+	fi
+	@echo ""
 	@echo "Compiling LVGL C bindings..."
 	@$(MAKE) compile-lvgl-only
 	@echo ""
@@ -183,15 +194,18 @@ compile-all:
 			echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_$$PKG_NAME/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
 		fi; \
 	done
+	@if [ -d "$(MODULES_DIR)/usermod_lvui" ]; then \
+		echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_lvui/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
+	fi
 	@echo "Done! Ready to build."
 
 compile-lvgl-only:
 	@mkdir -p $(LVGL_MODULE_DIR)
 	@mpy-compile-c $(LVGL_STUB_DIR)/lvgl.pyi -o $(LVGL_MODULE_DIR) --public
-	@cp $(LVGL_STUB_DIR)/st7789_driver.c $(LVGL_MODULE_DIR)/
-	@cp $(LVGL_STUB_DIR)/st7789_driver.h $(LVGL_MODULE_DIR)/
-	@cp $(LVGL_STUB_DIR)/lv_conf.h $(LVGL_MODULE_DIR)/
-	@cp $(LVGL_STUB_DIR)/micropython.cmake $(LVGL_MODULE_DIR)/
+	@cp $(LVGL_DRIVER_DIR)/st7789_driver.c $(LVGL_MODULE_DIR)/
+	@cp $(LVGL_DRIVER_DIR)/st7789_driver.h $(LVGL_MODULE_DIR)/
+	@cp $(LVGL_CONFIG_DIR)/lv_conf.h $(LVGL_MODULE_DIR)/
+	@cp $(LVGL_CONFIG_DIR)/micropython.cmake $(LVGL_MODULE_DIR)/
 	@python3 scripts/patch_lvgl_c.py $(LVGL_MODULE_DIR)/lvgl.c
 
 compile-lvgl:
@@ -199,10 +213,10 @@ compile-lvgl:
 	@mkdir -p $(LVGL_MODULE_DIR)
 	mpy-compile-c $(LVGL_STUB_DIR)/lvgl.pyi -o $(LVGL_MODULE_DIR) --public -v
 	@echo "Copying display driver, config, and cmake..."
-	@cp $(LVGL_STUB_DIR)/st7789_driver.c $(LVGL_MODULE_DIR)/
-	@cp $(LVGL_STUB_DIR)/st7789_driver.h $(LVGL_MODULE_DIR)/
-	@cp $(LVGL_STUB_DIR)/lv_conf.h $(LVGL_MODULE_DIR)/
-	@cp $(LVGL_STUB_DIR)/micropython.cmake $(LVGL_MODULE_DIR)/
+	@cp $(LVGL_DRIVER_DIR)/st7789_driver.c $(LVGL_MODULE_DIR)/
+	@cp $(LVGL_DRIVER_DIR)/st7789_driver.h $(LVGL_MODULE_DIR)/
+	@cp $(LVGL_CONFIG_DIR)/lv_conf.h $(LVGL_MODULE_DIR)/
+	@cp $(LVGL_CONFIG_DIR)/micropython.cmake $(LVGL_MODULE_DIR)/
 	@echo "Patching lvgl.c with display driver entries..."
 	@python3 scripts/patch_lvgl_c.py $(LVGL_MODULE_DIR)/lvgl.c
 	@echo "LVGL module compiled successfully."

@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from mypyc_micropython.c_bindings.c_emitter import CEmitter
-from mypyc_micropython.c_bindings.cmake_emitter import CMakeEmitter
-from mypyc_micropython.c_bindings.stub_parser import StubParser
+from mypyc_micropython.c_bindings.core.c_emitter import CEmitter
+from mypyc_micropython.c_bindings.core.cmake_emitter import CMakeEmitter
+from mypyc_micropython.c_bindings.core.stub_parser import StubParser
 
 
 @dataclass

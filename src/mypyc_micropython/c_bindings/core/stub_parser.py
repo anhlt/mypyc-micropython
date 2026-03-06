@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from mypyc_micropython.c_bindings.c_ir import (
+from mypyc_micropython.c_bindings.core.c_ir import (
     CCallbackDef,
     CEnumDef,
     CFuncDef,

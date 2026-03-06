@@ -3,6 +3,21 @@
 #include "py/objtype.h"
 #include <stddef.h>
 
+static mp_obj_t sensor_lib_converters_celsius_to_fahrenheit(mp_obj_t c_obj);
+static mp_obj_t sensor_lib_converters_fahrenheit_to_celsius(mp_obj_t f_obj);
+static mp_obj_t sensor_lib_converters_mm_to_inches(mp_obj_t mm_obj);
+static mp_obj_t sensor_lib_filters_clamp(mp_obj_t value_obj, mp_obj_t low_obj, mp_obj_t high_obj);
+static mp_obj_t sensor_lib_filters_moving_avg(mp_obj_t prev_obj, mp_obj_t new_val_obj, mp_obj_t alpha_obj);
+static mp_obj_t sensor_lib_filters_threshold(mp_obj_t value_obj, mp_obj_t thresh_obj);
+static mp_obj_t sensor_lib_math_helpers_distance(size_t n_args, const mp_obj_t *args);
+static mp_obj_t sensor_lib_math_helpers_midpoint(mp_obj_t a_obj, mp_obj_t b_obj);
+static mp_obj_t sensor_lib_math_helpers_scale(mp_obj_t value_obj, mp_obj_t factor_obj);
+static mp_obj_t sensor_lib_processing_version(void);
+static mp_obj_t sensor_lib_processing_calibration_apply_offset(mp_obj_t value_obj, mp_obj_t offset_obj);
+static mp_obj_t sensor_lib_processing_calibration_apply_scale(mp_obj_t value_obj, mp_obj_t scale_num_obj, mp_obj_t scale_den_obj);
+static mp_obj_t sensor_lib_processing_smoothing_exponential_avg(mp_obj_t prev_obj, mp_obj_t new_val_obj, mp_obj_t weight_obj);
+static mp_obj_t sensor_lib_processing_smoothing_simple_avg(mp_obj_t a_obj, mp_obj_t b_obj);
+
 #if MICROPY_FLOAT_IMPL != MICROPY_FLOAT_IMPL_NONE
 static inline mp_float_t mp_get_float_checked(mp_obj_t obj) {
     if (mp_obj_is_float(obj)) {
