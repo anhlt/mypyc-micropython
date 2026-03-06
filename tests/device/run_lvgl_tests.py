@@ -44,12 +44,12 @@ suite("lvui_package")
 try:
     import lvui
     t("import lvui", lvui is not None, "True")
-    
+
     # Test submodule access via dot notation
     t("lvui.mvu exists", lvui.mvu is not None, "True")
     t("lvui.nav exists", lvui.nav is not None, "True")
     t("lvui.screens exists", lvui.screens is not None, "True")
-    
+
     # Test that submodules have expected attributes
     t("lvui.mvu has App", hasattr(lvui.mvu, 'App'), "True")
     t("lvui.screens has create_screen", hasattr(lvui.screens, 'create_screen'), "True")

@@ -1232,7 +1232,6 @@ class BaseEmitter:
                 "mp_obj_t"
             )
 
-            return f"{c_func_name}()", "mp_obj_t"
 
     def _box_value(self, expr: str, expr_type: str) -> str:
         if expr_type == "mp_int_t":

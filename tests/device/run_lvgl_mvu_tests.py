@@ -3,6 +3,7 @@ import time
 
 import lvgl as lv
 import lvui
+
 # using lvui.screens
 
 _total = 0
