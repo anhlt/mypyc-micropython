@@ -77,6 +77,7 @@ from .ir import (
     UnboxIR,
     ValueIR,
     WhileIR,
+    YieldFromIR,
     YieldIR,
 )
 
@@ -241,6 +242,8 @@ class IRPrinter:
             return self._print_return(stmt)
         elif isinstance(stmt, YieldIR):
             return self._print_yield(stmt)
+        elif isinstance(stmt, YieldFromIR):
+            return self._print_yield_from(stmt)
         elif isinstance(stmt, AwaitIR):
             return self._print_await(stmt)
         elif isinstance(stmt, AwaitModuleCallIR):
@@ -306,6 +309,18 @@ class IRPrinter:
             self._indent_dec()
         value_str = self.print_value(stmt.value) if stmt.value else "None"
         lines.append(f"{self._i()}yield {value_str} [state_id={stmt.state_id}]")
+        return "\n".join(lines)
+
+    def _print_yield_from(self, stmt: YieldFromIR) -> str:
+        lines = []
+        if stmt.prelude:
+            lines.append(f"{self._i()}# prelude:")
+            self._indent_inc()
+            for instr in stmt.prelude:
+                lines.append(self.print_instr(instr))
+            self._indent_dec()
+        iterable_str = self.print_value(stmt.iterable)
+        lines.append(f"{self._i()}yield from {iterable_str} [state_id={stmt.state_id}]")
         return "\n".join(lines)
 
     def _print_await(self, stmt: AwaitIR) -> str:

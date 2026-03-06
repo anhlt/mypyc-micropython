@@ -80,6 +80,7 @@ from .ir import (
     UnaryOpIR,
     ValueIR,
     WhileIR,
+    YieldFromIR,
     YieldIR,
 )
 
@@ -293,14 +294,6 @@ class IRBuilder:
 
         is_generator = any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(node))
         if is_generator:
-            yield_from_node = next(
-                (n for n in ast.walk(node) if isinstance(n, ast.YieldFrom)),
-                None,
-            )
-            if yield_from_node is not None:
-                raise NotImplementedError(
-                    f"yield from is not supported (line {yield_from_node.lineno})"
-                )
 
             unsupported_node = next(
                 (n for n in ast.walk(node) if isinstance(n, (ast.Try, ast.With, ast.AsyncWith))),
@@ -485,6 +478,14 @@ class IRBuilder:
                 value, prelude = self._build_expr(stmt.value.value, locals_)
                 return YieldIR(
                     value=value,
+                    prelude=prelude,
+                    state_id=self._next_yield_state_id(),
+                )
+            # Handle yield from expression as statement
+            if isinstance(stmt.value, ast.YieldFrom):
+                iterable, prelude = self._build_expr(stmt.value.value, locals_)
+                return YieldFromIR(
+                    iterable=iterable,
                     prelude=prelude,
                     state_id=self._next_yield_state_id(),
                 )
@@ -961,7 +962,9 @@ class IRBuilder:
 
     def _build_expr(self, expr: ast.expr, locals_: list[str]) -> tuple[ValueIR, list]:
         if isinstance(expr, ast.YieldFrom):
-            raise NotImplementedError(f"yield from is not supported (line {expr.lineno})")
+            raise NotImplementedError(
+                f"yield from as expression is not supported (use as statement instead) (line {expr.lineno})"
+            )
         if isinstance(expr, ast.Yield):
             raise NotImplementedError(
                 f"yield as an expression is not supported (line {expr.lineno})"

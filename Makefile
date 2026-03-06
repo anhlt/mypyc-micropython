@@ -311,7 +311,7 @@ run-device-tests:
 
 benchmark:
 	@echo "Running benchmarks: Native C vs Vanilla MicroPython..."
-	@python3 tests/device/run_benchmarks.py --port $(PORT)
+	mpremote connect $(PORT) run tests/device/run_benchmarks.py
 
 test-lvgl:
 	@echo "Testing LVGL on device..."

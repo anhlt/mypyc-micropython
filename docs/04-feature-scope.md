@@ -180,15 +180,26 @@ def iter_items(items: list[object]):
         yield x
 ```
 
+**Supported (yield from):**
+```python
+# yield from - delegate to sub-iterator
+def chain(*iterables):
+    for it in iterables:
+        yield from it  # Supported!
+
+# Nested delegation
+def flatten(nested):
+    for item in nested:
+        if isinstance(item, list):
+            yield from flatten(item)
+        else:
+            yield item
+```
+
 **NOT Supported:**
 ```python
 # Generator expressions
 gen = (x * x for x in range(10))  # Not supported
-
-# yield from
-def chain(*iterables):
-    for it in iterables:
-        yield from it  # Not supported
 
 # Generator with send/throw
 def echo():
@@ -201,7 +212,6 @@ def gen_with_try():
         yield 1  # Not supported - try in generators
     finally:
         pass
-```
 ```
 
 ### isinstance() ⚠️ (Planned)

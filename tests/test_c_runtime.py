@@ -161,6 +161,121 @@ int main(void) {
     # iter_range_start: 1, 2, 3, 4, then stop_iteration=1
     assert stdout.strip().splitlines() == ["10", "20", "30", "1", "1", "2", "3", "4", "1"]
 
+
+def test_c_yield_from_delegates_to_subiterator(compile_and_run):
+    """Test yield from with simple delegation to a list."""
+    source = '''
+def delegate_to_list(items: list):
+    yield from items
+'''
+    test_main_c = '''
+#include <stdio.h>
+
+static void drain_delegate(void) {
+    mp_obj_t items[] = {
+        mp_obj_new_int(100),
+        mp_obj_new_int(200),
+        mp_obj_new_int(300),
+    };
+    mp_obj_t lst = mp_obj_new_list(3, items);
+    mp_obj_t gen = test_delegate_to_list(lst);
+    for (;;) {
+        mp_obj_t item = test_delegate_to_list_gen_iternext(gen);
+        if (item == MP_OBJ_STOP_ITERATION) {
+            break;
+        }
+        printf("%ld\\n", (long)mp_obj_get_int(item));
+    }
+    printf("%d\\n", test_delegate_to_list_gen_iternext(gen) == MP_OBJ_STOP_ITERATION);
+}
+
+int main(void) {
+    drain_delegate();
+    return 0;
+}
+'''
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["100", "200", "300", "1"]
+
+
+def test_c_yield_from_flatten_nested_lists(compile_and_run):
+    """Test yield from with nested iteration (flatten pattern)."""
+    source = '''
+def flatten(nested: list):
+    for inner in nested:
+        yield from inner
+'''
+    test_main_c = '''
+#include <stdio.h>
+
+static void drain_flatten(void) {
+    // Create inner lists: [1, 2], [3, 4, 5]
+    mp_obj_t inner1_items[] = {mp_obj_new_int(1), mp_obj_new_int(2)};
+    mp_obj_t inner2_items[] = {mp_obj_new_int(3), mp_obj_new_int(4), mp_obj_new_int(5)};
+    mp_obj_t inner1 = mp_obj_new_list(2, inner1_items);
+    mp_obj_t inner2 = mp_obj_new_list(3, inner2_items);
+
+    // Create nested list: [[1, 2], [3, 4, 5]]
+    mp_obj_t nested_items[] = {inner1, inner2};
+    mp_obj_t nested = mp_obj_new_list(2, nested_items);
+
+    mp_obj_t gen = test_flatten(nested);
+    for (;;) {
+        mp_obj_t item = test_flatten_gen_iternext(gen);
+        if (item == MP_OBJ_STOP_ITERATION) {
+            break;
+        }
+        printf("%ld\\n", (long)mp_obj_get_int(item));
+    }
+    printf("%d\\n", test_flatten_gen_iternext(gen) == MP_OBJ_STOP_ITERATION);
+}
+
+int main(void) {
+    drain_flatten();
+    return 0;
+}
+'''
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["1", "2", "3", "4", "5", "1"]
+
+
+def test_c_yield_from_mixed_with_yield(compile_and_run):
+    """Test generator mixing yield and yield from."""
+    source = '''
+def mixed_gen(prefix: int, items: list, suffix: int):
+    yield prefix
+    yield from items
+    yield suffix
+'''
+    test_main_c = '''
+#include <stdio.h>
+
+static void drain_mixed(void) {
+    mp_obj_t items[] = {mp_obj_new_int(10), mp_obj_new_int(20)};
+    mp_obj_t lst = mp_obj_new_list(2, items);
+    mp_obj_t gen = test_mixed_gen(mp_obj_new_int(1), lst, mp_obj_new_int(99));
+    for (;;) {
+        mp_obj_t item = test_mixed_gen_gen_iternext(gen);
+        if (item == MP_OBJ_STOP_ITERATION) {
+            break;
+        }
+        printf("%ld\\n", (long)mp_obj_get_int(item));
+    }
+    printf("%d\\n", test_mixed_gen_gen_iternext(gen) == MP_OBJ_STOP_ITERATION);
+}
+
+int main(void) {
+    drain_mixed();
+    return 0;
+}
+'''
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    # prefix=1, then items 10, 20, then suffix=99, then stop
+    assert stdout.strip().splitlines() == ["1", "10", "20", "99", "1"]
+
 def test_c_sum_list_returns_correct_sum(compile_and_run):
     source = """
 def sum_list(lst: list) -> int:

@@ -698,6 +698,27 @@ for v in g.range_with_start(5):
     range_start_result.append(v)
 t("range_with_start", str(range_start_result), "[1, 2, 3, 4]")
 
+# Test yield from generators
+delegate_result = []
+for v in g.delegate_to_list([100, 200, 300]):
+    delegate_result.append(v)
+t("delegate_to_list", str(delegate_result), "[100, 200, 300]")
+
+flatten_result = []
+for v in g.flatten([[1, 2], [3, 4, 5]]):
+    flatten_result.append(v)
+t("flatten", str(flatten_result), "[1, 2, 3, 4, 5]")
+
+chain_result = []
+for v in g.chain_iterables([1, 2], [3, 4, 5]):
+    chain_result.append(v)
+t("chain_iterables", str(chain_result), "[1, 2, 3, 4, 5]")
+
+prefix_result = []
+for v in g.prefix_and_delegate(0, [10, 20], 99):
+    prefix_result.append(v)
+t("prefix_and_delegate", str(prefix_result), "[0, 10, 20, 99]")
+
 # ---- traits ----
 suite("traits")
 import traits

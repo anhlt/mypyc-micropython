@@ -4309,15 +4309,62 @@ def gen(n: int):
         assert "static mp_obj_t test_gen_gen_iternext" in result
         assert "self->i = 1" in result  # start value initialized
 
-    def test_yield_from_raises_not_implemented(self):
+    def test_yield_from_compiles(self):
+        """Test that yield from now compiles successfully."""
         source = """
 def gen(items: list):
     yield from items
 """
+        result = compile_source(source, "test", type_check=False)
+        # Check generator struct has _yield_iter field
+        assert "typedef struct _test_gen_gen_t" in result
+        assert "mp_obj_t _yield_iter;" in result  # yield from iterator field
+        # Check iternext uses mp_getiter and mp_iternext for yield from
+        assert "mp_getiter" in result
+        assert "mp_iternext" in result
+        assert "MP_OBJ_STOP_ITERATION" in result
+
+    def test_yield_from_flatten_nested_list(self):
+        """Test yield from with nested iteration (flatten pattern)."""
+        source = """
+def flatten(nested: list):
+    for inner in nested:
+        yield from inner
+"""
+        result = compile_source(source, "test", type_check=False)
+        # Check generator struct
+        assert "typedef struct _test_flatten_gen_t" in result
+        assert "mp_obj_t _yield_iter;" in result
+        # Check nested iteration: both for-iter and yield from
+        assert "mp_getiter" in result
+        assert "mp_iternext" in result
+        # Check state machine has entry for yield from
+        assert "case 1:" in result  # state 1 for yield from
+
+    def test_yield_from_with_regular_yield(self):
+        """Test generator mixing yield and yield from."""
+        source = """
+def gen(prefix: int, items: list):
+    yield prefix
+    yield from items
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "typedef struct _test_gen_gen_t" in result
+        assert "mp_obj_t _yield_iter;" in result
+        # Both yield and yield from states
+        assert "case 1:" in result
+        assert "case 2:" in result
+
+    def test_yield_from_as_expression_raises_not_implemented(self):
+        """Test that yield from as expression (with result) is not supported."""
+        source = """
+def gen(items: list):
+    result = yield from items
+    print(result)
+"""
         with pytest.raises(NotImplementedError) as exc_info:
             compile_source(source, "test", type_check=False)
-        assert "yield from is not supported" in str(exc_info.value)
-        assert "line 3" in str(exc_info.value)
+        assert "yield from as expression is not supported" in str(exc_info.value)
 
     def test_generator_for_iter_compiles(self):
         """Test that for-iter (non-range) loops in generators compile successfully."""

@@ -782,6 +782,32 @@ class YieldIR(StmtIR):
     state_id: int = 0
 
 @dataclass
+class YieldFromIR(StmtIR):
+    """Yield from expression: yield from iterable.
+
+    Delegates iteration to a sub-iterator. All values yielded by the
+    sub-iterator are yielded directly. When the sub-iterator is exhausted,
+    execution continues after the yield from.
+
+    Generated C uses mp_iternext loop (same pattern as async await):
+        // Initialize sub-iterator
+        self->_yield_iter = mp_getiter(iterable, NULL);
+
+        // Drive sub-iterator via mp_iternext until completion
+    state_N:
+        mp_obj_t _val = mp_iternext(self->_yield_iter);
+        if (_val != MP_OBJ_STOP_ITERATION) {
+            self->state = N;  // Stay at same state
+            return _val;      // Yield the value
+        }
+        // Sub-iterator exhausted - continue execution
+    """
+
+    iterable: ValueIR  # The iterable expression to delegate to
+    prelude: list[InstrIR] = field(default_factory=list)
+    state_id: int = 0  # Resumption point for yield from loop
+
+@dataclass
 class AwaitIR(StmtIR):
     """Await expression: await awaitable.
 

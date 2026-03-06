@@ -862,6 +862,118 @@ def bench_private_methods():
 
 
 # =============================================================================
+# BENCHMARKS - Generators
+# =============================================================================
+
+
+def bench_generators():
+    import generators
+
+    # countdown - while loop with yield
+    def native_countdown():
+        for _ in generators.countdown(100):
+            pass
+
+    def python_countdown():
+        n = 100
+        while n > 0:
+            _ = n
+            n -= 1
+
+    b("countdown(100) x100", native_countdown, python_countdown, 100)
+
+    # squares - for loop with yield
+    def native_squares():
+        total = 0
+        for x in generators.squares(100):
+            total += x
+        return total
+
+    def python_squares():
+        total = 0
+        for i in range(100):
+            total += i * i
+        return total
+
+    b("squares(100) x100", native_squares, python_squares, 100)
+
+    # iter_items - for loop over list with yield
+    items = list(range(100))
+
+    def native_iter_items():
+        total = 0
+        for x in generators.iter_items(items):
+            total += x
+        return total
+
+    def python_iter_items():
+        total = 0
+        for x in items:
+            total += x
+        return total
+
+    b("iter_items(100) x100", native_iter_items, python_iter_items, 100)
+
+    # yield from - delegate_to_list
+    def native_yield_from():
+        total = 0
+        for x in generators.delegate_to_list(items):
+            total += x
+        return total
+
+    def python_yield_from():
+        def gen():
+            yield from items
+        total = 0
+        for x in gen():
+            total += x
+        return total
+
+    b("yield from list(100) x100", native_yield_from, python_yield_from, 100)
+
+    # flatten - nested yield from
+    nested = [list(range(10)) for _ in range(10)]
+
+    def native_flatten():
+        total = 0
+        for x in generators.flatten(nested):
+            total += x
+        return total
+
+    def python_flatten():
+        def flat(nested):
+            for inner in nested:
+                yield from inner
+        total = 0
+        for x in flat(nested):
+            total += x
+        return total
+
+    b("flatten(10x10) x100", native_flatten, python_flatten, 100)
+
+    # chain_iterables - multiple yield from
+    first = list(range(50))
+    second = list(range(50, 100))
+
+    def native_chain():
+        total = 0
+        for x in generators.chain_iterables(first, second):
+            total += x
+        return total
+
+    def python_chain():
+        def chain(a, b):
+            yield from a
+            yield from b
+        total = 0
+        for x in chain(first, second):
+            total += x
+        return total
+
+    b("chain(50+50) x100", native_chain, python_chain, 100)
+    gc.collect()
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -885,6 +997,7 @@ def run_all_benchmarks():
     bench_list_comprehension()
     bench_super_calls()
     bench_private_methods()
+    bench_generators()
 
     print_summary()
 
