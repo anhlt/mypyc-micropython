@@ -493,7 +493,7 @@ class FuncIR:
     c_name: str
     params: list[tuple[str, CType]]
     return_type: CType
-    body_ast: ast.FunctionDef | None = None
+    body_ast: ast.FunctionDef | ast.AsyncFunctionDef | None = None
     body: list[StmtIR] = field(default_factory=list)
     is_method: bool = False
     class_ir: ClassIR | None = None
@@ -812,14 +812,18 @@ class AwaitIR(StmtIR):
     """Await expression: await awaitable.
 
     Suspends execution until the awaitable completes.
-    Compiled similarly to yield from - delegates to sub-iterator.
+    For simple await expressions, the awaitable is returned to the event loop,
+    which will drive it to completion and send back the result.
 
-    Generated C uses the same state machine as generators:
+    Generated C:
         self->state = N;
         return awaitable;  // Yield to event loop
     state_N:
         // Resume here when awaitable completes
         result = send_value;  // Value sent back by event loop
+
+    Note: For await on module calls (await asyncio.sleep(1)), use AwaitModuleCallIR
+    which implements yield-from semantics with mp_iternext.
     """
 
     value: ValueIR  # The awaitable expression
