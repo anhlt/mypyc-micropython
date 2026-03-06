@@ -115,7 +115,6 @@ def compile_to_micropython(
     type_check: bool = True,
     strict_type_check: bool = True,
     external_libs: dict[str, Any] | None = None,
-    module_name: str | None = None,
 ) -> CompilationResult:
     """Compile typed Python file to MicroPython usermod folder.
 
@@ -140,13 +139,10 @@ def compile_to_micropython(
             success=False,
             errors=[f"Source file not found: {source_path}"],
         )
-    # Use provided module_name or derive from filename
-    effective_name = module_name if module_name else source_path.stem
-    # For output dir, use sanitized name (dots -> underscores)
-    output_name = effective_name.replace(".", "_")
+    module_name = source_path.stem
 
     if output_dir is None:
-        output_dir = source_path.parent / f"usermod_{output_name}"
+        output_dir = source_path.parent / f"usermod_{module_name}"
     output_dir = Path(output_dir)
 
     tc_result: TypeCheckResult | None = None
@@ -154,7 +150,7 @@ def compile_to_micropython(
         tc_result = type_check_file(source_path, strict=strict_type_check)
         if not tc_result.success:
             return CompilationResult(
-                module_name=effective_name,
+                module_name=module_name,
                 c_code="",
                 h_code=None,
                 mk_code="",
@@ -168,22 +164,21 @@ def compile_to_micropython(
         source_code = source_path.read_text()
         c_code = compile_source(
             source_code,
-            effective_name,
+            module_name,
             type_check=type_check,
             strict=strict_type_check,
             external_libs=external_libs,
         )
-        mk_code = generate_micropython_mk(effective_name)
-        cmake_code = generate_micropython_cmake(effective_name)
+        mk_code = generate_micropython_mk(module_name)
+        cmake_code = generate_micropython_cmake(module_name)
 
         output_dir.mkdir(parents=True, exist_ok=True)
-        # Use output_name (sanitized) for filename
-        (output_dir / f"{output_name}.c").write_text(c_code)
+        (output_dir / f"{module_name}.c").write_text(c_code)
         (output_dir / "micropython.mk").write_text(mk_code)
         (output_dir / "micropython.cmake").write_text(cmake_code)
 
         return CompilationResult(
-            module_name=effective_name,
+            module_name=module_name,
             c_code=c_code,
             h_code=None,
             mk_code=mk_code,
@@ -194,7 +189,7 @@ def compile_to_micropython(
 
     except Exception as e:
         return CompilationResult(
-            module_name=effective_name,
+            module_name=module_name,
             c_code="",
             h_code=None,
             mk_code="",

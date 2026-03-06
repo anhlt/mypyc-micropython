@@ -29,10 +29,6 @@ def main() -> int:
     parser.add_argument(
         "--ir-function", help="Dump IR for specific function only (use with --dump-ir)"
     )
-    parser.add_argument(
-        "-m", "--module-name",
-        help="Override module name (e.g., 'lvgl.mvu' for dotted names)"
-    )
 
     args = parser.parse_args()
 
@@ -57,7 +53,6 @@ def main() -> int:
             output_dir,
             type_check=type_check,
             strict_type_check=type_check,
-            module_name=args.module_name,
         )
 
     if not result.success:
