@@ -42,7 +42,7 @@ Create a **declarative UI framework** for LVGL that:
 | Widget representation | Immutable dataclasses | mypyc optimization, GC-friendly |
 | Attribute storage | Sorted tuples by key | Fast merge-style diffing |
 | Event handling | Message dispatch | Decoupled, testable |
-
+| Async support | MicroPython asyncio | Non-blocking I/O, background tasks |
 ### References
 
 - [Fabulous F# MVU Framework](https://github.com/fabulous-dev/Fabulous)
@@ -378,7 +378,39 @@ class Program(Generic[Model, Msg]):
 
 ---
 
-### Milestone 11: P3 Widgets (Week 10-12)
+### Milestone 11: Async Support (Week 10-11)
+
+**Goal**: Full async/await integration with MicroPython asyncio.
+
+| Task | Description | Status |
+|------|-------------|--------|
+| 11.1 | AsyncCmd for async effects | Pending |
+| 11.2 | Async App runner with event loop | Pending |
+| 11.3 | Async subscriptions (streams, timers) | Pending |
+| 11.4 | Task cancellation and cleanup | Pending |
+| 11.5 | Async HTTP/network operations | Pending |
+| 11.6 | Background task management | Pending |
+| 11.7 | Error handling in async context | Pending |
+| 11.8 | Device tests with async patterns | Pending |
+
+**Deliverables**:
+- `src/lvgl_mvu/async_cmd.py` - Async command implementation
+- `src/lvgl_mvu/async_app.py` - Async application runner
+- `src/lvgl_mvu/async_sub.py` - Async subscriptions
+- `src/lvgl_mvu/tasks.py` - Background task manager
+- `examples/async_http_app.py` - HTTP fetch demo
+- `examples/async_sensor_app.py` - Sensor polling demo
+- `tests/device/run_mvu_async_tests.py`
+
+**Exit Criteria**:
+- Async commands execute without blocking UI
+- Background tasks can be cancelled cleanly
+- Network operations work with loading states
+- No memory leaks from uncompleted tasks
+
+---
+
+### Milestone 12: P3 Widgets (Week 11-13)
 
 **Goal**: Advanced visualization and navigation widgets.
 
@@ -415,31 +447,33 @@ class Program(Generic[Model, Msg]):
 
 ---
 
-### Milestone 12: Documentation & Release (Week 12)
+### Milestone 13: Documentation & Release (Week 13-14)
 
 **Goal**: Production-ready release.
 
 | Task | Description | Status |
 |------|-------------|--------|
-| 12.1 | API documentation | Pending |
-| 12.2 | Tutorial: Getting Started | Pending |
-| 12.3 | Tutorial: Building Forms | Pending |
-| 12.4 | Tutorial: Navigation | Pending |
-| 12.5 | Performance guide | Pending |
-| 12.6 | Migration guide (from direct LVGL) | Pending |
-| 12.7 | Release notes | Pending |
+| 13.1 | API documentation | Pending |
+| 13.2 | Tutorial: Getting Started | Pending |
+| 13.3 | Tutorial: Building Forms | Pending |
+| 13.4 | Tutorial: Navigation | Pending |
+| 13.5 | Tutorial: Async Patterns | Pending |
+| 13.6 | Performance guide | Pending |
+| 13.7 | Migration guide (from direct LVGL) | Pending |
+| 13.8 | Release notes | Pending |
 
 **Deliverables**:
 - `docs/lvgl-mvu-api.md`
 - `docs/lvgl-mvu-tutorial.md`
+- `docs/lvgl-mvu-async.md`
 - `docs/lvgl-mvu-performance.md`
 - `CHANGELOG.md` update
 
 **Exit Criteria**:
 - Complete API documentation
 - Working examples for all features
+- Async patterns documented
 - Ready for external users
-
 ---
 
 ## Phase Details
@@ -1117,6 +1151,360 @@ class App(Generic[Model, Msg]):
                 self._subscriptions.append(unsub)
 ```
 
+### Phase 5: Async Support
+
+#### 5.1 Async Command Implementation
+
+**Goal**: Enable async/await for side effects without blocking UI.
+
+```python
+# src/lvgl_mvu/async_cmd.py
+
+from dataclasses import dataclass
+from typing import TypeVar, Generic, Callable, Coroutine, Any
+import asyncio
+
+Model = TypeVar('Model')
+Msg = TypeVar('Msg')
+
+Dispatch = Callable[[Msg], None]
+AsyncEffect = Callable[[Dispatch], Coroutine[Any, Any, None]]
+
+@dataclass
+class AsyncCmd(Generic[Msg]):
+    """Async side effects that produce messages."""
+    effects: list[AsyncEffect]
+    
+    @staticmethod
+    def none() -> 'AsyncCmd[Msg]':
+        return AsyncCmd([])
+    
+    @staticmethod
+    def of_async(coro_fn: Callable[[Dispatch], Coroutine]) -> 'AsyncCmd[Msg]':
+        """Create command from async function."""
+        return AsyncCmd([coro_fn])
+    
+    @staticmethod
+    def http_get(url: str, on_success: Callable[[str], Msg], on_error: Callable[[str], Msg]) -> 'AsyncCmd[Msg]':
+        """HTTP GET request command."""
+        async def effect(dispatch: Dispatch) -> None:
+            try:
+                import urequests  # MicroPython HTTP
+                response = urequests.get(url)
+                data = response.text
+                response.close()
+                dispatch(on_success(data))
+            except Exception as e:
+                dispatch(on_error(str(e)))
+        
+        return AsyncCmd([effect])
+    
+    @staticmethod
+    def delay(ms: int, msg: Msg) -> 'AsyncCmd[Msg]':
+        """Delayed message dispatch."""
+        async def effect(dispatch: Dispatch) -> None:
+            await asyncio.sleep_ms(ms)
+            dispatch(msg)
+        
+        return AsyncCmd([effect])
+    
+    @staticmethod
+    def batch(cmds: list['AsyncCmd[Msg]']) -> 'AsyncCmd[Msg]':
+        """Combine multiple async commands."""
+        effects: list[AsyncEffect] = []
+        for cmd in cmds:
+            effects.extend(cmd.effects)
+        return AsyncCmd(effects)
+```
+
+#### 5.2 Async Application Runner
+
+```python
+# src/lvgl_mvu/async_app.py
+
+from typing import TypeVar, Generic
+import asyncio
+from .program import Program, Cmd, Sub, Dispatch
+from .async_cmd import AsyncCmd
+from .widget import Widget
+from .viewnode import ViewNode
+from .reconciler import Reconciler
+
+Model = TypeVar('Model')
+Msg = TypeVar('Msg')
+
+@dataclass
+class AsyncProgram(Generic[Model, Msg]):
+    """MVU program with async support."""
+    init: Callable[[], tuple[Model, Cmd[Msg] | AsyncCmd[Msg]]]
+    update: Callable[[Msg, Model], tuple[Model, Cmd[Msg] | AsyncCmd[Msg]]]
+    view: Callable[[Model], Widget]
+    subscribe: Callable[[Model], Sub[Msg]] | None = None
+
+class AsyncApp(Generic[Model, Msg]):
+    """MVU application runner with async support."""
+    
+    def __init__(self, program: AsyncProgram[Model, Msg]) -> None:
+        self.program = program
+        self.reconciler = Reconciler()
+        
+        # Initialize state
+        self.model, init_cmd = program.init()
+        self.root_node: ViewNode | None = None
+        self.msg_queue: list[Msg] = []
+        self._subscriptions: list[Callable[[], None]] = []
+        self._pending_tasks: list[asyncio.Task] = []
+        self._running = False
+        
+        # Execute init command
+        self._schedule_cmd(init_cmd)
+    
+    def dispatch(self, msg: Msg) -> None:
+        """Queue a message for processing."""
+        self.msg_queue.append(msg)
+    
+    def _schedule_cmd(self, cmd: Cmd[Msg] | AsyncCmd[Msg]) -> None:
+        """Schedule command for execution."""
+        if isinstance(cmd, AsyncCmd):
+            for effect in cmd.effects:
+                task = asyncio.create_task(effect(self.dispatch))
+                self._pending_tasks.append(task)
+        elif isinstance(cmd, Cmd):
+            for effect in cmd.effects:
+                effect(self.dispatch)
+    
+    async def tick(self) -> None:
+        """Process queued messages and re-render if needed."""
+        changed = False
+        
+        # Clean up completed tasks
+        self._pending_tasks = [t for t in self._pending_tasks if not t.done()]
+        
+        while self.msg_queue:
+            msg = self.msg_queue.pop(0)
+            self.model, cmd = self.program.update(msg, self.model)
+            self._schedule_cmd(cmd)
+            changed = True
+        
+        if changed or self.root_node is None:
+            widget = self.program.view(self.model)
+            self.root_node = self.reconciler.reconcile(self.root_node, widget)
+            
+            if changed:
+                self._setup_subscriptions()
+    
+    async def run(self, tick_ms: int = 10) -> None:
+        """Main async event loop."""
+        import lvgl as lv
+        
+        self._running = True
+        while self._running:
+            await self.tick()
+            lv.timer_handler()
+            await asyncio.sleep_ms(tick_ms)
+    
+    async def cancel_all_tasks(self) -> None:
+        """Cancel all pending async tasks."""
+        for task in self._pending_tasks:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._pending_tasks.clear()
+    
+    def stop(self) -> None:
+        """Stop the application."""
+        self._running = False
+    
+    async def dispose(self) -> None:
+        """Clean up resources."""
+        self.stop()
+        await self.cancel_all_tasks()
+        
+        for unsub in self._subscriptions:
+            unsub()
+        self._subscriptions.clear()
+        
+        if self.root_node is not None:
+            self.root_node.dispose()
+            self.root_node = None
+    
+    def _setup_subscriptions(self) -> None:
+        """Setup subscriptions based on current model."""
+        for unsub in self._subscriptions:
+            unsub()
+        self._subscriptions.clear()
+        
+        if self.program.subscribe is not None:
+            sub = self.program.subscribe(self.model)
+            for name, subscribe_fn in sub.subscriptions:
+                unsub = subscribe_fn(self.dispatch)
+                self._subscriptions.append(unsub)
+```
+
+#### 5.3 Async Subscriptions
+
+```python
+# src/lvgl_mvu/async_sub.py
+
+from dataclasses import dataclass
+from typing import TypeVar, Generic, Callable, Coroutine, Any
+import asyncio
+
+Msg = TypeVar('Msg')
+Dispatch = Callable[[Msg], None]
+
+@dataclass
+class AsyncSub(Generic[Msg]):
+    """Async subscriptions to external events."""
+    subscriptions: list[tuple[str, Callable[[Dispatch], Coroutine[Any, Any, Callable[[], None]]]]]
+    
+    @staticmethod
+    def none() -> 'AsyncSub[Msg]':
+        return AsyncSub([])
+    
+    @staticmethod
+    def interval(ms: int, msg_fn: Callable[[], Msg]) -> 'AsyncSub[Msg]':
+        """Periodic async timer."""
+        async def subscribe(dispatch: Dispatch) -> Callable[[], None]:
+            running = True
+            
+            async def loop():
+                while running:
+                    await asyncio.sleep_ms(ms)
+                    dispatch(msg_fn())
+            
+            task = asyncio.create_task(loop())
+            
+            def cancel():
+                nonlocal running
+                running = False
+                task.cancel()
+            
+            return cancel
+        
+        return AsyncSub([("interval", subscribe)])
+    
+    @staticmethod
+    def stream(reader: asyncio.StreamReader, on_data: Callable[[bytes], Msg]) -> 'AsyncSub[Msg]':
+        """Subscribe to async stream data."""
+        async def subscribe(dispatch: Dispatch) -> Callable[[], None]:
+            running = True
+            
+            async def read_loop():
+                while running:
+                    try:
+                        data = await reader.read(1024)
+                        if data:
+                            dispatch(on_data(data))
+                    except asyncio.CancelledError:
+                        break
+            
+            task = asyncio.create_task(read_loop())
+            
+            def cancel():
+                nonlocal running
+                running = False
+                task.cancel()
+            
+            return cancel
+        
+        return AsyncSub([("stream", subscribe)])
+```
+
+#### 5.4 Background Task Manager
+
+```python
+# src/lvgl_mvu/tasks.py
+
+from dataclasses import dataclass, field
+from typing import TypeVar, Generic, Callable, Any
+import asyncio
+
+Msg = TypeVar('Msg')
+
+@dataclass
+class TaskHandle:
+    """Handle to a background task."""
+    task_id: str
+    task: asyncio.Task
+    
+    def cancel(self) -> None:
+        """Cancel the task."""
+        self.task.cancel()
+    
+    def done(self) -> bool:
+        """Check if task is complete."""
+        return self.task.done()
+
+class TaskManager(Generic[Msg]):
+    """Manages background async tasks."""
+    
+    def __init__(self, dispatch: Callable[[Msg], None]) -> None:
+        self.dispatch = dispatch
+        self._tasks: dict[str, TaskHandle] = {}
+        self._task_counter = 0
+    
+    def spawn(
+        self,
+        coro: asyncio.Coroutine,
+        task_id: str | None = None,
+        on_complete: Msg | None = None,
+        on_error: Callable[[Exception], Msg] | None = None,
+    ) -> TaskHandle:
+        """Spawn a background task."""
+        if task_id is None:
+            self._task_counter += 1
+            task_id = f"task_{self._task_counter}"
+        
+        async def wrapper():
+            try:
+                result = await coro
+                if on_complete is not None:
+                    self.dispatch(on_complete)
+                return result
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                if on_error is not None:
+                    self.dispatch(on_error(e))
+                else:
+                    raise
+            finally:
+                self._tasks.pop(task_id, None)
+        
+        task = asyncio.create_task(wrapper())
+        handle = TaskHandle(task_id, task)
+        self._tasks[task_id] = handle
+        return handle
+    
+    def cancel(self, task_id: str) -> bool:
+        """Cancel a specific task."""
+        handle = self._tasks.get(task_id)
+        if handle:
+            handle.cancel()
+            return True
+        return False
+    
+    async def cancel_all(self) -> None:
+        """Cancel all tasks."""
+        for handle in list(self._tasks.values()):
+            handle.cancel()
+            try:
+                await handle.task
+            except asyncio.CancelledError:
+                pass
+        self._tasks.clear()
+    
+    def active_count(self) -> int:
+        """Get number of active tasks."""
+        return len(self._tasks)
+```
+
+---
+
+
 ---
 
 ## Widget Catalog
@@ -1259,16 +1647,59 @@ while True:
     lv.timer_handler()
     time.sleep_ms(10)
 
-# Commands
+# Commands (Sync)
 Cmd.none()                   # No side effects
 Cmd.of_msg(msg)              # Dispatch message
 Cmd.batch([cmd1, cmd2])      # Combine commands
 Cmd.of_effect(fn)            # Custom effect
 
-# Subscriptions
+# Async Commands
+AsyncCmd.none()              # No async effects
+AsyncCmd.of_async(coro_fn)   # From async function
+AsyncCmd.http_get(url, on_success, on_error)  # HTTP GET
+AsyncCmd.delay(ms, msg)      # Delayed message
+AsyncCmd.batch([cmd1, cmd2]) # Combine async commands
+
+# Subscriptions (Sync)
 Sub.none()                   # No subscriptions
 Sub.timer(interval_ms, msg)  # Timer subscription
+
+# Async Subscriptions
+AsyncSub.none()              # No async subscriptions
+AsyncSub.interval(ms, msg_fn) # Periodic async timer
+AsyncSub.stream(reader, on_data) # Stream subscription
 ```
+
+### Async API
+
+```python
+# Define async program
+AsyncProgram(
+    init: () -> (Model, Cmd[Msg] | AsyncCmd[Msg]),
+    update: (Msg, Model) -> (Model, Cmd[Msg] | AsyncCmd[Msg]),
+    view: (Model) -> Widget,
+    subscribe: (Model) -> Sub[Msg] | None = None,
+)
+
+# Run async application
+app = AsyncApp(program)
+asyncio.run(app.run(tick_ms=10))
+
+# Or manual control
+async def main():
+    app = AsyncApp(program)
+    try:
+        await app.run()
+    finally:
+        await app.dispose()
+
+asyncio.run(main())
+
+# Task management
+task_mgr = TaskManager(app.dispatch)
+handle = task_mgr.spawn(some_coro(), on_complete=Msg.DONE)
+task_mgr.cancel(handle.task_id)
+await task_mgr.cancel_all()
 
 ---
 
@@ -1285,7 +1716,11 @@ src/lvgl_mvu/
 ├── viewnode.py              # ViewNode LVGL wrapper
 ├── reconciler.py            # Reconciliation engine
 ├── program.py               # Program, Cmd, Sub
-├── app.py                   # App runner
+├── app.py                   # Sync App runner
+├── async_cmd.py             # AsyncCmd implementation
+├── async_app.py             # Async App runner
+├── async_sub.py             # Async subscriptions
+├── tasks.py                 # Background task manager
 ├── events.py                # LvEvent enum
 ├── layouts.py               # VStack, HStack, Grid
 ├── navigation.py            # NavCmd integration
@@ -1332,17 +1767,21 @@ examples/lvgl_mvu/
 ├── form_app.py              # Form inputs
 ├── navigation_app.py        # Multi-screen
 ├── dashboard_app.py         # Complex dashboard
-└── todo_app.py              # Todo list
+├── todo_app.py              # Todo list
+├── async_http_app.py        # Async HTTP fetch demo
+└── async_sensor_app.py      # Async sensor polling
 
 tests/
 ├── test_widget.py
 ├── test_diff.py
 ├── test_reconciler.py
 ├── test_app.py
+├── test_async_app.py        # Async app tests
 └── device/
     ├── run_mvu_p0_tests.py
     ├── run_mvu_p1_tests.py
     ├── run_mvu_nav_tests.py
+    ├── run_mvu_async_tests.py # Async tests on device
     └── run_mvu_benchmarks.py
 
 docs/
@@ -1554,6 +1993,128 @@ def view_about(model: Model) -> Widget:
     )
 ```
 
+### Async HTTP App (Async Demo)
+
+```python
+"""Async HTTP fetch demo with loading states."""
+from dataclasses import dataclass
+from lvgl_mvu import AsyncApp, AsyncProgram, Cmd, AsyncCmd, Widget
+from lvgl_mvu.dsl import Screen, VStack, HStack, Label, Button, Spinner
+import asyncio
+
+# =============================================================================
+# Model
+# =============================================================================
+
+@dataclass(frozen=True)
+class Model:
+    loading: bool
+    data: str | None
+    error: str | None
+
+# =============================================================================
+# Messages
+# =============================================================================
+
+class Msg:
+    FETCH_DATA = "fetch_data"
+    DATA_RECEIVED = "data_received"  # payload: str
+    FETCH_ERROR = "fetch_error"      # payload: str
+    CLEAR = "clear"
+
+# =============================================================================
+# Init
+# =============================================================================
+
+def init() -> tuple[Model, Cmd]:
+    return Model(loading=False, data=None, error=None), Cmd.none()
+
+# =============================================================================
+# Update
+# =============================================================================
+
+def update(msg: object, model: Model) -> tuple[Model, Cmd | AsyncCmd]:
+    if msg == Msg.FETCH_DATA:
+        # Start loading, dispatch async HTTP request
+        return (
+            Model(loading=True, data=None, error=None),
+            AsyncCmd.http_get(
+                url="https://api.example.com/data",
+                on_success=lambda data: (Msg.DATA_RECEIVED, data),
+                on_error=lambda err: (Msg.FETCH_ERROR, err),
+            )
+        )
+    
+    elif isinstance(msg, tuple) and msg[0] == Msg.DATA_RECEIVED:
+        return Model(loading=False, data=msg[1], error=None), Cmd.none()
+    
+    elif isinstance(msg, tuple) and msg[0] == Msg.FETCH_ERROR:
+        return Model(loading=False, data=None, error=msg[1]), Cmd.none()
+    
+    elif msg == Msg.CLEAR:
+        return Model(loading=False, data=None, error=None), Cmd.none()
+    
+    return model, Cmd.none()
+
+# =============================================================================
+# View
+# =============================================================================
+
+def view(model: Model) -> Widget:
+    return Screen().bg_color(0x1a1a2e)(
+        VStack(spacing=20)(
+            Label("Async HTTP Demo")
+                .font_size(28)
+                .text_color(0xFFFFFF),
+            
+            # Content area
+            view_content(model),
+            
+            # Action buttons
+            HStack(spacing=20)(
+                Button("Fetch Data", Msg.FETCH_DATA)
+                    .width(120)
+                    .disabled(model.loading),
+                
+                Button("Clear", Msg.CLEAR)
+                    .width(80)
+                    .disabled(model.loading),
+            ),
+        )
+    )
+
+def view_content(model: Model) -> Widget:
+    if model.loading:
+        return VStack()(
+            Spinner().size(50, 50),
+            Label("Loading...").text_color(0xAAAAAA),
+        )
+    elif model.error:
+        return Label(f"Error: {model.error}")
+            .text_color(0xFF6B6B)
+    elif model.data:
+        return Label(model.data)
+            .text_color(0x4ECDC4)
+    else:
+        return Label("Press 'Fetch Data' to start")
+            .text_color(0x888888)
+
+# =============================================================================
+# Main
+# =============================================================================
+
+async def main():
+    program = AsyncProgram(init=init, update=update, view=view)
+    app = AsyncApp(program)
+    
+    try:
+        await app.run(tick_ms=10)
+    finally:
+        await app.dispose()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
 ---
 
 ## Timeline Summary
@@ -1570,10 +2131,11 @@ def view_about(model: Model) -> Widget:
 | 7 | Navigation | Multi-screen support |
 | 8-9 | P2 Widgets | Image, TextArea, Dropdown |
 | 9-10 | Optimizations | Memoization, dirty checking |
-| 10-12 | P3 Widgets | Chart, Calendar, etc. |
-| 12 | Documentation | API docs, tutorials |
+| 10-11 | **Async Support** | AsyncCmd, AsyncApp, tasks |
+| 11-13 | P3 Widgets | Chart, Calendar, etc. |
+| 13-14 | Documentation | API docs, tutorials, async guide |
 
-**Total Duration**: ~12 weeks
+**Total Duration**: ~14 weeks
 
 ---
 
@@ -1585,6 +2147,7 @@ def view_about(model: Model) -> Widget:
 - [ ] O(N) diffing complexity verified
 - [ ] Memory usage stable under stress test
 - [ ] 60 FPS maintained on ESP32-C6
+- [ ] Async operations don't block UI thread
 
 ### Functionality
 
@@ -1592,12 +2155,16 @@ def view_about(model: Model) -> Widget:
 - [ ] Event handling works correctly
 - [ ] Navigation with animations
 - [ ] Memoization prevents unnecessary updates
+- [ ] Async HTTP/network operations work
+- [ ] Background tasks can be cancelled
+- [ ] Loading states render correctly
 
 ### Quality
 
 - [ ] 100% type coverage (mypy strict)
 - [ ] Unit test coverage >90%
 - [ ] Device tests pass on ESP32
+- [ ] Async tests pass on device
 - [ ] Documentation complete
 
 ### Usability
@@ -1605,4 +2172,5 @@ def view_about(model: Model) -> Widget:
 - [ ] Declarative DSL is intuitive
 - [ ] Error messages are helpful
 - [ ] Examples cover common patterns
+- [ ] Async patterns documented
 - [ ] Migration guide available
