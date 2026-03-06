@@ -746,8 +746,9 @@ t("test_trait_identity", traits.test_trait_param(), "Alice,Whiskers,Alice,Whiske
 
 # ---- async_demo ----
 suite("async_demo")
-import async_demo
 import asyncio
+
+import async_demo
 
 # Test basic async functions (no await asyncio.sleep)
 coro = async_demo.simple_return()

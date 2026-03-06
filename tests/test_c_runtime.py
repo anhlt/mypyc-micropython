@@ -2548,28 +2548,28 @@ async def simple_coro() -> int:
 int main(void) {
     // Create coroutine
     mp_obj_t coro = test_simple_coro();
-    
+
     // Check it has the expected structure (non-null)
     if (coro == MP_OBJ_NULL) {
         printf("ERROR: coroutine is null\\n");
         return 1;
     }
-    
+
     // Get the coroutine struct
     test_simple_coro_coro_t *c = MP_OBJ_TO_PTR(coro);
-    
+
     // Check initial state
     printf("state=%d\\n", c->state);
-    
+
     // Call iternext to run the coroutine
     mp_obj_t result = test_simple_coro_coro_iternext(coro);
-    
+
     // After return, state should be done (65535)
     printf("state_after=%d\\n", c->state);
-    
+
     // Result should be MP_OBJ_STOP_ITERATION (NULL in mock)
     printf("stopped=%d\\n", result == MP_OBJ_STOP_ITERATION ? 1 : 0);
-    
+
     return 0;
 }
 '''
@@ -2596,17 +2596,17 @@ int main(void) {
     // Create coroutine with args
     mp_obj_t coro = test_add_values(mp_obj_new_int(10), mp_obj_new_int(32));
     test_add_values_coro_t *c = MP_OBJ_TO_PTR(coro);
-    
+
     // Set send_value manually (simulating what send() does before calling iternext)
     c->send_value = mp_const_none;
-    
+
     // Call iternext directly
     mp_obj_t result = test_add_values_coro_iternext(coro);
-    
+
     // Should have completed
     printf("state=%d\\n", c->state);
     printf("stopped=%d\\n", result == MP_OBJ_STOP_ITERATION ? 1 : 0);
-    
+
     return 0;
 }
 '''
@@ -2629,15 +2629,15 @@ async def simple() -> int:
 int main(void) {
     mp_obj_t coro = test_simple();
     test_simple_coro_t *c = MP_OBJ_TO_PTR(coro);
-    
+
     printf("before=%d\\n", c->state);
-    
+
     // Call close() - should mark as done
     mp_obj_t result = test_simple_coro_close(coro);
-    
+
     printf("after=%d\\n", c->state);
     printf("result_none=%d\\n", result == mp_const_none ? 1 : 0);
-    
+
     return 0;
 }
 '''
@@ -2665,21 +2665,21 @@ int main(void) {
     // Create coroutine
     mp_obj_t coro = test_delayed_double(mp_obj_new_int(21));
     test_delayed_double_coro_t *c = MP_OBJ_TO_PTR(coro);
-    
+
     printf("state0=%d\\n", c->state);
-    
+
     // First call: should return the sleep coroutine and suspend
     mp_obj_t result = test_delayed_double_coro_iternext(coro);
     printf("state1=%d\\n", c->state);
-    
+
     // result should be a sleep coroutine (non-null, non-stop)
     printf("sleep_coro=%d\\n", result != MP_OBJ_STOP_ITERATION ? 1 : 0);
-    
+
     // Second call: should complete and return stop iteration
     result = test_delayed_double_coro_iternext(coro);
     printf("state2=%d\\n", c->state);
     printf("stopped=%d\\n", result == MP_OBJ_STOP_ITERATION ? 1 : 0);
-    
+
     return 0;
 }
 '''
