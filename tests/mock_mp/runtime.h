@@ -284,6 +284,15 @@ static inline const char *mp_obj_str_get_str(mp_obj_t self_in) {
     return self->data;
 }
 
+static inline const char *mp_obj_str_get_data(mp_obj_t self_in, size_t *len) {
+    mp_obj_str_struct *self = (mp_obj_str_struct *)self_in;
+    if (self->tag != MP_MOCK_TAG_STR) {
+        mp_mock_abort("mp_obj_str_get_data: not a string");
+    }
+    if (len) *len = self->len;
+    return self->data;
+}
+
 static inline mp_obj_t mp_obj_new_list(size_t n, mp_obj_t *items) {
     mp_obj_list_struct *list = (mp_obj_list_struct *)malloc(sizeof(*list));
     if (list == NULL) {
@@ -619,6 +628,9 @@ static inline mp_obj_t mp_binary_op(mp_binary_op_t op, mp_obj_t lhs, mp_obj_t rh
 #define MP_QSTR_generator ((qstr)0x2013)
 #define MP_QSTR_id      ((qstr)0x2014)
 #define MP_QSTR_age     ((qstr)0x2015)
+#define MP_QSTR_breed   ((qstr)0x2016)
+#define MP_QSTR_color   ((qstr)0x2017)
+#define MP_QSTR_amount  ((qstr)0x2018)
 #define MP_MOCK_TAG_ITER (0x173A)
 
 typedef struct {
@@ -823,7 +835,17 @@ static inline mp_obj_t mp_call_method_n_kw(size_t n_args, size_t n_kw, const mp_
 
 #define MP_OBJ_FROM_PTR(p) ((mp_obj_t)(p))
 #define MP_OBJ_TO_PTR(o) ((void *)(o))
-#define mp_obj_malloc(type_name, type_ptr) ((type_name *)calloc(1, sizeof(type_name)))
+#define mp_obj_malloc(type_name, type_ptr) \
+    ({type_name *_o = (type_name *)calloc(1, sizeof(type_name)); \
+      ((mp_obj_base_t *)_o)->type = (mp_obj_t)(type_ptr); _o;})
+
+        static inline bool mp_obj_is_type(mp_obj_t obj, const void *type) {
+    if (MP_OBJ_IS_SMALL_INT(obj) || mp_mock_is_special_const(obj)) {
+        return false;
+    }
+    mp_obj_base_t *base = (mp_obj_base_t *)obj;
+    return base->type == (mp_obj_t)type;
+}
 
 static inline void mp_arg_check_num(
     size_t n_args,
@@ -837,6 +859,54 @@ static inline void mp_arg_check_num(
     (void)n_args_min;
     (void)n_args_max;
     (void)takes_kw;
+}
+
+static inline mp_obj_t mp_obj_new_bool(bool val) {
+    return val ? mp_const_true : mp_const_false;
+}
+
+/* Argument parsing support for dataclass(frozen=True) make_new */
+#define MP_ARG_REQUIRED (0x01)
+#define MP_ARG_KW_ONLY  (0x02)
+#define MP_ARG_BOOL     (0x04)
+#define MP_ARG_INT      (0x08)
+#define MP_ARG_OBJ      (0x10)
+
+typedef struct {
+    uint16_t qst;
+    uint16_t flags;
+    union {
+        bool u_bool;
+        mp_int_t u_int;
+        mp_obj_t u_obj;
+        mp_obj_t u_rom_obj;
+    } defval;
+} mp_arg_t;
+
+typedef struct {
+    union {
+        bool u_bool;
+        mp_int_t u_int;
+        mp_obj_t u_obj;
+    };
+} mp_arg_val_t;
+
+static inline void mp_arg_parse_all_kw_array(
+    size_t n_args, size_t n_kw, const mp_obj_t *args,
+    size_t n_allowed, const mp_arg_t *allowed,
+    mp_arg_val_t *out_vals
+) {
+    /* Simple positional-only stub: assign args in order */
+    for (size_t i = 0; i < n_allowed && i < n_args; i++) {
+        if (allowed[i].flags & MP_ARG_INT) {
+            out_vals[i].u_int = mp_obj_get_int(args[i]);
+        } else if (allowed[i].flags & MP_ARG_BOOL) {
+            out_vals[i].u_bool = mp_obj_is_true(args[i]);
+        } else {
+            out_vals[i].u_obj = args[i];
+        }
+    }
+    (void)n_kw;
 }
 
 #define MP_MOCK_BUILTIN_TAG_MIN 1001

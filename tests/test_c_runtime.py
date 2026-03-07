@@ -2806,3 +2806,195 @@ int main(void) {
     assert lines[2] == "sleep_coro=1"  # Got sleep coroutine
     assert lines[3] == "state2=65535"  # Done state
     assert lines[4] == "stopped=1"  # Final result is stop
+
+
+# =============================================================================
+# isinstance() builtin tests
+# =============================================================================
+
+
+def test_c_isinstance_with_class_hierarchy(compile_and_run):
+    """isinstance() correctly distinguishes between sibling classes."""
+    source = '''
+class Animal:
+    name: str
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+class Dog(Animal):
+    breed: str
+    def __init__(self, name: str, breed: str) -> None:
+        self.name = name
+        self.breed = breed
+
+class Cat(Animal):
+    color: str
+    def __init__(self, name: str, color: str) -> None:
+        self.name = name
+        self.color = color
+
+def check_dog(obj: object) -> int:
+    if isinstance(obj, Dog):
+        return 1
+    return 0
+
+def check_cat(obj: object) -> int:
+    if isinstance(obj, Cat):
+        return 1
+    return 0
+'''
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    // Create a Dog
+    mp_obj_t dog_args[] = {
+        mp_obj_new_str("Rex", 3),
+        mp_obj_new_str("Labrador", 8),
+    };
+    mp_obj_t dog = test_Dog_make_new(&test_Dog_type, 2, 0, dog_args);
+
+    // Create a Cat
+    mp_obj_t cat_args[] = {
+        mp_obj_new_str("Whiskers", 8),
+        mp_obj_new_str("orange", 6),
+    };
+    mp_obj_t cat = test_Cat_make_new(&test_Cat_type, 2, 0, cat_args);
+
+    // Dog is Dog? yes
+    mp_obj_t r1 = test_check_dog(dog);
+    printf("%ld\\n", (long)mp_obj_get_int(r1));
+
+    // Cat is Dog? no
+    mp_obj_t r2 = test_check_dog(cat);
+    printf("%ld\\n", (long)mp_obj_get_int(r2));
+
+    // Cat is Cat? yes
+    mp_obj_t r3 = test_check_cat(cat);
+    printf("%ld\\n", (long)mp_obj_get_int(r3));
+
+    // Dog is Cat? no
+    mp_obj_t r4 = test_check_cat(dog);
+    printf("%ld\\n", (long)mp_obj_get_int(r4));
+
+    return 0;
+}
+"""
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().split("\n")
+    assert lines == ["1", "0", "1", "0"]
+
+
+def test_c_isinstance_with_narrowing(compile_and_run):
+    """isinstance() + type narrowing via annotated assignment enables field access."""
+    source = '''
+class Dog:
+    breed: str
+    def __init__(self, breed: str) -> None:
+        self.breed = breed
+
+class Cat:
+    color: str
+    def __init__(self, color: str) -> None:
+        self.color = color
+
+def describe(obj: object) -> str:
+    if isinstance(obj, Dog):
+        d: Dog = obj
+        return d.breed
+    elif isinstance(obj, Cat):
+        c: Cat = obj
+        return c.color
+    return "unknown"
+'''
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    // Create a Dog
+    mp_obj_t dog_args[] = { mp_obj_new_str("Labrador", 8) };
+    mp_obj_t dog = test_Dog_make_new(&test_Dog_type, 1, 0, dog_args);
+
+    // Create a Cat
+    mp_obj_t cat_args[] = { mp_obj_new_str("orange", 6) };
+    mp_obj_t cat = test_Cat_make_new(&test_Cat_type, 1, 0, cat_args);
+
+    // Describe dog -> breed
+    mp_obj_t r1 = test_describe(dog);
+    printf("%s\\n", mp_obj_str_get_str(r1));
+
+    // Describe cat -> color
+    mp_obj_t r2 = test_describe(cat);
+    printf("%s\\n", mp_obj_str_get_str(r2));
+
+    return 0;
+}
+"""
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().split("\n")
+    assert lines == ["Labrador", "orange"]
+
+
+def test_c_isinstance_with_dataclass_variants(compile_and_run):
+    """isinstance() with dataclass variants (MVU message pattern)."""
+    source = '''
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Increment:
+    amount: int
+
+@dataclass(frozen=True)
+class SetValue:
+    value: int
+
+class Reset:
+    pass
+
+def process(msg: object, count: int) -> int:
+    if isinstance(msg, Increment):
+        inc: Increment = msg
+        return count + inc.amount
+    elif isinstance(msg, SetValue):
+        sv: SetValue = msg
+        return sv.value
+    elif isinstance(msg, Reset):
+        return 0
+    return count
+'''
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    // Create Increment(amount=5)
+    mp_obj_t inc_args[] = { mp_obj_new_int(5) };
+    mp_obj_t inc = test_Increment_make_new(&test_Increment_type, 1, 0, inc_args);
+
+    // Create SetValue(value=42)
+    mp_obj_t sv_args[] = { mp_obj_new_int(42) };
+    mp_obj_t sv = test_SetValue_make_new(&test_SetValue_type, 1, 0, sv_args);
+
+    // Create Reset()
+    mp_obj_t reset = test_Reset_make_new(&test_Reset_type, 0, 0, NULL);
+
+    // process(Increment(5), 10) -> 15
+    mp_obj_t r1 = test_process(inc, mp_obj_new_int(10));
+    printf("%ld\\n", (long)mp_obj_get_int(r1));
+
+    // process(SetValue(42), 10) -> 42
+    mp_obj_t r2 = test_process(sv, mp_obj_new_int(10));
+    printf("%ld\\n", (long)mp_obj_get_int(r2));
+
+    // process(Reset(), 10) -> 0
+    mp_obj_t r3 = test_process(reset, mp_obj_new_int(10));
+    printf("%ld\\n", (long)mp_obj_get_int(r3));
+
+    return 0;
+}
+"""
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().split("\n")
+    assert lines == ["15", "42", "0"]

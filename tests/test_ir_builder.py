@@ -21,6 +21,7 @@ from mypyc_micropython.ir import (
     IfExprIR,
     IfIR,
     IRType,
+    IsInstanceIR,
     ListNewIR,
     MethodCallIR,
     NameIR,
@@ -1316,3 +1317,108 @@ class Comparer:
         assert isinstance(ret_stmt, ReturnIR)
         assert isinstance(ret_stmt.value, CompareIR)
         assert ret_stmt.value.ops == ["is"]
+
+
+
+class TestIsInstanceBuilder:
+    """Tests for isinstance() IR building."""
+
+    def test_isinstance_creates_ir_node(self):
+        """Test isinstance(obj, ClassName) creates IsInstanceIR with correct fields."""
+        source = """
+class Dog:
+    name: str
+
+def check_dog(obj: object) -> bool:
+    return isinstance(obj, Dog)
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        # Build the class first to register it
+        builder.build_class(tree.body[0])
+        # Build the function
+        func_ir = builder.build_function(tree.body[1])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        assert isinstance(ret.value, IsInstanceIR)
+        assert ret.value.class_name == "Dog"
+        assert "Dog" in ret.value.c_type_name
+
+    def test_isinstance_trait_returns_const_false(self):
+        """Test isinstance with trait class returns ConstIR(False)."""
+        source = """
+from mypy_extensions import trait
+
+@trait
+class Animal:
+    def speak(self) -> str:
+        pass
+
+def check_animal(obj: object) -> bool:
+    return isinstance(obj, Animal)
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        # Build the class first
+        builder.build_class(tree.body[1])
+        # Build the function
+        func_ir = builder.build_function(tree.body[2])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        # Traits should return ConstIR(False) since they have no type
+        assert isinstance(ret.value, ConstIR)
+        assert ret.value.value is False
+
+    def test_isinstance_unknown_class_returns_const_false(self):
+        """Test isinstance with unknown class returns ConstIR(False)."""
+        source = """
+def check_unknown(obj: object) -> bool:
+    return isinstance(obj, UnknownClass)
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        # Unknown class should return ConstIR(False)
+        assert isinstance(ret.value, ConstIR)
+        assert ret.value.value is False
+
+    def test_isinstance_builtin_type_creates_ir(self):
+        """Test isinstance with builtin type creates IsInstanceIR with mp_type_*."""
+        source = """
+def check_int(obj: object) -> bool:
+    return isinstance(obj, int)
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        assert isinstance(ret.value, IsInstanceIR)
+        assert ret.value.class_name == "int"
+        assert ret.value.c_type_name == "mp_type_int"
+
+    def test_isinstance_ir_visualization(self):
+        """Test dump_ir shows isinstance(var, ClassName)."""
+        from mypyc_micropython.ir_visualizer import dump_ir
+
+        source = """
+class Dog:
+    name: str
+
+def check_dog(obj: object) -> bool:
+    return isinstance(obj, Dog)
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        builder.build_class(tree.body[0])
+        func_ir = builder.build_function(tree.body[1])
+
+        # Dump as text and check for isinstance representation
+        ir_text = dump_ir(func_ir, "text")
+        assert "isinstance" in ir_text or "IsInstanceIR" in ir_text

@@ -1077,6 +1077,24 @@ class CompareIR(ExprIR):
     left_prelude: list[InstrIR] = field(default_factory=list)
     comparator_preludes: list[list[InstrIR]] = field(default_factory=list)
 
+@dataclass
+class IsInstanceIR(ExprIR):
+    """Type check: isinstance(obj, ClassName).
+
+    Compiles to mp_obj_is_type(obj, &ClassName_type) for exact type check.
+    Only supports compile-time-known concrete classes (not traits, not dynamic types).
+
+    Example:
+        isinstance(msg, Increment)  # Python
+        mp_obj_is_type(msg, &module_Increment_type)  # Generated C
+    """
+
+    obj: ValueIR  # The object being checked
+    class_name: str  # Python class name (e.g., 'Increment')
+    c_type_name: str  # C type object name (e.g., 'module_Increment_type')
+    # Prelude for the object expression
+    obj_prelude: list[InstrIR] = field(default_factory=list)
+
 
 @dataclass
 class CallIR(ExprIR):

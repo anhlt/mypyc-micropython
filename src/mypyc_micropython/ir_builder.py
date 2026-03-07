@@ -46,6 +46,7 @@ from .ir import (
     FuncIR,
     IfExprIR,
     IfIR,
+    IsInstanceIR,
     IRType,
     ListCompIR,
     ListNewIR,
@@ -1193,6 +1194,10 @@ class IRBuilder:
         if func_name in self._known_classes:
             return self._build_class_instantiation(expr, func_name, locals_)
 
+        # isinstance(obj, ClassName) -> IsInstanceIR
+        if func_name == "isinstance" and len(expr.args) == 2:
+            return self._build_isinstance(expr, locals_)
+
         args: list[ValueIR] = []
         arg_preludes: list[list] = []
         for arg in expr.args:
@@ -1249,6 +1254,68 @@ class IRBuilder:
             is_builtin=False,
             builtin_kind=None,
         ), all_preludes
+
+    def _build_isinstance(
+        self, expr: ast.Call, locals_: list[str]
+    ) -> tuple[IsInstanceIR, list]:
+        """Build isinstance(obj, ClassName) -> IsInstanceIR.
+
+        Only supports compile-time-known concrete classes.
+        Generates mp_obj_is_type(obj, &ClassName_type) for exact type check.
+        """
+        obj_expr = expr.args[0]
+        class_arg = expr.args[1]
+
+        # Build the object expression
+        obj_val, obj_prelude = self._build_expr(obj_expr, locals_)
+
+        # The second argument must be a known class name
+        if not isinstance(class_arg, ast.Name):
+            # Fallback: not a simple name, treat as generic call
+            return ConstIR(ir_type=IRType.BOOL, value=False), obj_prelude
+
+        class_name = class_arg.id
+
+        # Must be a known compiled class (not a trait, not a builtin type)
+        if class_name not in self._known_classes:
+            # Unknown class - fall back to runtime mp_obj_is_type with mp_type_*
+            # for builtin types like int, str, list, dict, etc.
+            builtin_types = {
+                "int": "mp_type_int",
+                "str": "mp_type_str",
+                "float": "mp_type_float",
+                "bool": "mp_type_bool",
+                "list": "mp_type_list",
+                "dict": "mp_type_dict",
+                "tuple": "mp_type_tuple",
+                "set": "mp_type_set",
+            }
+            if class_name in builtin_types:
+                return IsInstanceIR(
+                    ir_type=IRType.BOOL,
+                    obj=obj_val,
+                    class_name=class_name,
+                    c_type_name=builtin_types[class_name],
+                    obj_prelude=obj_prelude,
+                ), obj_prelude
+            # Truly unknown class - return false (will be caught by type checker)
+            return ConstIR(ir_type=IRType.BOOL, value=False), obj_prelude
+
+        class_ir = self._known_classes[class_name]
+
+        # Traits cannot be used with isinstance (no single type object)
+        if class_ir.is_trait:
+            return ConstIR(ir_type=IRType.BOOL, value=False), obj_prelude
+
+        c_type_name = f"{class_ir.c_name}_type"
+
+        return IsInstanceIR(
+            ir_type=IRType.BOOL,
+            obj=obj_val,
+            class_name=class_name,
+            c_type_name=c_type_name,
+            obj_prelude=obj_prelude,
+        ), obj_prelude
 
     @staticmethod
     def _is_private_name(name: str) -> bool:
@@ -3141,6 +3208,10 @@ class IRBuilder:
 
         if func_name in self._known_classes:
             return self._build_class_instantiation(expr, func_name, locals_)
+
+        # isinstance(obj, ClassName) -> IsInstanceIR
+        if func_name == "isinstance" and len(expr.args) == 2:
+            return self._build_isinstance(expr, locals_)
 
         args: list[ValueIR] = []
         arg_preludes: list[list] = []

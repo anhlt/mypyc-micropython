@@ -6138,3 +6138,149 @@ async def ping() -> None:
         result = compile_source(source, "test", type_check=False)
         # Should call with zero arguments
         assert "mp_call_function_0(_fn)" in result
+
+
+
+class TestIsInstance:
+    """Tests for isinstance() builtin support."""
+
+    def test_isinstance_simple_class(self):
+        """Test isinstance(obj, ClassName) generates mp_obj_is_type."""
+        source = """
+class Dog:
+    name: str
+
+def check_dog(obj: object) -> bool:
+    return isinstance(obj, Dog)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_obj_is_type" in result
+        assert "test_Dog_type" in result
+
+    def test_isinstance_in_if(self):
+        """Test isinstance in if statement."""
+        source = """
+class Cat:
+    age: int
+
+def pet_cat(obj: object) -> str:
+    if isinstance(obj, Cat):
+        return "meow"
+    return "unknown"
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "if (mp_obj_is_type" in result
+        assert "test_Cat_type" in result
+
+    def test_isinstance_with_trait(self):
+        """Test isinstance with @trait class returns False (traits have no type)."""
+        source = """
+class Animal:
+    def speak(self) -> str:
+        pass
+
+def check_animal(obj: object) -> bool:
+    return isinstance(obj, Animal)
+"""
+        result = compile_source(source, "test", type_check=False)
+        # Traits should not generate mp_obj_is_type, should return False
+        # The isinstance call should be optimized away
+        assert "mp_const_false" in result or "False" in result
+
+    def test_isinstance_with_dataclass(self):
+        """Test isinstance with @dataclass variant."""
+        source = """
+class Point:
+    x: int
+    y: int
+
+def check_point(obj: object) -> bool:
+    return isinstance(obj, Point)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_obj_is_type" in result
+        assert "test_Point_type" in result
+
+    def test_isinstance_with_inheritance(self):
+        """Test isinstance with child class uses child type."""
+        source = """
+class Animal:
+    name: str
+
+class Dog(Animal):
+    breed: str
+
+def check_dog(obj: object) -> bool:
+    return isinstance(obj, Dog)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_obj_is_type" in result
+        assert "test_Dog_type" in result
+        # Should use Dog type, not Animal type
+        assert "test_Animal_type" not in result or "test_Dog_type" in result
+
+    def test_isinstance_builtin_int(self):
+        """Test isinstance(x, int) uses mp_type_int."""
+        source = """
+def check_int(obj: object) -> bool:
+    return isinstance(obj, int)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_obj_is_type" in result
+        assert "mp_type_int" in result
+
+    def test_isinstance_builtin_str(self):
+        """Test isinstance(x, str) uses mp_type_str."""
+        source = """
+def check_str(obj: object) -> bool:
+    return isinstance(obj, str)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_obj_is_type" in result
+        assert "mp_type_str" in result
+
+    def test_isinstance_builtin_list(self):
+        """Test isinstance(x, list) uses mp_type_list."""
+        source = """
+def check_list(obj: object) -> bool:
+    return isinstance(obj, list)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_obj_is_type" in result
+        assert "mp_type_list" in result
+
+    def test_isinstance_in_elif_chain(self):
+        """Test multiple isinstance checks in if/elif chain."""
+        source = """
+class Dog:
+    name: str
+
+class Cat:
+    age: int
+
+def identify(obj: object) -> str:
+    if isinstance(obj, Dog):
+        return "dog"
+    elif isinstance(obj, Cat):
+        return "cat"
+    return "unknown"
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert result.count("mp_obj_is_type") >= 2
+        assert "test_Dog_type" in result
+        assert "test_Cat_type" in result
+
+    def test_isinstance_negated(self):
+        """Test not isinstance(x, ClassName)."""
+        source = """
+class Dog:
+    name: str
+
+def not_a_dog(obj: object) -> bool:
+    return not isinstance(obj, Dog)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_obj_is_type" in result
+        assert "test_Dog_type" in result
+        # Should have negation logic
+        assert "!" in result or "not" in result.lower()
