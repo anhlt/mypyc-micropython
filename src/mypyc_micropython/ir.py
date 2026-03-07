@@ -1464,11 +1464,40 @@ class RaiseIR(StmtIR):
 
 
 @dataclass
+class EnumIR:
+    """Intermediate representation of a Python enum class.
+
+    Enum members are compile-time integer constants. At the MicroPython level,
+    each member becomes an MP_ROM_INT entry in the module globals table,
+    following the same pattern as the C bindings CEnumDef.
+
+    Example Python:
+        class Color(IntEnum):
+            RED = 1
+            GREEN = 2
+            BLUE = 3
+
+    Generated C globals entries:
+        { MP_ROM_QSTR(MP_QSTR_Color_RED), MP_ROM_INT(1) },
+        { MP_ROM_QSTR(MP_QSTR_Color_GREEN), MP_ROM_INT(2) },
+        { MP_ROM_QSTR(MP_QSTR_Color_BLUE), MP_ROM_INT(3) },
+    """
+
+    name: str  # Python enum class name (e.g., 'Color')
+    c_name: str  # Sanitized C identifier (e.g., 'module_Color')
+    module_name: str
+    values: dict[str, int] = field(default_factory=dict)  # member_name -> int value
+    docstring: str | None = None
+
+
+
+@dataclass
 class ModuleIR:
     name: str
     c_name: str
     classes: dict[str, ClassIR] = field(default_factory=dict)
     functions: dict[str, FuncIR] = field(default_factory=dict)
+    enums: dict[str, EnumIR] = field(default_factory=dict)
 
     # Module-level constants (NAME = literal_value)
     constants: dict[str, int | float | str | bool | None] = field(default_factory=dict)
@@ -1476,6 +1505,7 @@ class ModuleIR:
     # For tracking definition order (important for forward declarations)
     class_order: list[str] = field(default_factory=list)
     function_order: list[str] = field(default_factory=list)
+    enum_order: list[str] = field(default_factory=list)
 
     # Imported modules used by compiled functions (for runtime import)
     imported_modules: set[str] = field(default_factory=set)
@@ -1491,6 +1521,12 @@ class ModuleIR:
         self.functions[func_ir.name] = func_ir
         if func_ir.name not in self.function_order:
             self.function_order.append(func_ir.name)
+
+    def add_enum(self, enum_ir: EnumIR) -> None:
+        """Add an enum to the module."""
+        self.enums[enum_ir.name] = enum_ir
+        if enum_ir.name not in self.enum_order:
+            self.enum_order.append(enum_ir.name)
 
     def resolve_base_classes(self) -> None:
         """Resolve base class and trait references after all classes are parsed."""

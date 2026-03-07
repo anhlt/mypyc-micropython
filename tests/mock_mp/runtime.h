@@ -1093,6 +1093,7 @@ static inline mp_obj_t mp_call_function_n_kw(mp_obj_t fun, size_t n_args, size_t
 
 #define MP_ROM_QSTR(x) ((mp_obj_t)(uintptr_t)0)
 #define MP_ROM_PTR(x) ((mp_obj_t)(x))
+#define MP_ROM_INT(x) MP_OBJ_NEW_SMALL_INT(x)
 
 #define MP_DEFINE_CONST_FUN_OBJ_0(obj_name, fun_name) const int obj_name = 0
 #define MP_DEFINE_CONST_FUN_OBJ_1(obj_name, fun_name) const int obj_name = 0

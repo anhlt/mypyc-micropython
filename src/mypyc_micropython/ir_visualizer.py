@@ -34,6 +34,7 @@ from .ir import (
     ConstIR,
     ContinueIR,
     DictNewIR,
+    EnumIR,
     ExceptHandlerIR,
     ExprStmtIR,
     FieldIR,
@@ -124,7 +125,27 @@ class IRPrinter:
                     lines.append("")
             self._indent_dec()
 
+        if module.enums:
+            lines.append("Enums:")
+            self._indent_inc()
+            for name in module.enum_order:
+                if name in module.enums:
+                    enum_ir = module.enums[name]
+                    lines.append(self.print_enum(enum_ir))
+                    lines.append("")
+            self._indent_dec()
+
         return "\n".join(lines)
+
+    def print_enum(self, enum_ir: EnumIR) -> str:
+        """Pretty-print an EnumIR."""
+        lines = [f"{self._i()}Enum: {enum_ir.name} (c_name: {enum_ir.c_name})"]
+        self._indent_inc()
+        for member_name, member_value in enum_ir.values.items():
+            lines.append(f"{self._i()}{member_name} = {member_value}")
+        self._indent_dec()
+        return "\n".join(lines)
+
 
     def print_class(self, cls: ClassIR) -> str:
         lines = [f"{self._i()}Class: {cls.name} (c_name: {cls.c_name})"]
@@ -851,6 +872,8 @@ def dump_ir(ir_node: Any, format: str = "text") -> str:
             return printer.print_instr(ir_node)
         elif isinstance(ir_node, MethodIR):
             return printer.print_method_detail(ir_node)
+        elif isinstance(ir_node, EnumIR):
+            return printer.print_enum(ir_node)
         else:
             return f"<unsupported: {type(ir_node).__name__}>"
     elif format == "tree":
