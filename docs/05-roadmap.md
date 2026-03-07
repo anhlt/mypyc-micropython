@@ -37,28 +37,30 @@ A 7-phase roadmap for mypyc-micropython from proof-of-concept to production-read
 - **Built-ins**: `abs()`, `int()`, `float()`, `len()`, `range()` (1/2/3 args), `list()`, `dict()`,
   `print()`, `bool()`, `min()`, `max()`, `sum()` (with inline optimization for typed lists)
 - **Classes**: Class definitions with typed fields, `__init__`, instance methods, `@dataclass`,
-  single inheritance with vtable-based virtual dispatch, `__eq__`, `__len__`, `__getitem__`,
+  single inheritance with vtable-based virtual dispatch, `__eq__`, `__ne__`, `__lt__`, `__gt__`,
+  `__le__`, `__ge__`, `__hash__`, `__iter__`/`__next__`, `__len__`, `__getitem__`,
   `__setitem__`, class fields with `list`/`dict` types, augmented assignment on fields,
   `@property` (getter + setter), `@staticmethod`, `@classmethod`
 - **IR pipeline**: Full two-phase architecture (IRBuilder → Emitters), StmtIR/ExprIR/ValueIR
   hierarchies, prelude pattern for side effects, BinOp type inference, RTuple optimization
-- **ESP32**: All 17 compiled modules verified on real ESP32-C6 hardware (262 device tests pass)
+- **ESP32**: All 35 compiled modules verified on real ESP32-C6 hardware (415 device tests pass)
 - **Performance**: RTuple internal ops (57x speedup), list[tuple] (9.2x speedup), 22 benchmarks
   suite with 11.8x average speedup
-- **Testing**: 548 tests (unit + C runtime), comprehensive device test coverage
+- **Testing**: 831 tests (unit + C runtime), comprehensive device test coverage
 - **Strings**: Full method support (`split`, `join`, `replace`, `find`, `strip`, `upper`, `lower`, etc.)
 - **Type Checking**: Optional mypy integration via `type_check=True` parameter, extracts function/class signatures
 - **Exception Handling**: `try`/`except`/`else`/`finally`, `raise`, multiple handlers, exception variable binding
 - **Other**: Local variables (typed and inferred), string literals, `None`, `True`/`False`
+- **isinstance()**: Concrete class type checking with automatic type narrowing in if/elif branches
+- **IntEnum**: Integer enumerations compiled to `MP_ROM_INT` constants
 
 ### What's Next ❌
 
-- `sum(generator_expr)` — inline loop optimization (Phase 5)
+- `sum(generator_expr)` -- inline loop optimization (Phase 5)
 - Remaining list methods (`extend`, `insert`, `remove`, `count`, `index`, `reverse`, `sort`)
 - List/dict comprehensions
 - Keyword-only arguments, positional-only arguments
-- Remaining class special methods (`__ne__`/`__lt__`/`__gt__`/`__le__`/`__ge__`, `__hash__`, `__iter__`/`__next__`)
- Custom exception classes
+- Custom exception classes
 - Closures
 
 ## Phase Overview
@@ -73,8 +75,9 @@ Phase 2: Functions & Arguments  █████████████░░  ~
 
 Phase 3: Classes                ████████████████ 100% done
   class def ✅ │ __init__ ✅ │ methods ✅ │ @dataclass ✅ │ inheritance ✅
-  vtable dispatch ✅ │ __eq__/__len__/__getitem__/__setitem__ ✅ │ inherited methods ✅
+  vtable dispatch ✅ │ special methods ✅ │ inherited methods ✅
   @property ✅ │ @staticmethod ✅ │ @classmethod ✅ │ traits ✅
+  isinstance() ✅ │ auto-narrowing ✅ │ IntEnum ✅
 
 Phase 4: Exception Handling     ███████████████  ~95% done
   try/except ✅ │ try/finally ✅ │ try/except/else ✅ │ raise ✅ │ custom exceptions
@@ -82,10 +85,10 @@ Phase 4: Exception Handling     ███████████████  ~
 Phase 5: Advanced Features      ████░░░░░░░░░░░  ~25% done
   generators ✅ (while/for-range/for-iter + yield) │ closures │ comprehensions │ map/filter
 
-Phase 6: Integration & Polish   █████████████░░  ~85% done
-  ESP32 modules ✅ (17 modules on ESP32-C6) │ RTuple optimization ✅ (57x speedup)
+Phase 6: Integration & Polish   ██████████████░  ~90% done
+  ESP32 modules ✅ (35 modules on ESP32-C6) │ RTuple optimization ✅ (57x speedup)
   list access optimization ✅ │ benchmarks ✅ (22 tests, 11.8x avg) │ Full IR pipeline ✅
-  504 tests ✅ │ type checking ✅ (strict by default) │ error messages │ docs
+  831 tests ✅ │ type checking ✅ (strict by default) │ error messages │ docs
 
 Phase 7: Type-Based Optimizations  ░░░░░░░░░░░░░░░  TODO (new!)
   native int arithmetic │ typed local variables │ typed list access
@@ -526,16 +529,16 @@ Tasks:
 - [x] Trait-typed parameters use `mp_load_attr()` for attribute access
 - [x] Trait-typed parameters use `mp_load_method()` for method calls
 
-### 3.6 Special Methods (Partial)
+### 3.6 Special Methods ✅ DONE
 
 Tasks:
-- [x] `__str__` / `__repr__` — user-defined methods wired to MicroPython print slot
-- [x] `__len__` — supported in `locals_dict`
-- [x] `__getitem__` / `__setitem__` — supported in `locals_dict`
-- [x] `__eq__` — auto-generated for `@dataclass`, field-by-field comparison
-- [ ] `__ne__` / `__lt__` / `__gt__` / `__le__` / `__ge__`
-- [ ] `__hash__`
-- [ ] `__iter__` / `__next__`
+- [x] `__str__` / `__repr__` -- user-defined methods wired to MicroPython print slot
+- [x] `__len__` -- supported in `locals_dict`
+- [x] `__getitem__` / `__setitem__` -- supported in `locals_dict`
+- [x] `__eq__` -- auto-generated for `@dataclass`, field-by-field comparison
+- [x] `__ne__` / `__lt__` / `__gt__` / `__le__` / `__ge__` -- comparison operators via binary_op slot
+- [x] `__hash__` -- custom hash via unary_op slot
+- [x] `__iter__` / `__next__` -- custom iterator protocol
 
 ### 3.7 Known Limitations & Future Improvements
 
@@ -544,23 +547,27 @@ Tasks:
 | ~~No `@property`~~ | ~~No getter/setter decorator support~~ | ✅ Resolved — full @property support |
 | ~~No `@staticmethod`/`@classmethod`~~ | ~~Only instance methods supported~~ | ✅ Resolved — both decorators supported |
 
-### 3.8 isinstance() Support (TODO)
+### 3.8 isinstance() Support ✅ DONE
 
-Type checking for concrete classes and traits.
+Type checking for concrete classes with automatic type narrowing.
 
 ```python
 # Concrete class check
 def is_person(obj: object) -> bool:
     return isinstance(obj, Person)
 
-# Trait check (polymorphism)
-def is_named(obj: object) -> bool:
-    return isinstance(obj, Named)  # Named is a trait
+# Automatic type narrowing
+def process(a: Animal) -> str:  # Animal is a trait
+    if isinstance(a, Dog):
+        return a.breed  # Direct struct access (narrowed)
+    return "unknown"
 ```
 
 Tasks:
-- [ ] Detect `isinstance(obj, Type)` calls in AST
-- [ ] Generate `mp_obj_is_type(obj, &type)` for concrete classes
+- [x] Detect `isinstance(obj, Type)` calls in AST
+- [x] Generate `mp_obj_is_type(obj, &type)` for concrete classes
+- [x] Automatic type narrowing after isinstance in if/elif branches
+- [x] Negated narrowing (`if not isinstance(...)` narrows in else)
 - [ ] Implement trait registry for `isinstance(obj, Trait)` checks
 - [ ] Handle `isinstance(obj, (A, B))` tuple form (lower priority)
 

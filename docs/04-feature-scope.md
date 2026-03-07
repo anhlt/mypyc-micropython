@@ -90,7 +90,10 @@ This document defines what Python features mypyc-micropython will support, parti
 | Single inheritance | ✅ Implemented | With vtable-based virtual dispatch |
 | Traits (`@trait`) | ✅ Implemented | Multiple inheritance via traits (one concrete base + N traits) |
 | `__str__`/`__repr__` | ✅ Implemented | Via MicroPython print slot |
-| `__eq__`/`__len__`/`__getitem__`/`__setitem__` | ✅ Implemented | Special methods |
+| `__eq__`/`__ne__`/`__lt__`/`__gt__`/`__le__`/`__ge__` | ✅ Implemented | Comparison special methods |
+| `__hash__` | ✅ Implemented | Custom hash support |
+| `__iter__`/`__next__` | ✅ Implemented | Custom iterator protocol |
+| `__len__`/`__getitem__`/`__setitem__` | ✅ Implemented | Container special methods |
 | `@dataclass` | ✅ Implemented | Auto-generated `__init__` and `__eq__` |
 
 ### Exception Handling ✅
@@ -125,13 +128,14 @@ This document defines what Python features mypyc-micropython will support, parti
 | `zip()` | ✅ Implemented | Via `mp_type_zip` |
 | `map()`/`filter()` | 📋 Planned | Phase 5 |
 | `sorted()` | ✅ Implemented | Via `mp_builtin_sorted_obj` |
-| `isinstance()` | 📋 Planned | Concrete classes + traits (see below) |
+| `isinstance()` | ✅ Implemented | Concrete classes + automatic type narrowing |
 | `type()` | 📋 Planned | Phase 3 |
 | `hasattr()`/`getattr()`/`setattr()` | 📋 Planned | Phase 3 |
 | `list()` | ✅ Implemented | Empty list constructor |
 | `dict()` | ✅ Implemented | Empty and copy constructor |
 | `tuple()` | ✅ Implemented | Empty and from-iterable constructor |
 | `set()` | ✅ Implemented | Empty and from-iterable constructor |
+| `IntEnum` | ✅ Implemented | Integer enumerations via `MP_ROM_INT` constants |
 
 ## Partially In-Scope Features
 
@@ -214,17 +218,32 @@ def gen_with_try():
         pass
 ```
 
-### isinstance() ⚠️ (Planned)
+### isinstance() ✅ (Implemented)
 
-Type checking builtin - planned with different behavior for concrete classes vs traits.
+Type checking builtin for concrete classes with automatic type narrowing.
 
-**Planned Support:**
+**Supported:**
 ```python
 # Concrete class check - simple type comparison
-isinstance(obj, Person)  # ✅ Will use mp_obj_is_type()
+isinstance(obj, Person)  # ✅ Uses mp_obj_is_type()
 
-# Trait check - requires runtime trait registry
-isinstance(obj, Named)   # ⚠️ More complex implementation needed
+# Automatic type narrowing after isinstance check
+def process(a: Animal) -> str:  # Animal is a trait
+    if isinstance(a, Dog):      # Narrows a to Dog
+        return a.breed          # Direct struct access (no mp_load_attr)
+    return "unknown"
+
+# Negated narrowing
+if not isinstance(a, Dog):
+    pass  # a is still Animal here
+else:
+    a.breed  # Narrowed to Dog in else branch
+
+# elif chains
+if isinstance(a, Dog):
+    a.breed
+elif isinstance(a, Cat):
+    a.indoor
 ```
 
 **Implementation:**
@@ -232,15 +251,18 @@ isinstance(obj, Named)   # ⚠️ More complex implementation needed
 | Check Type | C Implementation | Notes |
 |------------|------------------|-------|
 | Concrete class | `mp_obj_is_type(obj, &type)` | Fast pointer comparison |
-| Trait | Runtime trait lookup | Needs trait registry in type object |
+| Auto-narrowing | Compile-time struct access | After isinstance in if/elif |
 
-**NOT Planned:**
+**NOT Supported:**
 ```python
 # Tuple of types
-isinstance(obj, (A, B, C))  # ❌ Multiple types not supported initially
+isinstance(obj, (A, B, C))  # Not supported
+
+# Trait isinstance check (always returns false at runtime)
+isinstance(obj, MyTrait)  # Not supported - use concrete classes
 
 # Abstract base classes
-isinstance(obj, ABC)  # ❌ No ABC support
+isinstance(obj, ABC)  # No ABC support
 ```
 
 ### Decorators ⚠️
@@ -743,10 +765,10 @@ if (n := len(data)) > 10:
 |-------|----------|
 | **1 (Core)** | `for` loops ✅, `list` ✅, `tuple` ✅, `dict` ✅, `set` ✅, `range()` ✅, `len()` ✅, `print()` ✅ |
 | **2 (Functions)** | Default args ✅, `*args` ✅, `**kwargs` ✅, `bool()` ✅, `min()`/`max()` ✅, `sum()` ✅, `enumerate()` ✅, `zip()` ✅, `sorted()` ✅ |
-| **3 (Classes)** | Basic classes ✅, methods ✅, @dataclass ✅, single inheritance ✅, @property ✅, @staticmethod ✅, @classmethod ✅ |
+| **3 (Classes)** | Basic classes ✅, methods ✅, @dataclass ✅, single inheritance ✅, @property ✅, @staticmethod ✅, @classmethod ✅, traits ✅, isinstance() ✅, IntEnum ✅ |
 | **4 (Exceptions)** | `try`/`except`/`finally` ✅, `raise` ✅, custom exceptions |
 | **5 (Advanced)** | Simple generators ✅ (while/for-range/for-iter + yield), closures, `map()`/`filter()` |
-| **6 (Polish)** | Full IR pipeline ✅, RTuple optimization ✅ (47x speedup), list access optimization ✅, 504 tests ✅ |
+| **6 (Polish)** | Full IR pipeline ✅, RTuple optimization ✅ (47x speedup), list access optimization ✅, 831 tests ✅ |
 
 ## See Also
 
