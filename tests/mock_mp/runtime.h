@@ -31,6 +31,8 @@ typedef struct {
 
 static mp_obj_type_t mp_type_staticmethod __attribute__((unused)) = {0};
 static mp_obj_type_t mp_type_classmethod __attribute__((unused)) = {0};
+static mp_obj_type_t mp_type_int __attribute__((unused)) = {0};
+static mp_obj_type_t mp_type_bool __attribute__((unused)) = {0};
 
 typedef struct {
     mp_obj_t key;
@@ -839,8 +841,17 @@ static inline mp_obj_t mp_call_method_n_kw(size_t n_args, size_t n_kw, const mp_
     ({type_name *_o = (type_name *)calloc(1, sizeof(type_name)); \
       ((mp_obj_base_t *)_o)->type = (mp_obj_t)(type_ptr); _o;})
 
-        static inline bool mp_obj_is_type(mp_obj_t obj, const void *type) {
-    if (MP_OBJ_IS_SMALL_INT(obj) || mp_mock_is_special_const(obj)) {
+static inline bool mp_obj_is_type(mp_obj_t obj, const void *type) {
+    /* Handle tagged small ints: isinstance(1, int) should be true */
+    if (MP_OBJ_IS_SMALL_INT(obj)) {
+        return type == (const void *)&mp_type_int;
+    }
+    /* Handle special constants: isinstance(True, bool) should be true */
+    if (mp_mock_is_special_const(obj)) {
+        if ((obj == mp_const_true || obj == mp_const_false)
+            && type == (const void *)&mp_type_bool) {
+            return true;
+        }
         return false;
     }
     mp_obj_base_t *base = (mp_obj_base_t *)obj;

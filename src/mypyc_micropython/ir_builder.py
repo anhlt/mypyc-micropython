@@ -1296,7 +1296,7 @@ class IRBuilder:
 
     def _build_isinstance(
         self, expr: ast.Call, locals_: list[str]
-    ) -> tuple[IsInstanceIR, list]:
+    ) -> tuple[ValueIR, list]:
         """Build isinstance(obj, ClassName) -> IsInstanceIR.
 
         Only supports compile-time-known concrete classes.
@@ -1310,7 +1310,9 @@ class IRBuilder:
 
         # The second argument must be a known class name
         if not isinstance(class_arg, ast.Name):
-            # Fallback: not a simple name, treat as generic call
+            # Unsupported: isinstance with non-Name second arg (e.g., tuple of types)
+            # With type_check=True, mypy will catch this; with type_check=False,
+            # we conservatively return false rather than silently generating wrong code.
             return ConstIR(ir_type=IRType.BOOL, value=False), obj_prelude
 
         class_name = class_arg.id
@@ -1337,12 +1339,15 @@ class IRBuilder:
                     c_type_name=builtin_types[class_name],
                     obj_prelude=obj_prelude,
                 ), obj_prelude
-            # Truly unknown class - return false (will be caught by type checker)
+            # Unknown class not in compiled module -- with type_check=True, mypy
+            # will report an error. With type_check=False, return false to avoid
+            # generating a reference to an undefined C type.
             return ConstIR(ir_type=IRType.BOOL, value=False), obj_prelude
 
         class_ir = self._known_classes[class_name]
 
-        # Traits cannot be used with isinstance (no single type object)
+        # Traits have no single type object; isinstance(obj, Trait) cannot work
+        # at runtime. Return false with a clear comment.
         if class_ir.is_trait:
             return ConstIR(ir_type=IRType.BOOL, value=False), obj_prelude
 
