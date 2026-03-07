@@ -1701,6 +1701,7 @@ handle = task_mgr.spawn(some_coro(), on_complete=Msg.DONE)
 task_mgr.cancel(handle.task_id)
 await task_mgr.cancel_all()
 
+```
 ---
 
 ## File Structure
