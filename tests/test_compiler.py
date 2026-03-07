@@ -6140,7 +6140,6 @@ async def ping() -> None:
         assert "mp_call_function_0(_fn)" in result
 
 
-
 class TestIsInstance:
     """Tests for isinstance() builtin support."""
 
@@ -6175,6 +6174,9 @@ def pet_cat(obj: object) -> str:
     def test_isinstance_with_trait(self):
         """Test isinstance with @trait class returns False (traits have no type)."""
         source = """
+from mypy_extensions import trait
+
+@trait
 class Animal:
     def speak(self) -> str:
         pass
@@ -6216,8 +6218,8 @@ def check_dog(obj: object) -> bool:
         result = compile_source(source, "test", type_check=False)
         assert "mp_obj_is_type" in result
         assert "test_Dog_type" in result
-        # Should use Dog type, not Animal type
-        assert "test_Animal_type" not in result or "test_Dog_type" in result
+        # isinstance should reference Dog type, not Animal type
+        assert "mp_obj_is_type(obj, &test_Dog_type)" in result
 
     def test_isinstance_builtin_int(self):
         """Test isinstance(x, int) uses mp_type_int."""
@@ -6426,3 +6428,206 @@ def process(msg: object, count: int) -> int:
         # Each branch should auto-narrow to access the correct field
         assert '((test_Increment_obj_t *)MP_OBJ_TO_PTR(msg))->amount' in result
         assert '((test_SetValue_obj_t *)MP_OBJ_TO_PTR(msg))->value' in result
+
+
+class TestEnumOperations:
+    """Tests for enum support (IntEnum/Enum -> module-level integer constants)."""
+
+    def test_basic_int_enum(self):
+        """Test basic IntEnum compilation."""
+        source = '''
+from enum import IntEnum
+
+class Color(IntEnum):
+    RED = 1
+    GREEN = 2
+    BLUE = 3
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_ROM_INT(1)" in result
+        assert "MP_ROM_INT(2)" in result
+        assert "MP_ROM_INT(3)" in result
+        assert "MP_QSTR_Color_RED" in result
+        assert "MP_QSTR_Color_GREEN" in result
+        assert "MP_QSTR_Color_BLUE" in result
+
+    def test_enum_with_annotated_assignments(self):
+        """Test enum with type-annotated members."""
+        source = '''
+from enum import IntEnum
+
+class Status(IntEnum):
+    OK: int = 200
+    NOT_FOUND: int = 404
+    ERROR: int = 500
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_QSTR_Status_OK" in result
+        assert "MP_ROM_INT(200)" in result
+        assert "MP_QSTR_Status_NOT_FOUND" in result
+        assert "MP_ROM_INT(404)" in result
+        assert "MP_QSTR_Status_ERROR" in result
+        assert "MP_ROM_INT(500)" in result
+
+    def test_enum_member_access_in_function(self):
+        """Test enum member access resolves to compile-time constant."""
+        source = '''
+from enum import IntEnum
+
+class Color(IntEnum):
+    RED = 1
+    GREEN = 2
+    BLUE = 3
+
+def get_red() -> int:
+    return Color.RED
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Color.RED should resolve to compile-time constant 1
+        assert "mp_obj_new_int(1)" in result
+
+    def test_enum_member_in_comparison(self):
+        """Test enum member used in comparison."""
+        source = '''
+from enum import IntEnum
+
+class Direction(IntEnum):
+    UP = 0
+    DOWN = 1
+    LEFT = 2
+    RIGHT = 3
+
+def is_vertical(d: int) -> bool:
+    return d == Direction.UP or d == Direction.DOWN
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Direction.UP/DOWN should resolve to 0/1
+        assert "(d == 0)" in result or "(d ==0)" in result or "d == 0" in result
+
+    def test_enum_negative_values(self):
+        """Test enum with negative values."""
+        source = '''
+from enum import IntEnum
+
+class Offset(IntEnum):
+    NEGATIVE = -10
+    ZERO = 0
+    POSITIVE = 10
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_ROM_INT(-10)" in result
+        assert "MP_ROM_INT(0)" in result
+        assert "MP_ROM_INT(10)" in result
+
+    def test_enum_bitwise_values(self):
+        """Test enum with bitwise shift expressions."""
+        source = '''
+from enum import IntEnum
+
+class Permission(IntEnum):
+    READ = 1 << 0
+    WRITE = 1 << 1
+    EXECUTE = 1 << 2
+    ALL = 7
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_QSTR_Permission_READ" in result
+        assert "MP_ROM_INT(1)" in result
+        assert "MP_QSTR_Permission_WRITE" in result
+        assert "MP_ROM_INT(2)" in result
+        assert "MP_QSTR_Permission_EXECUTE" in result
+        assert "MP_ROM_INT(4)" in result
+        assert "MP_ROM_INT(7)" in result
+
+    def test_enum_not_treated_as_class(self):
+        """Test that enum classes do NOT generate struct/type definitions."""
+        source = '''
+from enum import IntEnum
+
+class Color(IntEnum):
+    RED = 1
+    GREEN = 2
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should NOT have class struct or type object
+        assert "Color_obj_t" not in result
+        assert "Color_type" not in result
+        assert "Color_make_new" not in result
+
+    def test_enum_with_regular_class(self):
+        """Test enum coexists with regular classes."""
+        source = '''
+from enum import IntEnum
+
+class Color(IntEnum):
+    RED = 1
+    GREEN = 2
+
+class Point:
+    x: int
+    y: int
+    def __init__(self, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should have enum entries
+        assert "MP_QSTR_Color_RED" in result
+        assert "MP_ROM_INT(1)" in result
+        # Should also have class struct
+        assert "Point_obj_t" in result
+        assert "Point_type" in result
+
+    def test_enum_multiple_enums(self):
+        """Test multiple enum classes in one module."""
+        source = '''
+from enum import IntEnum
+
+class Color(IntEnum):
+    RED = 1
+    GREEN = 2
+
+class Direction(IntEnum):
+    UP = 0
+    DOWN = 1
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_QSTR_Color_RED" in result
+        assert "MP_QSTR_Color_GREEN" in result
+        assert "MP_QSTR_Direction_UP" in result
+        assert "MP_QSTR_Direction_DOWN" in result
+
+    def test_enum_bare_enum_base(self):
+        """Test enum using bare Enum (not IntEnum)."""
+        source = '''
+from enum import Enum
+
+class State(Enum):
+    IDLE = 0
+    RUNNING = 1
+    STOPPED = 2
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_QSTR_State_IDLE" in result
+        assert "MP_ROM_INT(0)" in result
+        assert "MP_QSTR_State_RUNNING" in result
+        assert "MP_ROM_INT(1)" in result
+
+    def test_enum_used_as_function_arg(self):
+        """Test passing enum member as function argument."""
+        source = '''
+from enum import IntEnum
+
+class Mode(IntEnum):
+    FAST = 0
+    SLOW = 1
+
+def set_mode(mode: int) -> int:
+    return mode
+
+def use_enum() -> int:
+    return set_mode(Mode.FAST)
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Mode.FAST should resolve to 0
+        assert "mp_obj_new_int(0)" in result

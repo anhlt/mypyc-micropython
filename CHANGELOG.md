@@ -18,7 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 15 new isinstance unit tests, 3 C runtime integration tests
   - `isinstance_demo.py` example with shapes and MVU message patterns
   - Device tests for isinstance on ESP32-C6
-### Added
+- `IntEnum`/`Enum` support: compile Python enums to module-level integer constants
+  - Enum members become `MP_ROM_INT` entries in module globals table
+  - Compile-time resolution of enum member access (e.g., `Color.RED` -> `1`)
+  - Supports `IntEnum`, `Enum`, `Flag`, `IntFlag` base classes
+  - Bitwise expressions in member values (e.g., `READ = 1 << 0`, `ALL = READ | WRITE`)
+  - Forward references to previously-defined members (e.g., `ALL = READ | WRITE | EXECUTE`)
+  - `EnumIR` dataclass following C bindings `CEnumDef` pattern
+  - IR visualizer support for enum printing/dumping
+  - 11 compiler tests, 2 C runtime tests, 24 device tests
+  - Example: `examples/enum_demo.py`
 - Trait system for mypyc-style multiple inheritance
   - `@trait` decorator support (both `mypy_extensions.trait` and simple `@trait`)
   - ONE concrete base class + multiple traits allowed

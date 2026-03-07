@@ -364,6 +364,16 @@ class ModuleEmitter:
                 f"    {{ MP_ROM_QSTR(MP_QSTR_{class_ir.name}), MP_ROM_PTR(&{class_ir.c_name}_type) }},"
             )
 
+        # Export enum members as module-level integer constants
+        # Following C bindings pattern: EnumName_MEMBER = value
+        for enum_name in self.module_ir.enum_order:
+            enum_ir = self.module_ir.enums[enum_name]
+            for member_name, member_value in enum_ir.values.items():
+                qstr_name = f"{enum_ir.name}_{member_name}"
+                lines.append(
+                    f"    {{ MP_ROM_QSTR(MP_QSTR_{qstr_name}), MP_ROM_INT({member_value}) }},"
+                )
+
         lines.append("};")
         lines.append(
             f"MP_DEFINE_CONST_DICT({self.c_name}_module_globals, {self.c_name}_module_globals_table);"
@@ -395,6 +405,15 @@ class ModuleEmitter:
             lines.append(
                 f"    {{ MP_ROM_QSTR(MP_QSTR_{class_ir.name}), MP_ROM_PTR(&{class_ir.c_name}_type) }},"
             )
+
+        # Export enum members
+        for enum_name in module_ir.enum_order:
+            enum_ir = module_ir.enums[enum_name]
+            for member_name, member_value in enum_ir.values.items():
+                qstr_name = f"{enum_ir.name}_{member_name}"
+                lines.append(
+                    f"    {{ MP_ROM_QSTR(MP_QSTR_{qstr_name}), MP_ROM_INT({member_value}) }},"
+                )
 
         # Add child sub-package references (for nested packages)
         if children:
@@ -456,6 +475,15 @@ class ModuleEmitter:
             lines.append(
                 f"    {{ MP_ROM_QSTR(MP_QSTR_{class_ir.name}), MP_ROM_PTR(&{class_ir.c_name}_type) }},"
             )
+
+        # Export enum members
+        for enum_name in self.module_ir.enum_order:
+            enum_ir = self.module_ir.enums[enum_name]
+            for member_name, member_value in enum_ir.values.items():
+                qstr_name = f"{enum_ir.name}_{member_name}"
+                lines.append(
+                    f"    {{ MP_ROM_QSTR(MP_QSTR_{qstr_name}), MP_ROM_INT({member_value}) }},"
+                )
 
         for submodule in submodules:
             submodule_name = sanitize_name(submodule.name)
