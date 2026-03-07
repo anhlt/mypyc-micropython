@@ -18,7 +18,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 15 new isinstance unit tests, 3 C runtime integration tests
   - `isinstance_demo.py` example with shapes and MVU message patterns
   - Device tests for isinstance on ESP32-C6
-### Added
 - Trait system for mypyc-style multiple inheritance
   - `@trait` decorator support (both `mypy_extensions.trait` and simple `@trait`)
   - ONE concrete base class + multiple traits allowed
