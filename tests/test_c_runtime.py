@@ -2998,3 +2998,135 @@ int main(void) {
     stdout = compile_and_run(source, "test", test_main_c)
     lines = stdout.strip().split("\n")
     assert lines == ["15", "42", "0"]
+
+
+def test_c_auto_narrow_basic(compile_and_run):
+    """Auto-narrowing: isinstance + direct field access without manual annotation."""
+    source = '''
+class Dog:
+    breed: str
+    def __init__(self, breed: str) -> None:
+        self.breed = breed
+
+class Cat:
+    color: str
+    def __init__(self, color: str) -> None:
+        self.color = color
+
+def describe(obj: object) -> str:
+    if isinstance(obj, Dog):
+        return obj.breed
+    elif isinstance(obj, Cat):
+        return obj.color
+    return "unknown"
+'''
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t dog_args[] = { mp_obj_new_str("Labrador", 8) };
+    mp_obj_t dog = test_Dog_make_new(&test_Dog_type, 1, 0, dog_args);
+
+    mp_obj_t cat_args[] = { mp_obj_new_str("orange", 6) };
+    mp_obj_t cat = test_Cat_make_new(&test_Cat_type, 1, 0, cat_args);
+
+    mp_obj_t r1 = test_describe(dog);
+    printf("%s\\n", mp_obj_str_get_str(r1));
+
+    mp_obj_t r2 = test_describe(cat);
+    printf("%s\\n", mp_obj_str_get_str(r2));
+
+    return 0;
+}
+"""
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().split("\n")
+    assert lines == ["Labrador", "orange"]
+
+
+def test_c_auto_narrow_mvu_no_annotation(compile_and_run):
+    """MVU dispatch with auto-narrowing -- no manual type annotations needed."""
+    source = '''
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Increment:
+    amount: int
+
+@dataclass(frozen=True)
+class SetValue:
+    value: int
+
+class Reset:
+    pass
+
+def process(msg: object, count: int) -> int:
+    if isinstance(msg, Increment):
+        return count + msg.amount
+    elif isinstance(msg, SetValue):
+        return msg.value
+    elif isinstance(msg, Reset):
+        return 0
+    return count
+'''
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t inc_args[] = { mp_obj_new_int(5) };
+    mp_obj_t inc = test_Increment_make_new(&test_Increment_type, 1, 0, inc_args);
+
+    mp_obj_t sv_args[] = { mp_obj_new_int(42) };
+    mp_obj_t sv = test_SetValue_make_new(&test_SetValue_type, 1, 0, sv_args);
+
+    mp_obj_t reset = test_Reset_make_new(&test_Reset_type, 0, 0, NULL);
+
+    mp_obj_t r1 = test_process(inc, mp_obj_new_int(10));
+    printf("%ld\\n", (long)mp_obj_get_int(r1));
+
+    mp_obj_t r2 = test_process(sv, mp_obj_new_int(10));
+    printf("%ld\\n", (long)mp_obj_get_int(r2));
+
+    mp_obj_t r3 = test_process(reset, mp_obj_new_int(10));
+    printf("%ld\\n", (long)mp_obj_get_int(r3));
+
+    return 0;
+}
+"""
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().split("\n")
+    assert lines == ["15", "42", "0"]
+
+
+def test_c_auto_narrow_negated(compile_and_run):
+    """Auto-narrowing in else branch via not isinstance()."""
+    source = '''
+class Dog:
+    breed: str
+    def __init__(self, breed: str) -> None:
+        self.breed = breed
+
+def get_breed(obj: object) -> str:
+    if not isinstance(obj, Dog):
+        return "not a dog"
+    else:
+        return obj.breed
+'''
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t dog_args[] = { mp_obj_new_str("Poodle", 6) };
+    mp_obj_t dog = test_Dog_make_new(&test_Dog_type, 1, 0, dog_args);
+
+    mp_obj_t r1 = test_get_breed(dog);
+    printf("%s\\n", mp_obj_str_get_str(r1));
+
+    return 0;
+}
+"""
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "Poodle"

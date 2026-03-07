@@ -3,9 +3,10 @@
 Demonstrates compile-time isinstance() checks that emit mp_obj_is_type()
 for efficient type dispatch. Covers:
 - Simple class hierarchy type checking
-- Type narrowing via annotated assignment
+- Automatic type narrowing (no manual annotations needed)
+- Manual type narrowing via annotated assignment
 - Dataclass variants (MVU message pattern)
-- isinstance with builtin types (int, str)
+- Negated isinstance
 """
 
 from __future__ import annotations
@@ -49,27 +50,25 @@ def is_rectangle(shape: object) -> bool:
     return isinstance(shape, Rectangle)
 
 
-# -- Type narrowing with isinstance ------------------------------------------
+
+# -- Automatic type narrowing (no manual annotations needed) -----------------
 
 
 def describe_shape(shape: object) -> str:
+    """Auto-narrowing: access fields directly after isinstance check."""
     if isinstance(shape, Circle):
-        c: Circle = shape
-        return c.name
+        return shape.name
     elif isinstance(shape, Rectangle):
-        r: Rectangle = shape
-        return r.name
+        return shape.name
     return "unknown"
 
 
 def get_area(shape: object) -> int:
-    """Compute area using isinstance + type narrowing."""
+    """Compute area using isinstance + auto-narrowing."""
     if isinstance(shape, Circle):
-        c: Circle = shape
-        return c.radius * c.radius * 3
+        return shape.radius * shape.radius * 3
     elif isinstance(shape, Rectangle):
-        r: Rectangle = shape
-        return r.width * r.height
+        return shape.width * shape.height
     return 0
 
 
@@ -91,13 +90,11 @@ class Reset:
 
 
 def process_msg(msg: object, count: int) -> int:
-    """Process MVU-style messages with isinstance dispatch."""
+    """Process MVU-style messages with auto-narrowed isinstance dispatch."""
     if isinstance(msg, Increment):
-        inc: Increment = msg
-        return count + inc.amount
+        return count + msg.amount
     elif isinstance(msg, SetValue):
-        sv: SetValue = msg
-        return sv.value
+        return msg.value
     elif isinstance(msg, Reset):
         return 0
     return count

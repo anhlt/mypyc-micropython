@@ -6284,3 +6284,145 @@ def not_a_dog(obj: object) -> bool:
         assert "test_Dog_type" in result
         # Should have negation logic
         assert "!" in result or "not" in result.lower()
+
+
+class TestAutoNarrowing:
+    """Test automatic type narrowing after isinstance() checks."""
+
+    def test_auto_narrow_basic(self):
+        """isinstance(a, Dog) should auto-narrow a to Dog in if-body."""
+        source = '''
+class Animal:
+    name: str
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+class Dog(Animal):
+    breed: str
+    def __init__(self, name: str, breed: str) -> None:
+        self.name = name
+        self.breed = breed
+
+def get_breed(a: object) -> str:
+    if isinstance(a, Dog):
+        return a.breed
+    return "unknown"
+'''
+        result = compile_source(source, 'test')
+        # Direct struct access (auto-narrowed) -- no manual 'd: Dog = a' needed
+        assert '((test_Dog_obj_t *)MP_OBJ_TO_PTR(a))->breed' in result
+
+    def test_auto_narrow_no_leak(self):
+        """Narrowing should not leak outside the if-block."""
+        source = '''
+class Dog:
+    breed: str
+    def __init__(self, breed: str) -> None:
+        self.breed = breed
+
+def check(a: object) -> str:
+    if isinstance(a, Dog):
+        x: str = a.breed
+    return str(a)
+'''
+        result = compile_source(source, 'test', type_check=False)
+        # Inside if: direct struct access
+        assert '((test_Dog_obj_t *)MP_OBJ_TO_PTR(a))->breed' in result
+        # a.breed accessed only once via direct struct (not leaked)
+        assert result.count('((test_Dog_obj_t *)MP_OBJ_TO_PTR(a))->breed') == 1
+
+    def test_auto_narrow_negated(self):
+        """not isinstance(a, Dog) should narrow in the else branch."""
+        source = '''
+class Dog:
+    breed: str
+    def __init__(self, breed: str) -> None:
+        self.breed = breed
+
+def get_breed_negated(a: object) -> str:
+    if not isinstance(a, Dog):
+        return "not a dog"
+    else:
+        return a.breed
+'''
+        result = compile_source(source, 'test', type_check=False)
+        # In the else branch, a should be narrowed to Dog
+        assert '((test_Dog_obj_t *)MP_OBJ_TO_PTR(a))->breed' in result
+
+    def test_auto_narrow_elif_chain(self):
+        """Each elif branch should narrow independently."""
+        source = '''
+class Dog:
+    breed: str
+    def __init__(self, breed: str) -> None:
+        self.breed = breed
+
+class Cat:
+    color: str
+    def __init__(self, color: str) -> None:
+        self.color = color
+
+def describe(a: object) -> str:
+    if isinstance(a, Dog):
+        return a.breed
+    elif isinstance(a, Cat):
+        return a.color
+    return "unknown"
+'''
+        result = compile_source(source, 'test', type_check=False)
+        assert '((test_Dog_obj_t *)MP_OBJ_TO_PTR(a))->breed' in result
+        assert '((test_Cat_obj_t *)MP_OBJ_TO_PTR(a))->color' in result
+
+    def test_auto_narrow_method_context(self):
+        """isinstance narrowing works inside class methods."""
+        source = '''
+class Shape:
+    name: str
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+class Circle(Shape):
+    radius: int
+    def __init__(self, radius: int) -> None:
+        self.name = "circle"
+        self.radius = radius
+
+class Checker:
+    def check(self, s: object) -> int:
+        if isinstance(s, Circle):
+            return s.radius
+        return 0
+'''
+        result = compile_source(source, 'test', type_check=False)
+        # Method context should also auto-narrow
+        assert '((test_Circle_obj_t *)MP_OBJ_TO_PTR(s))->radius' in result
+
+    def test_auto_narrow_mvu_pattern(self):
+        """MVU-style dispatch without manual narrowing annotations."""
+        source = '''
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Increment:
+    amount: int
+
+@dataclass(frozen=True)
+class SetValue:
+    value: int
+
+class Reset:
+    pass
+
+def process(msg: object, count: int) -> int:
+    if isinstance(msg, Increment):
+        return count + msg.amount
+    elif isinstance(msg, SetValue):
+        return msg.value
+    elif isinstance(msg, Reset):
+        return 0
+    return count
+'''
+        result = compile_source(source, 'test', type_check=False)
+        # Each branch should auto-narrow to access the correct field
+        assert '((test_Increment_obj_t *)MP_OBJ_TO_PTR(msg))->amount' in result
+        assert '((test_SetValue_obj_t *)MP_OBJ_TO_PTR(msg))->value' in result

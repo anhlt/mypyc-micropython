@@ -813,15 +813,15 @@ t("is_circle(rect)", isinstance_demo.is_circle(r), "False")
 t("is_rectangle(rect)", isinstance_demo.is_rectangle(r), "True")
 t("is_rectangle(circle)", isinstance_demo.is_rectangle(c), "False")
 
-# Type narrowing + field access
+# Auto-narrowing: field access directly after isinstance (no manual annotation)
 t("describe circle", isinstance_demo.describe_shape(c), "circle")
 t("describe rect", isinstance_demo.describe_shape(r), "rectangle")
 
-# Area calculation with narrowing
+# Auto-narrowing: area calculation with direct field access
 t("area circle r=5", isinstance_demo.get_area(c), "75")
 t("area rect 3x4", isinstance_demo.get_area(r), "12")
 
-# Dataclass variant dispatch (MVU pattern)
+# Auto-narrowing: MVU dataclass variant dispatch
 inc = isinstance_demo.Increment(5)
 sv = isinstance_demo.SetValue(42)
 reset = isinstance_demo.Reset()
