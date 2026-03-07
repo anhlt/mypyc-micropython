@@ -1801,6 +1801,7 @@ docs/
 ```python
 """Counter application demonstrating MVU pattern."""
 from dataclasses import dataclass
+from enum import IntEnum
 from lvgl_mvu import App, Program, Cmd, Widget
 from lvgl_mvu.dsl import Screen, VStack, Label, Button, Slider
 from lvgl_mvu.attrs import LvAlign
@@ -1820,11 +1821,11 @@ class Model:
 # Messages
 # =============================================================================
 
-class Msg:
-    INCREMENT = "increment"
-    DECREMENT = "decrement"
-    RESET = "reset"
-    SET_STEP = "set_step"  # payload: int
+class Msg(IntEnum):
+    INCREMENT = 1
+    DECREMENT = 2
+    RESET = 3
+    SET_STEP = 4  # payload: int
 
 # =============================================================================
 # Init
@@ -1919,37 +1920,39 @@ if __name__ == "__main__":
 ```python
 """Multi-screen navigation demo."""
 from dataclasses import dataclass
+from enum import IntEnum
 from lvgl_mvu import App, Program, Cmd, Widget
 from lvgl_mvu.dsl import Screen, VStack, Label, Button
 from lvgl_mvu.navigation import NavCmd
 
 # Screens
-SCREEN_HOME = 0
-SCREEN_SETTINGS = 1
-SCREEN_ABOUT = 2
+class ScreenId(IntEnum):
+    HOME = 0
+    SETTINGS = 1
+    ABOUT = 2
 
 @dataclass(frozen=True)
 class Model:
     screen: int
     settings_value: int
 
-class Msg:
-    GO_HOME = "go_home"
-    GO_SETTINGS = "go_settings"
-    GO_ABOUT = "go_about"
-    BACK = "back"
-    SET_VALUE = "set_value"
+class Msg(IntEnum):
+    GO_HOME = 1
+    GO_SETTINGS = 2
+    GO_ABOUT = 3
+    BACK = 4
+    SET_VALUE = 5
 
 def init() -> tuple[Model, Cmd]:
-    return Model(screen=SCREEN_HOME, settings_value=50), Cmd.none()
+    return Model(screen=ScreenId.HOME, settings_value=50), Cmd.none()
 
 def update(msg: object, model: Model) -> tuple[Model, Cmd]:
     if msg == Msg.GO_SETTINGS:
-        return Model(SCREEN_SETTINGS, model.settings_value), NavCmd.push(SCREEN_SETTINGS)
+        return Model(ScreenId.SETTINGS, model.settings_value), NavCmd.push(ScreenId.SETTINGS)
     elif msg == Msg.GO_ABOUT:
-        return Model(SCREEN_ABOUT, model.settings_value), NavCmd.push(SCREEN_ABOUT)
+        return Model(ScreenId.ABOUT, model.settings_value), NavCmd.push(ScreenId.ABOUT)
     elif msg == Msg.GO_HOME:
-        return Model(SCREEN_HOME, model.settings_value), NavCmd.replace(SCREEN_HOME)
+        return Model(ScreenId.HOME, model.settings_value), NavCmd.replace(ScreenId.HOME)
     elif msg == Msg.BACK:
         return model, NavCmd.pop()
     elif isinstance(msg, tuple) and msg[0] == Msg.SET_VALUE:
@@ -1957,9 +1960,9 @@ def update(msg: object, model: Model) -> tuple[Model, Cmd]:
     return model, Cmd.none()
 
 def view(model: Model) -> Widget:
-    if model.screen == SCREEN_HOME:
+    if model.screen == ScreenId.HOME:
         return view_home(model)
-    elif model.screen == SCREEN_SETTINGS:
+    elif model.screen == ScreenId.SETTINGS:
         return view_settings(model)
     else:
         return view_about(model)
@@ -1999,6 +2002,7 @@ def view_about(model: Model) -> Widget:
 ```python
 """Async HTTP fetch demo with loading states."""
 from dataclasses import dataclass
+from enum import IntEnum
 from lvgl_mvu import AsyncApp, AsyncProgram, Cmd, AsyncCmd, Widget
 from lvgl_mvu.dsl import Screen, VStack, HStack, Label, Button, Spinner
 import asyncio
@@ -2017,11 +2021,11 @@ class Model:
 # Messages
 # =============================================================================
 
-class Msg:
-    FETCH_DATA = "fetch_data"
-    DATA_RECEIVED = "data_received"  # payload: str
-    FETCH_ERROR = "fetch_error"      # payload: str
-    CLEAR = "clear"
+class Msg(IntEnum):
+    FETCH_DATA = 1
+    DATA_RECEIVED = 2  # payload: str
+    FETCH_ERROR = 3    # payload: str
+    CLEAR = 4
 
 # =============================================================================
 # Init
