@@ -17,7 +17,7 @@ build/
 _site/
 
 # Generated C files (keep examples for reference)
-# usermod_*/
+examples/usermod_*/
 
 # IDE
 .idea/
