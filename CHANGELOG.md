@@ -39,8 +39,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Trait-typed parameter attribute access now uses `mp_load_attr()` instead of direct struct access
   - Prevents undefined behavior when implementing classes have different memory layouts
-
-
 ### Added
 - Cross-module external C library call support (`CLibCallIR`, `CLibEnumIR`)
   - Compile-time resolution of `import lvgl as lv; lv.func()` to direct C wrapper calls
