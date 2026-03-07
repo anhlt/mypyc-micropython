@@ -33,6 +33,7 @@ from .ir import (
     IfIR,
     InstrIR,
     IRType,
+    IsInstanceIR,
     MethodIR,
     ModuleAttrIR,
     ModuleCallIR,
@@ -545,6 +546,8 @@ class BaseEmitter:
             return self._emit_unaryop(value, native)
         elif isinstance(value, CompareIR):
             return self._emit_compare(value, native)
+        elif isinstance(value, IsInstanceIR):
+            return self._emit_isinstance(value)
         elif isinstance(value, CallIR):
             return self._emit_call(value, native)
         elif isinstance(value, IfExprIR):
@@ -701,6 +704,12 @@ class BaseEmitter:
         if len(parts) > 1:
             return "(" + " && ".join(parts) + ")", "bool"
         return parts[0], "bool"
+
+    def _emit_isinstance(self, node: IsInstanceIR) -> tuple[str, str]:
+        """Emit isinstance(obj, ClassName) as mp_obj_is_type() check."""
+        obj_expr, obj_type = self._emit_expr(node.obj)
+        boxed_obj = self._box_value(obj_expr, obj_type)
+        return f"mp_obj_is_type({boxed_obj}, &{node.c_type_name})", "bool"
 
     def _emit_call(self, call: CallIR, native: bool = False) -> tuple[str, str]:
         if call.is_builtin:

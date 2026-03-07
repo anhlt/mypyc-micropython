@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `isinstance()` builtin support for compile-time type checking
+  - `IsInstanceIR` node in IR for representing isinstance checks
+  - Emits `mp_obj_is_type()` C calls for efficient runtime type dispatch
+  - Type narrowing via annotated assignment after isinstance checks
+  - Supports class hierarchies, traits, and `@dataclass` variants
+  - MVU-style sealed trait message dispatch pattern (isinstance + narrowing)
+  - Negated isinstance (`not isinstance(x, T)`) support
+  - 15 new isinstance unit tests, 3 C runtime integration tests
+  - `isinstance_demo.py` example with shapes and MVU message patterns
+  - Device tests for isinstance on ESP32-C6
 - `IntEnum`/`Enum` support: compile Python enums to module-level integer constants
   - Enum members become `MP_ROM_INT` entries in module globals table
   - Compile-time resolution of enum member access (e.g., `Color.RED` -> `1`)
@@ -18,9 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - IR visualizer support for enum printing/dumping
   - 11 compiler tests, 2 C runtime tests, 24 device tests
   - Example: `examples/enum_demo.py`
-
-
-### Added
 - Trait system for mypyc-style multiple inheritance
   - `@trait` decorator support (both `mypy_extensions.trait` and simple `@trait`)
   - ONE concrete base class + multiple traits allowed
@@ -32,8 +39,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Trait-typed parameter attribute access now uses `mp_load_attr()` instead of direct struct access
   - Prevents undefined behavior when implementing classes have different memory layouts
-
-
 ### Added
 - Cross-module external C library call support (`CLibCallIR`, `CLibEnumIR`)
   - Compile-time resolution of `import lvgl as lv; lv.func()` to direct C wrapper calls

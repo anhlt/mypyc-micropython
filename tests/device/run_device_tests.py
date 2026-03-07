@@ -800,6 +800,44 @@ result = asyncio.run(async_demo.countdown_with_delay(5))
 t("countdown_with_delay(5)", result, "0")
 
 
+# ---- isinstance_demo ----
+suite("isinstance_demo")
+import isinstance_demo
+
+# Simple type checking
+c = isinstance_demo.Circle(5)
+r = isinstance_demo.Rectangle(3, 4)
+
+t("is_circle(circle)", isinstance_demo.is_circle(c), "True")
+t("is_circle(rect)", isinstance_demo.is_circle(r), "False")
+t("is_rectangle(rect)", isinstance_demo.is_rectangle(r), "True")
+t("is_rectangle(circle)", isinstance_demo.is_rectangle(c), "False")
+
+# Auto-narrowing: field access directly after isinstance (no manual annotation)
+t("describe circle", isinstance_demo.describe_shape(c), "circle")
+t("describe rect", isinstance_demo.describe_shape(r), "rectangle")
+
+# Auto-narrowing: area calculation with direct field access
+t("area circle r=5", isinstance_demo.get_area(c), "75")
+t("area rect 3x4", isinstance_demo.get_area(r), "12")
+
+# Auto-narrowing: MVU dataclass variant dispatch
+inc = isinstance_demo.Increment(5)
+sv = isinstance_demo.SetValue(42)
+reset = isinstance_demo.Reset()
+
+t("process Increment", isinstance_demo.process_msg(inc, 10), "15")
+t("process SetValue", isinstance_demo.process_msg(sv, 10), "42")
+t("process Reset", isinstance_demo.process_msg(reset, 10), "0")
+
+# Negated isinstance
+t("not_circle(rect)", isinstance_demo.is_not_circle(r), "True")
+t("not_circle(circle)", isinstance_demo.is_not_circle(c), "False")
+
+# elif chain
+t("sides circle", isinstance_demo.shape_sides(c), "0")
+t("sides rect", isinstance_demo.shape_sides(r), "4")
+
 # ---- enum_demo ----
 suite("enum_demo")
 import enum_demo

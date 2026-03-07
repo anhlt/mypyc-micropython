@@ -6140,6 +6140,296 @@ async def ping() -> None:
         assert "mp_call_function_0(_fn)" in result
 
 
+class TestIsInstance:
+    """Tests for isinstance() builtin support."""
+
+    def test_isinstance_simple_class(self):
+        """Test isinstance(obj, ClassName) generates mp_obj_is_type."""
+        source = """
+class Dog:
+    name: str
+
+def check_dog(obj: object) -> bool:
+    return isinstance(obj, Dog)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_obj_is_type" in result
+        assert "test_Dog_type" in result
+
+    def test_isinstance_in_if(self):
+        """Test isinstance in if statement."""
+        source = """
+class Cat:
+    age: int
+
+def pet_cat(obj: object) -> str:
+    if isinstance(obj, Cat):
+        return "meow"
+    return "unknown"
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "if (mp_obj_is_type" in result
+        assert "test_Cat_type" in result
+
+    def test_isinstance_with_trait(self):
+        """Test isinstance with @trait class returns False (traits have no type)."""
+        source = """
+from mypy_extensions import trait
+
+@trait
+class Animal:
+    def speak(self) -> str:
+        pass
+
+def check_animal(obj: object) -> bool:
+    return isinstance(obj, Animal)
+"""
+        result = compile_source(source, "test", type_check=False)
+        # Traits should not generate mp_obj_is_type, should return False
+        # The isinstance call should be optimized away
+        assert "mp_const_false" in result or "False" in result
+
+    def test_isinstance_with_dataclass(self):
+        """Test isinstance with @dataclass variant."""
+        source = """
+class Point:
+    x: int
+    y: int
+
+def check_point(obj: object) -> bool:
+    return isinstance(obj, Point)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_obj_is_type" in result
+        assert "test_Point_type" in result
+
+    def test_isinstance_with_inheritance(self):
+        """Test isinstance with child class uses child type."""
+        source = """
+class Animal:
+    name: str
+
+class Dog(Animal):
+    breed: str
+
+def check_dog(obj: object) -> bool:
+    return isinstance(obj, Dog)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_obj_is_type" in result
+        assert "test_Dog_type" in result
+        # isinstance should reference Dog type, not Animal type
+        assert "mp_obj_is_type(obj, &test_Dog_type)" in result
+
+    def test_isinstance_builtin_int(self):
+        """Test isinstance(x, int) uses mp_type_int."""
+        source = """
+def check_int(obj: object) -> bool:
+    return isinstance(obj, int)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_obj_is_type" in result
+        assert "mp_type_int" in result
+
+    def test_isinstance_builtin_str(self):
+        """Test isinstance(x, str) uses mp_type_str."""
+        source = """
+def check_str(obj: object) -> bool:
+    return isinstance(obj, str)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_obj_is_type" in result
+        assert "mp_type_str" in result
+
+    def test_isinstance_builtin_list(self):
+        """Test isinstance(x, list) uses mp_type_list."""
+        source = """
+def check_list(obj: object) -> bool:
+    return isinstance(obj, list)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_obj_is_type" in result
+        assert "mp_type_list" in result
+
+    def test_isinstance_in_elif_chain(self):
+        """Test multiple isinstance checks in if/elif chain."""
+        source = """
+class Dog:
+    name: str
+
+class Cat:
+    age: int
+
+def identify(obj: object) -> str:
+    if isinstance(obj, Dog):
+        return "dog"
+    elif isinstance(obj, Cat):
+        return "cat"
+    return "unknown"
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert result.count("mp_obj_is_type") >= 2
+        assert "test_Dog_type" in result
+        assert "test_Cat_type" in result
+
+    def test_isinstance_negated(self):
+        """Test not isinstance(x, ClassName)."""
+        source = """
+class Dog:
+    name: str
+
+def not_a_dog(obj: object) -> bool:
+    return not isinstance(obj, Dog)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_obj_is_type" in result
+        assert "test_Dog_type" in result
+        # Should have negation logic
+        assert "!" in result or "not" in result.lower()
+
+
+class TestAutoNarrowing:
+    """Test automatic type narrowing after isinstance() checks."""
+
+    def test_auto_narrow_basic(self):
+        """isinstance(a, Dog) should auto-narrow a to Dog in if-body."""
+        source = '''
+class Animal:
+    name: str
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+class Dog(Animal):
+    breed: str
+    def __init__(self, name: str, breed: str) -> None:
+        self.name = name
+        self.breed = breed
+
+def get_breed(a: object) -> str:
+    if isinstance(a, Dog):
+        return a.breed
+    return "unknown"
+'''
+        result = compile_source(source, 'test')
+        # Direct struct access (auto-narrowed) -- no manual 'd: Dog = a' needed
+        assert '((test_Dog_obj_t *)MP_OBJ_TO_PTR(a))->breed' in result
+
+    def test_auto_narrow_no_leak(self):
+        """Narrowing should not leak outside the if-block."""
+        source = '''
+class Dog:
+    breed: str
+    def __init__(self, breed: str) -> None:
+        self.breed = breed
+
+def check(a: object) -> str:
+    if isinstance(a, Dog):
+        x: str = a.breed
+    return str(a)
+'''
+        result = compile_source(source, 'test', type_check=False)
+        # Inside if: direct struct access
+        assert '((test_Dog_obj_t *)MP_OBJ_TO_PTR(a))->breed' in result
+        # a.breed accessed only once via direct struct (not leaked)
+        assert result.count('((test_Dog_obj_t *)MP_OBJ_TO_PTR(a))->breed') == 1
+
+    def test_auto_narrow_negated(self):
+        """not isinstance(a, Dog) should narrow in the else branch."""
+        source = '''
+class Dog:
+    breed: str
+    def __init__(self, breed: str) -> None:
+        self.breed = breed
+
+def get_breed_negated(a: object) -> str:
+    if not isinstance(a, Dog):
+        return "not a dog"
+    else:
+        return a.breed
+'''
+        result = compile_source(source, 'test', type_check=False)
+        # In the else branch, a should be narrowed to Dog
+        assert '((test_Dog_obj_t *)MP_OBJ_TO_PTR(a))->breed' in result
+
+    def test_auto_narrow_elif_chain(self):
+        """Each elif branch should narrow independently."""
+        source = '''
+class Dog:
+    breed: str
+    def __init__(self, breed: str) -> None:
+        self.breed = breed
+
+class Cat:
+    color: str
+    def __init__(self, color: str) -> None:
+        self.color = color
+
+def describe(a: object) -> str:
+    if isinstance(a, Dog):
+        return a.breed
+    elif isinstance(a, Cat):
+        return a.color
+    return "unknown"
+'''
+        result = compile_source(source, 'test', type_check=False)
+        assert '((test_Dog_obj_t *)MP_OBJ_TO_PTR(a))->breed' in result
+        assert '((test_Cat_obj_t *)MP_OBJ_TO_PTR(a))->color' in result
+
+    def test_auto_narrow_method_context(self):
+        """isinstance narrowing works inside class methods."""
+        source = '''
+class Shape:
+    name: str
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+class Circle(Shape):
+    radius: int
+    def __init__(self, radius: int) -> None:
+        self.name = "circle"
+        self.radius = radius
+
+class Checker:
+    def check(self, s: object) -> int:
+        if isinstance(s, Circle):
+            return s.radius
+        return 0
+'''
+        result = compile_source(source, 'test', type_check=False)
+        # Method context should also auto-narrow
+        assert '((test_Circle_obj_t *)MP_OBJ_TO_PTR(s))->radius' in result
+
+    def test_auto_narrow_mvu_pattern(self):
+        """MVU-style dispatch without manual narrowing annotations."""
+        source = '''
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Increment:
+    amount: int
+
+@dataclass(frozen=True)
+class SetValue:
+    value: int
+
+class Reset:
+    pass
+
+def process(msg: object, count: int) -> int:
+    if isinstance(msg, Increment):
+        return count + msg.amount
+    elif isinstance(msg, SetValue):
+        return msg.value
+    elif isinstance(msg, Reset):
+        return 0
+    return count
+'''
+        result = compile_source(source, 'test', type_check=False)
+        # Each branch should auto-narrow to access the correct field
+        assert '((test_Increment_obj_t *)MP_OBJ_TO_PTR(msg))->amount' in result
+        assert '((test_SetValue_obj_t *)MP_OBJ_TO_PTR(msg))->value' in result
+
+
 class TestEnumOperations:
     """Tests for enum support (IntEnum/Enum -> module-level integer constants)."""
 

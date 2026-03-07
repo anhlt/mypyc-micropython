@@ -45,6 +45,7 @@ from .ir import (
     IfExprIR,
     IfIR,
     InstrIR,
+    IsInstanceIR,
     ListCompIR,
     ListNewIR,
     MethodCallIR,
@@ -678,6 +679,8 @@ class IRPrinter:
             return f"{value.lib_name}.{value.func_name}({args})"
         elif isinstance(value, CLibEnumIR):
             return f"{value.lib_name}.{value.enum_class}.{value.member_name} = {value.c_enum_value}"
+        elif isinstance(value, IsInstanceIR):
+            return f"isinstance({self.print_value(value.obj)}, {value.class_name})"
         elif isinstance(value, SubscriptIR):
             return f"{self.print_value(value.value)}[{self.print_value(value.slice_)}]"
         elif isinstance(value, IfExprIR):

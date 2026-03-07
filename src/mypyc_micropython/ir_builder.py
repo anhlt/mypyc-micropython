@@ -48,6 +48,7 @@ from .ir import (
     IfExprIR,
     IfIR,
     IRType,
+    IsInstanceIR,
     ListCompIR,
     ListNewIR,
     MethodCallIR,
@@ -563,10 +564,47 @@ class IRBuilder:
 
     def _build_if(self, stmt: ast.If, locals_: list[str]) -> IfIR:
         test, test_prelude = self._build_expr(stmt.test, locals_)
+
+        # Automatic type narrowing: detect isinstance in the test condition
+        narrowing = self._extract_isinstance_narrowing(stmt.test)
+        saved_type: str | None = None
+        narrow_var: str | None = None
+
+        if narrowing:
+            narrow_var, narrow_class, negated = narrowing
+            saved_type = self._class_typed_params.get(narrow_var)
+
+            if not negated:
+                # isinstance(x, Foo): narrow x to Foo in the if-body
+                self._class_typed_params[narrow_var] = narrow_class
+
         body = [self._build_statement(s, locals_) for s in stmt.body]
         body = [s for s in body if s is not None]
+
+        # Restore after body, apply to orelse if negated
+        if narrowing:
+            narrow_var, narrow_class, negated = narrowing
+            if not negated:
+                # Restore original type for orelse branch
+                if saved_type is not None:
+                    self._class_typed_params[narrow_var] = saved_type
+                elif narrow_var in self._class_typed_params:
+                    del self._class_typed_params[narrow_var]
+            else:
+                # not isinstance(x, Foo): narrow x to Foo in the orelse branch
+                self._class_typed_params[narrow_var] = narrow_class
+
         orelse = [self._build_statement(s, locals_) for s in stmt.orelse]
         orelse = [s for s in orelse if s is not None]
+
+        # Restore after orelse (for negated case)
+        if narrowing and negated:
+            narrow_var = narrowing[0]
+            if saved_type is not None:
+                self._class_typed_params[narrow_var] = saved_type
+            elif narrow_var in self._class_typed_params:
+                del self._class_typed_params[narrow_var]
+
         return IfIR(test=test, body=body, orelse=orelse, test_prelude=test_prelude)
 
     def _build_while(self, stmt: ast.While, locals_: list[str]) -> WhileIR:
@@ -1195,6 +1233,10 @@ class IRBuilder:
         if func_name in self._known_classes:
             return self._build_class_instantiation(expr, func_name, locals_)
 
+        # isinstance(obj, ClassName) -> IsInstanceIR
+        if func_name == "isinstance" and len(expr.args) == 2:
+            return self._build_isinstance(expr, locals_)
+
         args: list[ValueIR] = []
         arg_preludes: list[list] = []
         for arg in expr.args:
@@ -1251,6 +1293,128 @@ class IRBuilder:
             is_builtin=False,
             builtin_kind=None,
         ), all_preludes
+
+    def _build_isinstance(
+        self, expr: ast.Call, locals_: list[str]
+    ) -> tuple[ValueIR, list]:
+        """Build isinstance(obj, ClassName) -> IsInstanceIR.
+
+        Only supports compile-time-known concrete classes.
+        Generates mp_obj_is_type(obj, &ClassName_type) for exact type check.
+        """
+        obj_expr = expr.args[0]
+        class_arg = expr.args[1]
+
+        # Build the object expression
+        obj_val, obj_prelude = self._build_expr(obj_expr, locals_)
+
+        # The second argument must be a known class name
+        if not isinstance(class_arg, ast.Name):
+            # Unsupported: isinstance with non-Name second arg (e.g., tuple of types)
+            # With type_check=True, mypy will catch this; with type_check=False,
+            # we conservatively return false rather than silently generating wrong code.
+            return ConstIR(ir_type=IRType.BOOL, value=False), obj_prelude
+
+        class_name = class_arg.id
+
+        # Must be a known compiled class (not a trait, not a builtin type)
+        if class_name not in self._known_classes:
+            # Unknown class - fall back to runtime mp_obj_is_type with mp_type_*
+            # for builtin types like int, str, list, dict, etc.
+            builtin_types = {
+                "int": "mp_type_int",
+                "str": "mp_type_str",
+                "float": "mp_type_float",
+                "bool": "mp_type_bool",
+                "list": "mp_type_list",
+                "dict": "mp_type_dict",
+                "tuple": "mp_type_tuple",
+                "set": "mp_type_set",
+            }
+            if class_name in builtin_types:
+                return IsInstanceIR(
+                    ir_type=IRType.BOOL,
+                    obj=obj_val,
+                    class_name=class_name,
+                    c_type_name=builtin_types[class_name],
+                    obj_prelude=obj_prelude,
+                ), obj_prelude
+            # Unknown class not in compiled module -- with type_check=True, mypy
+            # will report an error. With type_check=False, return false to avoid
+            # generating a reference to an undefined C type.
+            return ConstIR(ir_type=IRType.BOOL, value=False), obj_prelude
+
+        class_ir = self._known_classes[class_name]
+
+        # Traits have no single type object; isinstance(obj, Trait) cannot work
+        # at runtime. Return false with a clear comment.
+        if class_ir.is_trait:
+            return ConstIR(ir_type=IRType.BOOL, value=False), obj_prelude
+
+        c_type_name = f"{class_ir.c_name}_type"
+
+        return IsInstanceIR(
+            ir_type=IRType.BOOL,
+            obj=obj_val,
+            class_name=class_name,
+            c_type_name=c_type_name,
+            obj_prelude=obj_prelude,
+        ), obj_prelude
+
+    def _extract_isinstance_narrowing(
+        self, test: ast.expr
+    ) -> tuple[str, str, bool] | None:
+        """Extract isinstance narrowing info from an if-test AST node.
+
+        Returns (var_name, class_name, is_negated) if the test is:
+          - isinstance(var, ClassName) -> (var, ClassName, False)
+          - not isinstance(var, ClassName) -> (var, ClassName, True)
+
+        Only narrows for simple Name variables and known compiled classes.
+        Returns None if narrowing cannot be extracted.
+        """
+        call: ast.Call | None = None
+        negated = False
+
+        if isinstance(test, ast.Call):
+            call = test
+        elif (
+            isinstance(test, ast.UnaryOp)
+            and isinstance(test.op, ast.Not)
+            and isinstance(test.operand, ast.Call)
+        ):
+            call = test.operand
+            negated = True
+        else:
+            return None
+
+        # Must be isinstance(var, ClassName)
+        if not (
+            isinstance(call.func, ast.Name)
+            and call.func.id == "isinstance"
+            and len(call.args) == 2
+        ):
+            return None
+
+        obj_arg = call.args[0]
+        class_arg = call.args[1]
+
+        # Only narrow simple variable names, not attribute chains
+        if not isinstance(obj_arg, ast.Name):
+            return None
+        if not isinstance(class_arg, ast.Name):
+            return None
+
+        var_name = obj_arg.id
+        class_name = class_arg.id
+
+        # Only narrow for known compiled classes (not builtins, not traits)
+        if class_name not in self._known_classes:
+            return None
+        if self._known_classes[class_name].is_trait:
+            return None
+
+        return var_name, class_name, negated
 
     @staticmethod
     def _is_private_name(name: str) -> bool:
@@ -2737,10 +2901,42 @@ class IRBuilder:
     ) -> IfIR:
         """Build if statement in method context."""
         test, test_prelude = self._build_method_expr(stmt.test, locals_, class_ir, native)
+
+        # Automatic type narrowing: detect isinstance in the test condition
+        narrowing = self._extract_isinstance_narrowing(stmt.test)
+        saved_type: str | None = None
+        narrow_var: str | None = None
+
+        if narrowing:
+            narrow_var, narrow_class, negated = narrowing
+            saved_type = self._class_typed_params.get(narrow_var)
+
+            if not negated:
+                self._class_typed_params[narrow_var] = narrow_class
+
         body = [self._build_method_statement(s, locals_, class_ir, native) for s in stmt.body]
         body = [s for s in body if s is not None]
+
+        if narrowing:
+            narrow_var, narrow_class, negated = narrowing
+            if not negated:
+                if saved_type is not None:
+                    self._class_typed_params[narrow_var] = saved_type
+                elif narrow_var in self._class_typed_params:
+                    del self._class_typed_params[narrow_var]
+            else:
+                self._class_typed_params[narrow_var] = narrow_class
+
         orelse = [self._build_method_statement(s, locals_, class_ir, native) for s in stmt.orelse]
         orelse = [s for s in orelse if s is not None]
+
+        if narrowing and negated:
+            narrow_var = narrowing[0]
+            if saved_type is not None:
+                self._class_typed_params[narrow_var] = saved_type
+            elif narrow_var in self._class_typed_params:
+                del self._class_typed_params[narrow_var]
+
         return IfIR(test=test, body=body, orelse=orelse, test_prelude=test_prelude)
 
     def _build_method_while(
@@ -3254,6 +3450,10 @@ class IRBuilder:
 
         if func_name in self._known_classes:
             return self._build_class_instantiation(expr, func_name, locals_)
+
+        # isinstance(obj, ClassName) -> IsInstanceIR
+        if func_name == "isinstance" and len(expr.args) == 2:
+            return self._build_isinstance(expr, locals_)
 
         args: list[ValueIR] = []
         arg_preludes: list[list] = []
