@@ -284,8 +284,12 @@ def _compile_module_parts(
             # Register module-level constants (NAME = literal)
             ir_builder.register_constant(node)
         elif isinstance(node, ast.ClassDef):
-            class_ir = ir_builder.build_class(node)
-            module_ir.add_class(class_ir)
+            if ir_builder.is_enum_class(node):
+                enum_ir = ir_builder.build_enum(node)
+                module_ir.add_enum(enum_ir)
+            else:
+                class_ir = ir_builder.build_class(node)
+                module_ir.add_class(class_ir)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             func_ir = ir_builder.build_function(node)
             function_irs.append(func_ir)

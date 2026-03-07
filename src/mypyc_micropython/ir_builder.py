@@ -38,6 +38,7 @@ from .ir import (
     DataclassInfo,
     DefaultArg,
     DictNewIR,
+    EnumIR,
     ExceptHandlerIR,
     ExprStmtIR,
     FieldIR,
@@ -223,6 +224,7 @@ class IRBuilder:
         self._uses_external_libs: set[str] = set()
         self._module_constants: dict[str, int | float | str | bool | None] = {}
         self._sibling_modules: dict[str, str] = sibling_modules or {}  # maps import name -> C prefix
+        self._known_enums: dict[str, EnumIR] = {}
 
     def _fresh_temp(self) -> str:
         self._temp_counter += 1
@@ -1544,6 +1546,17 @@ class IRBuilder:
                 if lib_name in self._external_libs:
                     return self._build_clib_enum(expr, module_alias, locals_)
 
+        # Check for local enum member access: Color.RED -> ConstIR(value=1)
+        if isinstance(expr.value, ast.Name):
+            enum_name = expr.value.id
+            if enum_name in self._known_enums:
+                enum_ir = self._known_enums[enum_name]
+                member_name = expr.attr
+                if member_name in enum_ir.values:
+                    return ConstIR(ir_type=IRType.INT, value=enum_ir.values[member_name]), []
+                # Unknown member on known enum -- return 0 as fallback
+                return ConstIR(ir_type=IRType.INT, value=0), []
+
         if isinstance(expr.value, ast.Name):
             var_name = expr.value.id
             if var_name in self._import_aliases:
@@ -2113,6 +2126,106 @@ class IRBuilder:
             dataclass_info.fields = list(class_ir.fields)
 
         return class_ir
+
+    def build_enum(self, node: ast.ClassDef) -> EnumIR:
+        """Build EnumIR from ast.ClassDef that inherits from IntEnum/Enum.
+
+        Parses enum members as integer constants. Supports:
+        - Simple assignments: RED = 1
+        - Annotated assignments: RED: int = 1
+        - Negative values: OFFSET = -10
+        - Bitwise expressions: READ = 1 << 0
+        """
+        enum_name = node.name
+        c_enum_name = f"{self.c_name}_{sanitize_name(enum_name)}"
+
+        docstring = None
+        if (
+            node.body
+            and isinstance(node.body[0], ast.Expr)
+            and isinstance(node.body[0].value, ast.Constant)
+            and isinstance(node.body[0].value.value, str)
+        ):
+            docstring = node.body[0].value.value
+
+        enum_ir = EnumIR(
+            name=enum_name,
+            c_name=c_enum_name,
+            module_name=self.module_name,
+            docstring=docstring,
+        )
+
+        for stmt in node.body:
+            # Handle: NAME = value
+            if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+                target = stmt.targets[0]
+                if isinstance(target, ast.Name) and stmt.value is not None:
+                    val = self._eval_enum_value(stmt.value, enum_ir.values)
+                    if val is not None:
+                        enum_ir.values[target.id] = val
+            # Handle: NAME: int = value
+            elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+                if stmt.value is not None:
+                    val = self._eval_enum_value(stmt.value, enum_ir.values)
+                    if val is not None:
+                        enum_ir.values[stmt.target.id] = val
+
+        self._known_enums[enum_name] = enum_ir
+        return enum_ir
+
+    def _eval_enum_value(self, node: ast.expr, resolved: dict[str, int] | None = None) -> int | None:
+        """Evaluate a constant integer expression for an enum value.
+
+        Supports: int literals, negative ints, bitwise shift (1 << N),
+        bitwise OR (a | b), basic arithmetic, and references to
+        previously-defined enum members (e.g. ALL = READ | WRITE).
+        """
+        if isinstance(node, ast.Constant) and isinstance(node.value, int):
+            return node.value
+        # Resolve references to previously-defined enum members
+        if isinstance(node, ast.Name) and resolved and node.id in resolved:
+            return resolved[node.id]
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            if isinstance(node.operand, ast.Constant) and isinstance(node.operand.value, int):
+                return -node.operand.value
+        if isinstance(node, ast.BinOp):
+            left = self._eval_enum_value(node.left, resolved)
+            right = self._eval_enum_value(node.right, resolved)
+            if left is not None and right is not None:
+                if isinstance(node.op, ast.LShift):
+                    return left << right
+                if isinstance(node.op, ast.RShift):
+                    return left >> right
+                if isinstance(node.op, ast.BitOr):
+                    return left | right
+                if isinstance(node.op, ast.BitAnd):
+                    return left & right
+                if isinstance(node.op, ast.BitXor):
+                    return left ^ right
+                if isinstance(node.op, ast.Add):
+                    return left + right
+                if isinstance(node.op, ast.Sub):
+                    return left - right
+                if isinstance(node.op, ast.Mult):
+                    return left * right
+        return None
+
+    @staticmethod
+    def is_enum_class(node: ast.ClassDef) -> bool:
+        """Check if a class definition is an enum (inherits from IntEnum, Enum, etc.)."""
+        enum_base_names = {"IntEnum", "Enum", "Flag", "IntFlag"}
+        for base in node.bases:
+            if isinstance(base, ast.Name) and base.id in enum_base_names:
+                return True
+            # Handle enum.IntEnum, enum.Enum
+            if (
+                isinstance(base, ast.Attribute)
+                and isinstance(base.value, ast.Name)
+                and base.value.id == "enum"
+                and base.attr in enum_base_names
+            ):
+                return True
+        return False
 
     def _parse_class_body(self, node: ast.ClassDef, class_ir: ClassIR) -> None:
         """Parse class body to extract fields and methods."""

@@ -2806,3 +2806,70 @@ int main(void) {
     assert lines[2] == "sleep_coro=1"  # Got sleep coroutine
     assert lines[3] == "state2=65535"  # Done state
     assert lines[4] == "stopped=1"  # Final result is stop
+
+
+def test_c_enum_member_access(compile_and_run):
+    """Test that enum member access compiles to integer constants in C."""
+    source = '''
+from enum import IntEnum
+
+class Color(IntEnum):
+    RED = 1
+    GREEN = 2
+    BLUE = 3
+
+def get_color() -> int:
+    return Color.GREEN
+
+def check_color(c: int) -> bool:
+    return c == Color.BLUE
+'''
+    test_main_c = '''
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result = test_get_color();
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+
+    mp_obj_t check = test_check_color(mp_obj_new_int(3));
+    printf("%d\\n", mp_obj_is_true(check) ? 1 : 0);
+
+    mp_obj_t check2 = test_check_color(mp_obj_new_int(1));
+    printf("%d\\n", mp_obj_is_true(check2) ? 1 : 0);
+
+    return 0;
+}
+'''
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    lines = stdout.strip().split("\n")
+    assert lines[0] == "2"  # Color.GREEN = 2
+    assert lines[1] == "1"  # 3 == Color.BLUE (3) -> True
+    assert lines[2] == "0"  # 1 == Color.BLUE (3) -> False
+
+
+def test_c_enum_in_arithmetic(compile_and_run):
+    """Test enum values used in arithmetic operations."""
+    source = '''
+from enum import IntEnum
+
+class Priority(IntEnum):
+    LOW = 1
+    MEDIUM = 5
+    HIGH = 10
+
+def total_priority() -> int:
+    return Priority.LOW + Priority.MEDIUM + Priority.HIGH
+'''
+    test_main_c = '''
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result = test_total_priority();
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+'''
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "16"  # 1 + 5 + 10

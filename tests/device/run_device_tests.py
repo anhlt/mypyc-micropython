@@ -799,6 +799,31 @@ t("delayed_double(21)", result, "42")
 result = asyncio.run(async_demo.countdown_with_delay(5))
 t("countdown_with_delay(5)", result, "0")
 
+
+# ---- enum_demo ----
+suite("enum_demo")
+import enum_demo
+
+t("Color_RED constant", enum_demo.Color_RED, "1")
+t("Color_GREEN constant", enum_demo.Color_GREEN, "2")
+t("Color_BLUE constant", enum_demo.Color_BLUE, "3")
+t("Priority_LOW constant", enum_demo.Priority_LOW, "1")
+t("Priority_MEDIUM constant", enum_demo.Priority_MEDIUM, "5")
+t("Priority_HIGH constant", enum_demo.Priority_HIGH, "10")
+t("Permission_READ constant", enum_demo.Permission_READ, "1")
+t("Permission_WRITE constant", enum_demo.Permission_WRITE, "2")
+t("Permission_EXECUTE constant", enum_demo.Permission_EXECUTE, "4")
+t("Permission_ALL constant", enum_demo.Permission_ALL, "7")
+t("get_color()", enum_demo.get_color(), "2")
+t("check_color(3)", enum_demo.check_color(3), "True")
+t("check_color(1)", enum_demo.check_color(1), "False")
+t("total_priority()", enum_demo.total_priority(), "16")
+t("is_high_priority(10)", enum_demo.is_high_priority(10), "True")
+t("is_high_priority(1)", enum_demo.is_high_priority(1), "False")
+t("has_write(3)", enum_demo.has_write(3), "True")
+t("has_write(4)", enum_demo.has_write(4), "False")
+t("default_permissions()", enum_demo.default_permissions(), "3")
+
 # ---- summary ----
 gc.collect()
 print("@D:" + str(_total) + "|" + str(_passed) + "|" + str(_failed))
