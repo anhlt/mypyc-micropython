@@ -17,6 +17,7 @@ from .ir import (
     BinOpIR,
     BoxIR,
     CallIR,
+    ClassInstantiationIR,
     CompareIR,
     ConstIR,
     DictNewIR,
@@ -30,9 +31,11 @@ from .ir import (
     NameIR,
     ParamAttrIR,
     SelfAttrIR,
+    SelfMethodCallIR,
     SelfMethodRefIR,
     SetItemIR,
     SetNewIR,
+    SiblingClassInstantiationIR,
     SubscriptIR,
     TempIR,
     TupleNewIR,
@@ -616,6 +619,18 @@ class ContainerEmitter:
                 f"MP_OBJ_FROM_PTR(&{value.method_c_name}_obj), "
                 f"MP_OBJ_FROM_PTR(self))"
             )
+        elif isinstance(value, SelfMethodCallIR):
+            args = ["self"]
+            for i, arg in enumerate(value.args):
+                arg_c = self._value_to_c(arg)
+                # Use target param type when available for correct boxing
+                target_type = value.param_types[i] if i < len(value.param_types) else arg.ir_type
+                if target_type == IRType.OBJ and arg.ir_type != IRType.OBJ:
+                    args.append(self._box_expr(arg_c, arg.ir_type))
+                else:
+                    args.append(arg_c)
+            args_str = ", ".join(args)
+            return f"{value.c_method_name}_native({args_str})"
         elif isinstance(value, ParamAttrIR):
             return (
                 f"(({value.class_c_name}_obj_t *)MP_OBJ_TO_PTR({value.c_param_name}))"
@@ -635,6 +650,23 @@ class ContainerEmitter:
                     arg_c = self._box_value_ir(value.args[0])
                     return f"(mp_int_t)(uintptr_t)({arg_c})"
             # For other calls, we can't easily emit them inline - fall through to unknown
+        elif isinstance(value, ClassInstantiationIR):
+            boxed_args = [self._box_value_ir(a) for a in value.args]
+            args_str = ", ".join(boxed_args)
+            n = len(boxed_args)
+            return (
+                f"{value.c_class_name}_make_new(&{value.c_class_name}_type, "
+                f"{n}, 0, (const mp_obj_t[]){{{args_str}}})"
+            )
+        elif isinstance(value, SiblingClassInstantiationIR):
+            c_name = f"{value.c_prefix}_{value.class_name}"
+            boxed_args = [self._box_value_ir(a) for a in value.args]
+            args_str = ", ".join(boxed_args)
+            n = len(boxed_args)
+            return (
+                f"{c_name}_make_new(&{c_name}_type, "
+                f"{n}, 0, (const mp_obj_t[]){{{args_str}}})"
+            )
         return "/* unknown value */"
 
     def _const_to_c(self, const: ConstIR) -> str:

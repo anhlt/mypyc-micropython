@@ -603,6 +603,20 @@ class NameIR(ValueIR):
     py_name: str
     c_name: str
 
+@dataclass
+class FuncRefIR(ValueIR):
+    """A reference to a module-level function used as a first-class value.
+
+    When a function name is used as a value (e.g., ``key=my_func`` in
+    ``sorted(items, key=my_func)``), we need to emit the function object
+    reference rather than treating the name as a plain variable.
+
+    Generated C:
+        MP_OBJ_FROM_PTR(&module_my_func_obj)
+    """
+
+    py_name: str   # Python function name (e.g., '_attr_sort_key')
+    c_name: str    # C function name (e.g., 'builders__attr_sort_key')
 
 # ---------------------------------------------------------------------------
 # Expression-level IR instructions
@@ -676,6 +690,7 @@ class MethodCallIR(InstrIR):
     args: list[ValueIR]
     # Keyword arguments: list of (name, value) pairs
     kwargs: list[tuple[str, ValueIR]] = field(default_factory=list)
+
 
 @dataclass
 class BoxIR(InstrIR):
@@ -781,6 +796,7 @@ class YieldIR(StmtIR):
     prelude: list[InstrIR] = field(default_factory=list)
     state_id: int = 0
 
+
 @dataclass
 class YieldFromIR(StmtIR):
     """Yield from expression: yield from iterable.
@@ -807,6 +823,7 @@ class YieldFromIR(StmtIR):
     prelude: list[InstrIR] = field(default_factory=list)
     state_id: int = 0  # Resumption point for yield from loop
 
+
 @dataclass
 class AwaitIR(StmtIR):
     """Await expression: await awaitable.
@@ -830,6 +847,7 @@ class AwaitIR(StmtIR):
     result: str | None = None  # Variable to store result (None if discarded)
     prelude: list[InstrIR] = field(default_factory=list)
     state_id: int = 0  # Resumption point after await
+
 
 @dataclass
 class AwaitModuleCallIR(StmtIR):
@@ -861,6 +879,7 @@ class AwaitModuleCallIR(StmtIR):
     arg_preludes: list[list[InstrIR]] = field(default_factory=list)  # Prelude for each arg
     result: str | None = None  # Variable to store result (None if discarded)
     state_id: int = 0  # Resumption point after await
+
 
 @dataclass
 class IfIR(StmtIR):
@@ -1077,6 +1096,7 @@ class CompareIR(ExprIR):
     left_prelude: list[InstrIR] = field(default_factory=list)
     comparator_preludes: list[list[InstrIR]] = field(default_factory=list)
 
+
 @dataclass
 class IsInstanceIR(ExprIR):
     """Type check: isinstance(obj, ClassName).
@@ -1103,6 +1123,7 @@ class CallIR(ExprIR):
     func_name: str
     c_func_name: str
     args: list[ValueIR]
+    kwargs: list[tuple[str, ValueIR]] = field(default_factory=list)
     # Preludes for each arg
     arg_preludes: list[list[InstrIR]] = field(default_factory=list)
     # For builtin calls, the specific handling
@@ -1213,6 +1234,7 @@ class ParamAttrIR(ExprIR):
     result_type: IRType
     is_trait_type: bool = False  # True if param type is a trait (use dynamic lookup)
 
+
 @dataclass
 class SelfMethodCallIR(ExprIR):
     """Method call on self: self.method(args) (for methods)."""
@@ -1223,6 +1245,8 @@ class SelfMethodCallIR(ExprIR):
     return_type: IRType
     # Preludes for args
     arg_preludes: list[list[InstrIR]] = field(default_factory=list)
+    # Target parameter types from the method definition (for boxing decisions)
+    param_types: list[IRType] = field(default_factory=list)
 
 
 @dataclass
@@ -1273,6 +1297,7 @@ class ModuleCallIR(ExprIR):
     # Keyword arguments: list of (name, value) pairs
     kwargs: list[tuple[str, ValueIR]] = field(default_factory=list)
     kwarg_preludes: list[list[InstrIR]] = field(default_factory=list)
+
 
 @dataclass
 class ModuleAttrIR(ExprIR):
@@ -1393,6 +1418,7 @@ class CLibEnumIR(ExprIR):
     member_name: str  # Member name (e.g., "CENTER")
     c_enum_value: int  # Resolved integer value
 
+
 @dataclass
 class SelfAugAssignIR(StmtIR):
     """Augmented assignment on self attribute: self.attr op= value."""
@@ -1508,7 +1534,6 @@ class EnumIR:
     docstring: str | None = None
 
 
-
 @dataclass
 class ModuleIR:
     name: str
@@ -1519,6 +1544,8 @@ class ModuleIR:
 
     # Module-level constants (NAME = literal_value)
     constants: dict[str, int | float | str | bool | None] = field(default_factory=dict)
+
+    module_vars: dict[str, str] = field(default_factory=dict)
 
     # For tracking definition order (important for forward declarations)
     class_order: list[str] = field(default_factory=list)

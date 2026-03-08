@@ -8,6 +8,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- LVGL MVU widget tree diffing engine compiled to native C
+  - O(N) two-pointer merge diff for sorted scalar attribute tuples
+  - Positional child diffing with insert/remove/replace/update operations
+  - Widget reuse strategy based on type + user_key matching
+  - `diff_widgets()` with `Optional` narrowing for initial render path
+  - 45 device tests for diffing engine on ESP32-C6
+- `FuncRefIR`: function-as-value references for first-class function passing
+  - Pre-scan all module functions for forward reference support
+  - Emits `MP_OBJ_FROM_PTR(&func_obj)` for function value references
+- `kwargs` support in `CallIR` for keyword arguments in function calls
+  - `sorted(items, key=func)` now compiles via `mp_call_function_n_kw`
+- Module-level mutable variable support (dict/list)
+  - `register_module_var()` tracks annotated dict/list variables
+  - Lazy initialization pattern with `_module_inited` boolean guard
+- Cross-package enum resolution via `known_enums` parameter
+- `SelfMethodCallIR.param_types` for correct argument boxing in method calls
+- `BoolOp` (and/or) support in class method expressions
+- Blog 38: LVGL MVU diffing engine compilation walkthrough
+
+### Fixed
+- Boxed `mp_obj_t` comparison now uses `mp_obj_equal()` instead of unboxing to int
+  - Prevents crash when comparing strings, floats, or nested objects
+  - Ordering comparisons use `mp_binary_op()` with `mp_obj_is_true()`
+- Boolean truthiness: `if`/`while`/ternary/`not` now convert `mp_obj_t` via `mp_obj_is_true()`
+- `bool` boxing uses `mp_obj_new_bool()` instead of ternary expression
+- Dead code removal in `sorted()` emission (duplicated fallback block)
+- Method call argument preludes now correctly propagated (were silently dropped)
+
+### Changed
+- Makefile: 8MiB flash partition table with 4.5MB app partition for LVGL builds
+- Makefile: `sdkconfig.board` injection for board-specific ESP-IDF configuration
+- Makefile: `lvgl_mvu` package included in `compile-all` cmake generation
+### Added
 - `isinstance()` builtin support for compile-time type checking
   - `IsInstanceIR` node in IR for representing isinstance checks
   - Emits `mp_obj_is_type()` C calls for efficient runtime type dispatch
@@ -28,6 +61,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - IR visualizer support for enum printing/dumping
   - 11 compiler tests, 2 C runtime tests, 24 device tests
   - Example: `examples/enum_demo.py`
+- Optional type narrowing optimization for `X | None` parameters
+  - After `if x is not None:`, attribute access uses static dispatch (direct struct pointer)
+  - After `if x is None: return`, subsequent code narrows to non-None type
+  - Narrowing applies to both function params and local variables
+  - Eliminates unnecessary `mp_load_attr()` calls in performance-critical paths
+- LVGL MVU framework: `user_key` refactored from `str | None` to `str` (sentinel `""`)
+- Blog 37: Optional type narrowing optimization documentation
+- `examples/optional_narrowing.py` demonstrating all narrowing patterns
+
+### Fixed
+- Trait-typed parameter attribute access now uses `mp_load_attr()` instead of direct struct access
 - Trait system for mypyc-style multiple inheritance
   - `@trait` decorator support (both `mypy_extensions.trait` and simple `@trait`)
   - ONE concrete base class + multiple traits allowed

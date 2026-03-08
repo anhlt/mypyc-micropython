@@ -26,6 +26,7 @@ EXTMOD_DIR := $(ROOT_DIR)/extmod
 
 # MicroPython port
 MP_PORT_DIR := $(MICROPYTHON_DIR)/ports/esp32
+BOARD_DIR := $(MP_PORT_DIR)/boards/$(BOARD)
 
 # User modules cmake file
 USER_C_MODULES := $(MODULES_DIR)/micropython.cmake
@@ -64,7 +65,7 @@ help:
 	@echo "  make deploy         - Build + Flash + Monitor (one command)"
 	@echo ""
 	@echo "  LVGL is auto-detected. To force LVGL build: make build LVGL=1"
-	@echo "  LVGL uses larger partition table (2.56MB app) for display support."
+	@echo "  LVGL uses 8MiB partition table (4.5MB app) for display support."
 	@echo ""
 	@echo "TESTING:"
 	@echo "  make test           - Run Python tests locally (pytest)"
@@ -175,6 +176,12 @@ compile-all:
 		mpy-compile "$(EXTMOD_DIR)/lvui/" -o "$(MODULES_DIR)/usermod_lvui" || exit 1; \
 	fi
 	@echo ""
+	@echo "Compiling extmod/lvgl_mvu package..."
+	@if [ -f "$(EXTMOD_DIR)/lvgl_mvu/__init__.py" ]; then \
+		echo "Compiling package $(EXTMOD_DIR)/lvgl_mvu/ -> $(MODULES_DIR)/usermod_lvgl_mvu/"; \
+		mpy-compile "$(EXTMOD_DIR)/lvgl_mvu/" -o "$(MODULES_DIR)/usermod_lvgl_mvu" || exit 1; \
+	fi
+	@echo ""
 	@echo "Compiling LVGL C bindings..."
 	@$(MAKE) compile-lvgl-only
 	@echo ""
@@ -196,6 +203,9 @@ compile-all:
 	done
 	@if [ -d "$(MODULES_DIR)/usermod_lvui" ]; then \
 		echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_lvui/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
+	fi
+	@if [ -d "$(MODULES_DIR)/usermod_lvgl_mvu" ]; then \
+		echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_lvgl_mvu/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
 	fi
 	@echo "Done! Ready to build."
 
@@ -250,8 +260,13 @@ build: check-env
 	fi
 	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then \
 		echo "Building MicroPython + LVGL firmware for $(BOARD)..."; \
-		echo "Using larger partition table (2.56MB app) for LVGL"; \
+		echo "Using 8MiB flash + LVGL partition table (4.5MB app)"; \
 		cp $(ROOT_DIR)/configs/partitions-lvgl.csv $(MP_PORT_DIR)/partitions-4MiB.csv; \
+		cp $(ROOT_DIR)/configs/sdkconfig.lvgl $(BOARD_DIR)/sdkconfig.board; \
+		cp $(BOARD_DIR)/mpconfigboard.cmake $(BOARD_DIR)/mpconfigboard.cmake.bak; \
+		echo '' >> $(BOARD_DIR)/mpconfigboard.cmake; \
+		echo 'list(APPEND SDKCONFIG_DEFAULTS boards/$(BOARD)/sdkconfig.board)' >> $(BOARD_DIR)/mpconfigboard.cmake; \
+		rm -f $(MP_PORT_DIR)/build-$(BOARD)/sdkconfig; \
 	else \
 		echo "Building MicroPython firmware for $(BOARD)..."; \
 	fi
@@ -260,38 +275,36 @@ build: check-env
 		source $(ESP_IDF_DIR)/export.sh && \
 		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) USER_C_MODULES=$(USER_C_MODULES) \
 	'
-	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then echo "Restoring original partition table..."; cp $(ROOT_DIR)/configs/partitions-default.csv $(MP_PORT_DIR)/partitions-4MiB.csv; fi
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then \
+		echo "Restoring original files..."; \
+		cp $(ROOT_DIR)/configs/partitions-default.csv $(MP_PORT_DIR)/partitions-4MiB.csv; \
+		if [ -f "$(BOARD_DIR)/mpconfigboard.cmake.bak" ]; then \
+			mv $(BOARD_DIR)/mpconfigboard.cmake.bak $(BOARD_DIR)/mpconfigboard.cmake; \
+		fi; \
+		rm -f $(BOARD_DIR)/sdkconfig.board; \
+	fi
 
 flash: check-env
 	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then \
 		echo "Flashing LVGL firmware to $(PORT)..."; \
 		cp $(ROOT_DIR)/configs/partitions-lvgl.csv $(MP_PORT_DIR)/partitions-4MiB.csv; \
+		cp $(ROOT_DIR)/configs/sdkconfig.lvgl $(BOARD_DIR)/sdkconfig.board; \
+		cp $(BOARD_DIR)/mpconfigboard.cmake $(BOARD_DIR)/mpconfigboard.cmake.bak; \
+		echo '' >> $(BOARD_DIR)/mpconfigboard.cmake; \
+		echo 'list(APPEND SDKCONFIG_DEFAULTS boards/$(BOARD)/sdkconfig.board)' >> $(BOARD_DIR)/mpconfigboard.cmake; \
 	else \
 		echo "Flashing firmware to $(PORT)..."; \
 	fi
 	@bash -c 'source $(ESP_IDF_DIR)/export.sh && \
 		$(MAKE) -C $(MP_PORT_DIR) BOARD=$(BOARD) PORT=$(PORT) deploy'
-	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then echo "Restoring original partition table..."; cp $(ROOT_DIR)/configs/partitions-default.csv $(MP_PORT_DIR)/partitions-4MiB.csv; fi
+	@if [ "$(LVGL)" = "1" ] || [ -d "$(LVGL_MODULE_DIR)" ]; then \
+		echo "Restoring original files..."; \
+		cp $(ROOT_DIR)/configs/partitions-default.csv $(MP_PORT_DIR)/partitions-4MiB.csv; \
+		if [ -f "$(BOARD_DIR)/mpconfigboard.cmake.bak" ]; then \
+			mv $(BOARD_DIR)/mpconfigboard.cmake.bak $(BOARD_DIR)/mpconfigboard.cmake; \
+		fi; \
+		rm -f $(BOARD_DIR)/sdkconfig.board; \
+	fi
 
 erase: check-env
 	@echo "Erasing flash..."

@@ -106,7 +106,7 @@ int main(void) {
 
 def test_c_generator_for_iter_yields_list_items(compile_and_run):
     """Test generator with for-iter (list iteration) pattern."""
-    source = '''
+    source = """
 def iter_items(items: list):
     for x in items:
         yield x
@@ -115,8 +115,8 @@ def iter_items(items: list):
 def iter_range_start(n: int):
     for i in range(1, n):
         yield i
-'''
-    test_main_c = '''
+"""
+    test_main_c = """
 #include <stdio.h>
 
 static void drain_iter_items(void) {
@@ -154,7 +154,7 @@ int main(void) {
     drain_range_start(5);
     return 0;
 }
-'''
+"""
 
     stdout = compile_and_run(source, "test", test_main_c)
     # iter_items: 10, 20, 30, then stop_iteration=1
@@ -164,11 +164,11 @@ int main(void) {
 
 def test_c_yield_from_delegates_to_subiterator(compile_and_run):
     """Test yield from with simple delegation to a list."""
-    source = '''
+    source = """
 def delegate_to_list(items: list):
     yield from items
-'''
-    test_main_c = '''
+"""
+    test_main_c = """
 #include <stdio.h>
 
 static void drain_delegate(void) {
@@ -193,7 +193,7 @@ int main(void) {
     drain_delegate();
     return 0;
 }
-'''
+"""
 
     stdout = compile_and_run(source, "test", test_main_c)
     assert stdout.strip().splitlines() == ["100", "200", "300", "1"]
@@ -201,12 +201,12 @@ int main(void) {
 
 def test_c_yield_from_flatten_nested_lists(compile_and_run):
     """Test yield from with nested iteration (flatten pattern)."""
-    source = '''
+    source = """
 def flatten(nested: list):
     for inner in nested:
         yield from inner
-'''
-    test_main_c = '''
+"""
+    test_main_c = """
 #include <stdio.h>
 
 static void drain_flatten(void) {
@@ -235,7 +235,7 @@ int main(void) {
     drain_flatten();
     return 0;
 }
-'''
+"""
 
     stdout = compile_and_run(source, "test", test_main_c)
     assert stdout.strip().splitlines() == ["1", "2", "3", "4", "5", "1"]
@@ -243,13 +243,13 @@ int main(void) {
 
 def test_c_yield_from_mixed_with_yield(compile_and_run):
     """Test generator mixing yield and yield from."""
-    source = '''
+    source = """
 def mixed_gen(prefix: int, items: list, suffix: int):
     yield prefix
     yield from items
     yield suffix
-'''
-    test_main_c = '''
+"""
+    test_main_c = """
 #include <stdio.h>
 
 static void drain_mixed(void) {
@@ -270,11 +270,12 @@ int main(void) {
     drain_mixed();
     return 0;
 }
-'''
+"""
 
     stdout = compile_and_run(source, "test", test_main_c)
     # prefix=1, then items 10, 20, then suffix=99, then stop
     assert stdout.strip().splitlines() == ["1", "10", "20", "99", "1"]
+
 
 def test_c_sum_list_returns_correct_sum(compile_and_run):
     source = """
@@ -600,6 +601,95 @@ int main(void) {
 """
     stdout = compile_and_run(source, "test", test_main_c)
     assert stdout.strip() == "13"
+
+
+def test_c_optional_is_not_none_guard(compile_and_run):
+    source = """
+class Point:
+    x: int
+
+    def __init__(self, x: int) -> None:
+        self.x = x
+
+def read_x(p: Point | None) -> int:
+    if p is not None:
+        return p.x
+    return -1
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t args[] = {mp_obj_new_int(7)};
+    mp_obj_t point = test_Point_make_new(&test_Point_type, 1, 0, args);
+    mp_obj_t result = test_read_x(point);
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "7"
+
+
+def test_c_optional_none_default(compile_and_run):
+    source = """
+class Point:
+    x: int
+
+    def __init__(self, x: int) -> None:
+        self.x = x
+
+def read_x_or_default(p: Point | None) -> int:
+    if p is None:
+        return 42
+    return p.x
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result = test_read_x_or_default(mp_const_none);
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "42"
+
+
+def test_c_optional_early_return(compile_and_run):
+    source = """
+class Point:
+    x: int
+
+    def __init__(self, x: int) -> None:
+        self.x = x
+
+def get_x_with_early_return(p: Point | None) -> int:
+    if p is None:
+        return 11
+    return p.x
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t args[] = {mp_obj_new_int(8)};
+    mp_obj_t point = test_Point_make_new(&test_Point_type, 1, 0, args);
+
+    mp_obj_t none_result = test_get_x_with_early_return(mp_const_none);
+    mp_obj_t point_result = test_get_x_with_early_return(point);
+
+    printf("%ld\\n", (long)mp_obj_get_int(none_result));
+    printf("%ld\\n", (long)mp_obj_get_int(point_result));
+    return 0;
+}
+"""
+
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip().splitlines() == ["11", "8"]
 
 
 def test_c_list_pop_last_and_pop_at_return_expected_values(compile_and_run):
@@ -2573,7 +2663,7 @@ int main(void) {
 
 def test_c_trait_with_multiple_inheritance(compile_and_run):
     """Test that trait methods work correctly with proper struct layout."""
-    source = '''
+    source = """
 from mypy_extensions import trait
 
 @trait
@@ -2610,8 +2700,8 @@ class Person(Entity, Named, Describable):
 
     def greet(self) -> str:
         return "Hello"
-'''
-    test_main_c = '''
+"""
+    test_main_c = """
 #include <stdio.h>
 
 int main(void) {
@@ -2641,7 +2731,7 @@ int main(void) {
 
     return 0;
 }
-'''
+"""
 
     stdout = compile_and_run(source, "test", test_main_c)
     lines = stdout.strip().split("\n")
@@ -2653,11 +2743,11 @@ int main(void) {
 
 def test_c_async_coroutine_basic(compile_and_run):
     """Test that async functions create coroutines with proper methods."""
-    source = '''
+    source = """
 async def simple_coro() -> int:
     return 42
-'''
-    test_main_c = '''
+"""
+    test_main_c = """
 #include <stdio.h>
 
 int main(void) {
@@ -2687,7 +2777,7 @@ int main(void) {
 
     return 0;
 }
-'''
+"""
 
     stdout = compile_and_run(source, "test", test_main_c)
     lines = stdout.strip().split("\n")
@@ -2698,13 +2788,13 @@ int main(void) {
 
 def test_c_async_coroutine_send_method(compile_and_run):
     """Test that async coroutine send() stores value and calls iternext."""
-    source = '''
+    source = """
 async def add_values(x: int, y: int) -> int:
     return x + y
-'''
+"""
     # Note: send() now raises StopIteration when coroutine completes,
     # so we test using iternext() directly which returns MP_OBJ_STOP_ITERATION
-    test_main_c = '''
+    test_main_c = """
 #include <stdio.h>
 
 int main(void) {
@@ -2724,7 +2814,7 @@ int main(void) {
 
     return 0;
 }
-'''
+"""
 
     stdout = compile_and_run(source, "test", test_main_c)
     lines = stdout.strip().split("\n")
@@ -2734,11 +2824,11 @@ int main(void) {
 
 def test_c_async_coroutine_close_method(compile_and_run):
     """Test that async coroutine close() method works."""
-    source = '''
+    source = """
 async def simple() -> int:
     return 1
-'''
-    test_main_c = '''
+"""
+    test_main_c = """
 #include <stdio.h>
 
 int main(void) {
@@ -2755,7 +2845,7 @@ int main(void) {
 
     return 0;
 }
-'''
+"""
 
     stdout = compile_and_run(source, "test", test_main_c)
     lines = stdout.strip().split("\n")
@@ -2766,14 +2856,14 @@ int main(void) {
 
 def test_c_async_await_module_call(compile_and_run):
     """Test async function with await asyncio.sleep() pattern."""
-    source = '''
+    source = """
 import asyncio
 
 async def delayed_double(n: int) -> int:
     await asyncio.sleep(0)
     return n * 2
-'''
-    test_main_c = '''
+"""
+    test_main_c = """
 #include <stdio.h>
 
 int main(void) {
@@ -2797,7 +2887,7 @@ int main(void) {
 
     return 0;
 }
-'''
+"""
 
     stdout = compile_and_run(source, "test", test_main_c)
     lines = stdout.strip().split("\n")

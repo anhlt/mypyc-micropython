@@ -633,6 +633,7 @@ static inline mp_obj_t mp_binary_op(mp_binary_op_t op, mp_obj_t lhs, mp_obj_t rh
 #define MP_QSTR_breed   ((qstr)0x2016)
 #define MP_QSTR_color   ((qstr)0x2017)
 #define MP_QSTR_amount  ((qstr)0x2018)
+#define MP_QSTR_sorted  ((qstr)0x2019)
 #define MP_MOCK_TAG_ITER (0x173A)
 
 typedef struct {
@@ -1525,6 +1526,14 @@ static inline mp_obj_t mp_load_attr(mp_obj_t obj, qstr attr) {
         return (mp_obj_t)&_mp_mock_sleep_fn;
     }
     mp_mock_abort("mp_load_attr: unknown attr");
+    return mp_const_none;
+}
+
+static inline mp_obj_t mp_load_global(qstr qst) {
+    if (qst == MP_QSTR_sorted) {
+        return MP_OBJ_FROM_PTR(&mp_builtin_sorted_obj);
+    }
+    mp_mock_abort("mp_load_global: unknown qstr");
     return mp_const_none;
 }
 

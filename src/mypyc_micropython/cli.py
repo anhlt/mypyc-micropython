@@ -89,13 +89,21 @@ def dump_ir_command(source_path: Path, format: str, function_name: str | None) -
     from mypyc_micropython.ir import ModuleIR
 
     classes: dict = {}
-    builder = IRBuilder(module_name)
-    for node in ast.iter_child_nodes(tree):
-        if isinstance(node, ast.ClassDef):
-            class_ir = builder.build_class(node)
-            classes[class_ir.name] = class_ir
+    for py_file in sorted(source_path.parent.glob("*.py")):
+        sibling_source = py_file.read_text()
+        sibling_tree = ast.parse(sibling_source)
+        scanner = IRBuilder(py_file.stem)
+        for node in ast.iter_child_nodes(sibling_tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                scanner.register_import(node)
+            elif isinstance(node, ast.ClassDef):
+                class_ir = scanner.build_class(node)
+                classes[class_ir.name] = class_ir
 
     builder = IRBuilder(module_name, known_classes=classes)
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            builder.register_import(node)
 
     module_ir = ModuleIR(name=module_name, c_name=sanitize_name(module_name))
 
@@ -121,6 +129,7 @@ def dump_ir_command(source_path: Path, format: str, function_name: str | None) -
                     # Build method body IR for full dump
                     body = builder.build_method_body(method_ir, cls)
                     from mypyc_micropython.ir import FuncIR
+
                     func_ir = FuncIR(
                         name=method_ir.name,
                         c_name=method_ir.c_name,

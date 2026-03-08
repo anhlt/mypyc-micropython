@@ -29,6 +29,7 @@ from .ir import (
     ForIterIR,
     ForRangeIR,
     FuncIR,
+    FuncRefIR,
     IfExprIR,
     IfIR,
     InstrIR,
@@ -183,7 +184,8 @@ class BaseEmitter:
 
     def _emit_if(self, stmt: IfIR, native: bool = False) -> list[str]:
         lines = self._emit_prelude(stmt.test_prelude)
-        cond, _ = self._emit_expr(stmt.test, native)
+        cond, cond_type = self._emit_expr(stmt.test, native)
+        cond = self._to_bool_expr(cond, cond_type)
         lines.append(f"    if ({cond}) {{")
 
         for s in stmt.body:
@@ -201,7 +203,8 @@ class BaseEmitter:
 
     def _emit_while(self, stmt: WhileIR, native: bool = False) -> list[str]:
         lines = self._emit_prelude(stmt.test_prelude)
-        cond, _ = self._emit_expr(stmt.test, native)
+        cond, cond_type = self._emit_expr(stmt.test, native)
+        cond = self._to_bool_expr(cond, cond_type)
         lines.append(f"    while ({cond}) {{")
 
         self._loop_depth += 1
@@ -538,6 +541,8 @@ class BaseEmitter:
             return self._emit_const(value)
         elif isinstance(value, NameIR):
             return value.c_name, value.ir_type.to_c_type_str()
+        elif isinstance(value, FuncRefIR):
+            return f"MP_OBJ_FROM_PTR(&{value.c_name}_obj)", "mp_obj_t"
         elif isinstance(value, TempIR):
             return value.name, value.ir_type.to_c_type_str()
         elif isinstance(value, BinOpIR):
@@ -656,7 +661,11 @@ class BaseEmitter:
 
     def _emit_unaryop(self, op: UnaryOpIR, native: bool = False) -> tuple[str, str]:
         operand, op_type = self._emit_expr(op.operand, native)
-        result_type = "bool" if op.op == "!" else op_type
+        if op.op == "!":
+            # Boolean not: convert mp_obj_t to C bool first
+            bool_expr = self._to_bool_expr(operand, op_type)
+            return f"(!{bool_expr})", "bool"
+        result_type = op_type
         return f"({op.op}{operand})", result_type
 
     def _emit_compare(self, op: CompareIR, native: bool = False) -> tuple[str, str]:
@@ -689,14 +698,39 @@ class BaseEmitter:
             else:
                 # Regular comparison operators (==, !=, <, <=, >, >=)
                 if prev_type == "mp_obj_t" or right_type == "mp_obj_t":
-                    target = (
-                        right_type
-                        if right_type != "mp_obj_t"
-                        else (prev_type if prev_type != "mp_obj_t" else "mp_int_t")
-                    )
-                    prev = self._unbox_if_needed(prev, prev_type, target)
-                    right = self._unbox_if_needed(right, right_type, target)
-                parts.append(f"({prev} {c_op} {right})")
+                    # Both sides are boxed mp_obj_t with no concrete native type
+                    # -> use mp_obj_equal / mp_binary_op instead of unboxing to int
+                    both_boxed = prev_type == "mp_obj_t" and right_type == "mp_obj_t"
+                    if both_boxed:
+                        boxed_prev = self._box_value(prev, prev_type)
+                        boxed_right = self._box_value(right, right_type)
+                        if c_op == "==":
+                            parts.append(f"mp_obj_equal({boxed_prev}, {boxed_right})")
+                        elif c_op == "!=":
+                            parts.append(f"(!mp_obj_equal({boxed_prev}, {boxed_right}))")
+                        else:
+                            # Ordering: <, <=, >, >=
+                            binary_op_map = {
+                                "<": "MP_BINARY_OP_LESS",
+                                "<=": "MP_BINARY_OP_LESS_EQUAL",
+                                ">": "MP_BINARY_OP_MORE",
+                                ">=": "MP_BINARY_OP_MORE_EQUAL",
+                            }
+                            mp_op = binary_op_map[c_op]
+                            parts.append(
+                                f"mp_obj_is_true(mp_binary_op({mp_op}, {boxed_prev}, {boxed_right}))"
+                            )
+                    else:
+                        target = (
+                            right_type
+                            if right_type != "mp_obj_t"
+                            else prev_type
+                        )
+                        prev = self._unbox_if_needed(prev, prev_type, target)
+                        right = self._unbox_if_needed(right, right_type, target)
+                        parts.append(f"({prev} {c_op} {right})")
+                else:
+                    parts.append(f"({prev} {c_op} {right})")
 
             prev = right
             prev_type = right_type
@@ -939,9 +973,21 @@ class BaseEmitter:
         elif func == "sorted":
             self._mark_uses_builtins()
             if len(args) >= 1:
-                boxed = self._box_value(args[0][0], args[0][1])
+                boxed_iterable = self._box_value(args[0][0], args[0][1])
+                if call.kwargs:
+                    boxed_kwargs: list[str] = []
+                    for kw_name, kw_val in call.kwargs:
+                        kw_expr, kw_type = self._emit_expr(kw_val)
+                        boxed_kwargs.append(f"MP_OBJ_NEW_QSTR(MP_QSTR_{kw_name})")
+                        boxed_kwargs.append(self._box_value(kw_expr, kw_type))
+                    all_args = ", ".join([boxed_iterable] + boxed_kwargs)
+                    return (
+                        f"mp_call_function_n_kw(mp_load_global(MP_QSTR_sorted) /* mp_builtin_sorted_obj */, 1, {len(call.kwargs)}, "
+                        f"(const mp_obj_t[]){{{all_args}}})",
+                        "mp_obj_t",
+                    )
                 return (
-                    f"mp_call_function_1(MP_OBJ_FROM_PTR(&mp_builtin_sorted_obj), {boxed})",
+                    f"mp_call_function_1(mp_load_global(MP_QSTR_sorted) /* mp_builtin_sorted_obj */, {boxed_iterable})",
                     "mp_obj_t",
                 )
         elif func == "id" and args:
@@ -950,18 +996,11 @@ class BaseEmitter:
             boxed = self._box_value(arg_expr, arg_type)
             return f"(mp_int_t)(uintptr_t)({boxed})", "mp_int_t"
 
-            self._mark_uses_builtins()
-            if len(args) >= 1:
-                boxed = self._box_value(args[0][0], args[0][1])
-                return (
-                    f"mp_call_function_1(MP_OBJ_FROM_PTR(&mp_builtin_sorted_obj), {boxed})",
-                    "mp_obj_t",
-                )
-
         return "/* unsupported builtin */", "mp_obj_t"
 
     def _emit_ifexp(self, expr: IfExprIR, native: bool = False) -> tuple[str, str]:
-        test, _ = self._emit_expr(expr.test, native)
+        test, test_type = self._emit_expr(expr.test, native)
+        test = self._to_bool_expr(test, test_type)
         body, body_type = self._emit_expr(expr.body, native)
         orelse, _ = self._emit_expr(expr.orelse, native)
         return f"(({test}) ? ({body}) : ({orelse}))", body_type
@@ -1039,8 +1078,6 @@ class BaseEmitter:
         return (
             f"mp_obj_new_bound_meth(MP_OBJ_FROM_PTR(&{ref.method_c_name}_obj), MP_OBJ_FROM_PTR(self))"
         ), "mp_obj_t"
-
-
 
     def _emit_param_attr(self, attr: ParamAttrIR) -> tuple[str, str]:
         # For trait-typed parameters, use dynamic attribute lookup
@@ -1187,7 +1224,9 @@ class BaseEmitter:
             f"MP_QSTR_{attr.attr_name})"
         ), "mp_obj_t"
 
-    def _emit_sibling_module_call(self, call: SiblingModuleCallIR, native: bool = False) -> tuple[str, str]:
+    def _emit_sibling_module_call(
+        self, call: SiblingModuleCallIR, native: bool = False
+    ) -> tuple[str, str]:
         """Emit C code for calling a function on a sibling module.
 
         Since sibling modules are compiled together in the same package,
@@ -1212,7 +1251,9 @@ class BaseEmitter:
         else:
             return f"{c_func_name}()", "mp_obj_t"
 
-    def _emit_sibling_class_instantiation(self, inst: SiblingClassInstantiationIR, native: bool = False) -> tuple[str, str]:
+    def _emit_sibling_class_instantiation(
+        self, inst: SiblingClassInstantiationIR, native: bool = False
+    ) -> tuple[str, str]:
         """Emit C code for instantiating a class from a sibling module.
 
         Since sibling modules are compiled together in the same package,
@@ -1238,9 +1279,8 @@ class BaseEmitter:
             args_array = ", ".join(boxed_args)
             return (
                 f"{c_class_name}_make_new(&{c_class_name}_type, {n_args}, 0, (const mp_obj_t[]){{{args_array}}})",
-                "mp_obj_t"
+                "mp_obj_t",
             )
-
 
     def _box_value(self, expr: str, expr_type: str) -> str:
         if expr_type == "mp_int_t":
@@ -1248,7 +1288,7 @@ class BaseEmitter:
         elif expr_type == "mp_float_t":
             return f"mp_obj_new_float({expr})"
         elif expr_type == "bool":
-            return f"({expr} ? mp_const_true : mp_const_false)"
+            return f"mp_obj_new_bool({expr})"
         return expr
 
     def _unbox_if_needed(self, expr: str, expr_type: str, target_type: str = "mp_int_t") -> str:
@@ -1299,7 +1339,6 @@ class FunctionEmitter(BaseEmitter):
         """Emit a forward declaration for this function."""
         c_sig, _ = self._emit_signature()
         return c_sig + ";"
-
 
     def _emit_signature(self) -> tuple[str, str]:
         num_args = len(self.func_ir.params)
@@ -1628,6 +1667,24 @@ class MethodEmitter(BaseEmitter):
             f"mp_obj_new_bound_meth(MP_OBJ_FROM_PTR(&{ref.method_c_name}_obj), MP_OBJ_FROM_PTR(self))"
         ), "mp_obj_t"
 
+    def _emit_self_method_call(
+        self, call: SelfMethodCallIR, native: bool = False
+    ) -> tuple[str, str]:
+        method_ir = self.class_ir.methods.get(call.method_name)
+        args = ["self"]
+        for i, arg in enumerate(call.args):
+            arg_expr, arg_type = self._emit_expr(arg, native)
+            target_type = arg.ir_type.to_c_type_str()
+            if method_ir is not None and i < len(method_ir.params):
+                target_type = method_ir.params[i][1].to_c_type_str()
+            if target_type == "mp_obj_t":
+                args.append(self._box_value(arg_expr, arg_type))
+            elif native:
+                args.append(self._unbox_if_needed(arg_expr, arg_type, target_type))
+            else:
+                args.append(self._unbox_if_needed(arg_expr, arg_type, target_type))
+        args_str = ", ".join(args)
+        return f"{call.c_method_name}_native({args_str})", call.return_type.to_c_type_str()
 
     def emit_native(self, body: list[StmtIR]) -> str:
         method_ir = self.method_ir
@@ -1737,7 +1794,9 @@ class MethodEmitter(BaseEmitter):
                         f"    mp_int_t {param_name} = (n_args > {arg_index}) ? mp_obj_get_int({src}) : {default_val};"
                     )
                 elif param_type == CType.MP_FLOAT_T:
-                    default_val = default_arg.value if isinstance(default_arg.value, (int, float)) else 0.0
+                    default_val = (
+                        default_arg.value if isinstance(default_arg.value, (int, float)) else 0.0
+                    )
                     lines.append(
                         f"    mp_float_t {param_name} = (n_args > {arg_index}) ? mp_obj_get_float({src}) : {default_val};"
                     )

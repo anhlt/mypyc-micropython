@@ -640,6 +640,80 @@ class TestComparisonOperations:
         assert f"(a {c_op} b)" in result
 
 
+class TestObjectComparisons:
+    """Tests for comparison operations between boxed mp_obj_t values."""
+
+    def test_str_eq_uses_mp_obj_equal(self):
+        source = '''
+def check_str(s: str) -> bool:
+    return s == "hello"
+'''
+        result = compile_source(source, "test")
+        assert "mp_obj_equal" in result
+        assert "mp_obj_get_int" not in result or "mp_obj_get_int(s" not in result
+
+    def test_str_ne_uses_mp_obj_equal(self):
+        source = '''
+def check_ne(s: str) -> bool:
+    return s != ""
+'''
+        result = compile_source(source, "test")
+        assert "mp_obj_equal" in result
+
+    def test_str_eq_empty_string(self):
+        source = '''
+def is_empty(s: str) -> bool:
+    return s == ""
+'''
+        result = compile_source(source, "test")
+        assert "mp_obj_equal" in result
+        # Must NOT unbox strings to int
+        assert 'mp_obj_get_int(mp_obj_new_str' not in result
+
+    def test_object_eq_uses_mp_obj_equal(self):
+        source = '''
+def check_eq(a: object, b: object) -> bool:
+    return a == b
+'''
+        result = compile_source(source, "test")
+        assert "mp_obj_equal" in result
+
+    def test_object_ne_uses_mp_obj_equal(self):
+        source = '''
+def check_ne(a: object, b: object) -> bool:
+    return a != b
+'''
+        result = compile_source(source, "test")
+        assert "!mp_obj_equal" in result
+
+    def test_int_compare_still_unboxes(self):
+        """Ensure int comparisons still use native C operators."""
+        source = '''
+def cmp(a: int, b: int) -> bool:
+    return a == b
+'''
+        result = compile_source(source, "test")
+        assert "(a == b)" in result
+
+    def test_mixed_int_obj_unboxes(self):
+        """When one side is int and other is mp_obj_t, unbox to int."""
+        source = '''
+def check(a: int, b: object) -> bool:
+    return a == b
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_obj_get_int" in result
+
+    def test_object_ordering_uses_binary_op(self):
+        """Ordering comparisons on mp_obj_t use mp_binary_op."""
+        source = '''
+def less(a: str, b: str) -> bool:
+    return a < b
+'''
+        result = compile_source(source, "test")
+        assert "MP_BINARY_OP_LESS" in result
+
+
 class TestUnaryOperations:
     """Tests for unary operation translation."""
 
@@ -2176,7 +2250,7 @@ class Calculator:
 
     def test_class_init_with_default_args(self):
         """Test class __init__ with default arguments."""
-        source = '''
+        source = """
 class App:
     model: int
     modulo: int
@@ -2186,7 +2260,7 @@ class App:
         self.model = model0 % modulo
         self.modulo = modulo
         self.capacity = capacity
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Check mp_arg_check_num allows 1-3 args (model0 required, modulo/capacity optional)
         assert "mp_arg_check_num(n_args, n_kw, 1, 3, false)" in result
@@ -2195,7 +2269,9 @@ class App:
         assert "(n_args > 2) ? args[2]" in result or "init_args[3] = (n_args > 2)" in result
         # Check __init__ wrapper uses VAR_BETWEEN with min/max
         assert "MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN" in result
-        assert "test_App___init___obj, 2, 4" in result  # 2 min (self + model0), 4 max (self + 3 params)
+        assert (
+            "test_App___init___obj, 2, 4" in result
+        )  # 2 min (self + model0), 4 max (self + 3 params)
 
 
 class TestStaticMethod:
@@ -3694,6 +3770,194 @@ def process(d: Data) -> int:
         assert "mp_const_none" not in result or "return mp_const_none" in result
 
 
+class TestOptionalNarrowing:
+    def test_optional_param_no_guard_uses_dynamic(self):
+        source = """
+class Point:
+    x: int
+
+def get_x(p: Point | None):
+    return p.x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "return mp_load_attr(p, MP_QSTR_x);" in result
+
+    def test_optional_param_is_not_none_uses_static(self):
+        source = """
+class Point:
+    x: int
+
+def get_x(p: Point | None) -> int:
+    if p is not None:
+        return p.x
+    return 0
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "if ((p != mp_const_none))" in result
+        assert "return mp_obj_new_int(((test_Point_obj_t *)MP_OBJ_TO_PTR(p))->x);" in result
+        assert "mp_load_attr(p, MP_QSTR_x)" not in result
+
+    def test_optional_param_early_return_guard(self):
+        source = """
+class Point:
+    x: int
+
+def get_x(p: Point | None) -> int:
+    if p is None:
+        return 0
+    return p.x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "if ((p == mp_const_none))" in result
+        assert "return mp_obj_new_int(((test_Point_obj_t *)MP_OBJ_TO_PTR(p))->x);" in result
+        assert "mp_load_attr(p, MP_QSTR_x)" not in result
+
+    def test_optional_param_else_branch_narrowing(self):
+        source = """
+class Point:
+    x: int
+
+def get_x(p: Point | None) -> int:
+    if p is None:
+        return -1
+    else:
+        return p.x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "if ((p == mp_const_none))" in result
+        assert "return mp_obj_new_int(((test_Point_obj_t *)MP_OBJ_TO_PTR(p))->x);" in result
+        assert "mp_load_attr(p, MP_QSTR_x)" not in result
+
+    def test_optional_multiple_params(self):
+        source = """
+class Point:
+    x: int
+
+def sum_x(p1: Point | None, p2: Point | None) -> int:
+    total: int = 0
+    if p1 is not None:
+        total += p1.x
+    if p2 is not None:
+        total += p2.x
+    return total
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "if ((p1 != mp_const_none))" in result
+        assert "if ((p2 != mp_const_none))" in result
+        assert "MP_OBJ_TO_PTR(p1)" in result
+        assert "MP_OBJ_TO_PTR(p2)" in result
+        assert "mp_load_attr" not in result
+
+    def test_non_optional_param_always_static(self):
+        source = """
+class Point:
+    x: int
+
+def get_x(p: Point) -> int:
+    return p.x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "return mp_obj_new_int(((test_Point_obj_t *)MP_OBJ_TO_PTR(p))->x);" in result
+        assert "mp_load_attr(p, MP_QSTR_x)" not in result
+
+    def test_optional_param_in_method(self):
+        source = """
+class Point:
+    x: int
+
+class Reader:
+    def read_x(self, p: Point | None) -> int:
+        if p is None:
+            return 0
+        return p.x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "if ((p == mp_const_none))" in result
+        assert "MP_OBJ_TO_PTR(p)" in result
+        assert "mp_load_attr(p, MP_QSTR_x)" not in result
+
+    def test_optional_local_var(self):
+        source = """
+class Point:
+    x: int
+
+def get_x(flag: bool, p: Point) -> int:
+    q: Point | None = None
+    if flag:
+        q = p
+    if q is None:
+        return 0
+    return q.x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "if ((q == mp_const_none))" in result
+        assert "return mp_obj_new_int(((test_Point_obj_t *)MP_OBJ_TO_PTR(q))->x);" in result
+        assert "mp_load_attr(q, MP_QSTR_x)" not in result
+
+    def test_non_optional_union_not_treated_as_class(self):
+        """Point | int should NOT get direct struct access -- it's not X | None."""
+        source = """
+class Point:
+    x: int
+
+def get_x(p: Point | int) -> int:
+    return p.x
+"""
+        result = compile_source(source, "test", type_check=False)
+        # Must NOT use direct struct access -- we don't know if p is Point or int
+        assert "MP_OBJ_TO_PTR(p)" not in result
+        assert "((test_Point_obj_t *)MP_OBJ_TO_PTR(p))->x" not in result
+
+    def test_two_class_union_not_treated_as_concrete(self):
+        """Point | Rect (two classes, no None) must use dynamic dispatch."""
+        source = """
+class Point:
+    x: int
+
+class Rect:
+    x: int
+
+def get_x(p: Point | Rect) -> int:
+    return p.x
+"""
+        result = compile_source(source, "test", type_check=False)
+        # Must NOT use direct struct access for either class
+        assert "((test_Point_obj_t *)MP_OBJ_TO_PTR(p))->x" not in result
+        assert "((test_Rect_obj_t *)MP_OBJ_TO_PTR(p))->x" not in result
+
+    def test_optional_local_in_method_dynamic_until_narrowed(self):
+        """Method-local q: Point | None must use dynamic dispatch until narrowed."""
+        source = """
+class Point:
+    x: int
+
+class Processor:
+    def process(self, p: Point) -> int:
+        q: Point | None = None
+        q = p
+        if q is not None:
+            return q.x
+        return 0
+"""
+        result = compile_source(source, "test", type_check=False)
+        # After narrowing, should use static dispatch
+        assert "MP_OBJ_TO_PTR(q)" in result
+
+    def test_optional_local_in_method_no_guard_is_dynamic(self):
+        """Method-local q: Point | None without guard must use mp_load_attr."""
+        source = """
+class Point:
+    x: int
+
+class Processor:
+    def process(self, p: Point) -> int:
+        q: Point | None = p
+        return q.x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_load_attr(q, MP_QSTR_x)" in result
+
+
 class TestChainedClassAttrAccess:
     """Tests for chained attribute access on nested class types."""
 
@@ -5059,12 +5323,12 @@ def combo(n: int) -> int:
 
     def test_module_call_with_kwargs(self):
         """Module call with keyword arguments: module.func(a, key=value)."""
-        source = '''
+        source = """
 import nav
 
 def create_nav() -> object:
     return nav.Nav(capacity=8, builders=())  # noqa: type - demo kwargs
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should use mp_call_function_n_kw
         assert "mp_call_function_n_kw" in result
@@ -5076,12 +5340,12 @@ def create_nav() -> object:
 
     def test_module_call_mixed_args_kwargs(self):
         """Module call with positional and keyword arguments."""
-        source = '''
+        source = """
 import nav
 
 def create_nav2(cap: int) -> object:
     return nav.Nav(cap, builders=())  # noqa: type - demo mixed
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should use mp_call_function_n_kw with n_args=1, n_kw=1
         assert "mp_call_function_n_kw(" in result
@@ -5822,7 +6086,7 @@ class TestTraitSystem:
 
     def test_trait_decorator_detected(self):
         """Test that @trait decorator is recognized."""
-        source = '''
+        source = """
 from mypy_extensions import trait
 
 @trait
@@ -5830,7 +6094,7 @@ class Named:
     name: str
     def get_name(self) -> str:
         return self.name
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Trait should not have make_new slot
         assert "make_new, test_Named_make_new" not in result
@@ -5839,7 +6103,7 @@ class Named:
 
     def test_trait_with_concrete_base(self):
         """Test class inheriting concrete base + trait."""
-        source = '''
+        source = """
 from mypy_extensions import trait
 
 @trait
@@ -5859,7 +6123,7 @@ class Person(Entity, Named):
         self.id = id
         self.name = name
         self.age = age
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Person should have Entity as parent
         assert "parent, &test_Entity_type" in result
@@ -5870,7 +6134,7 @@ class Person(Entity, Named):
 
     def test_multiple_traits(self):
         """Test class inheriting multiple traits."""
-        source = '''
+        source = """
 from mypy_extensions import trait
 
 @trait
@@ -5893,7 +6157,7 @@ class Person(Entity, Named, Describable):
         self.age = age
     def describe(self) -> str:
         return "person"
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Person should exist and have Entity as parent
         assert "test_Person_type" in result
@@ -5904,7 +6168,7 @@ class Person(Entity, Named, Describable):
 
     def test_trait_only_inheritance(self):
         """Test class inheriting only from trait (no concrete base)."""
-        source = '''
+        source = """
 from mypy_extensions import trait
 
 @trait
@@ -5918,7 +6182,7 @@ class Document(Printable):
         self.title = title
     def to_string(self) -> str:
         return self.title
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Document should have make_new
         assert "test_Document_make_new" in result
@@ -5927,7 +6191,7 @@ class Document(Printable):
 
     def test_simple_trait_decorator(self):
         """Test simple @trait decorator (without mypy_extensions import)."""
-        source = '''
+        source = """
 def trait(cls):
     return cls
 
@@ -5940,17 +6204,16 @@ class Named:
 class Person(Named):
     def __init__(self, name: str) -> None:
         self.name = name
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Named should be detected as trait
         assert "make_new, test_Named_make_new" not in result
         # Person should have make_new
         assert "test_Person_make_new" in result
 
-
     def test_trait_typed_parameter_attribute_access(self):
         """Test that attribute access on trait-typed parameters uses dynamic lookup."""
-        source = '''
+        source = """
 from mypy_extensions import trait
 
 @trait
@@ -5967,7 +6230,7 @@ class Person(Named):
 
 def get_name_from_trait(obj: Named) -> str:
     return obj.name
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Trait-typed parameter should use mp_load_attr, not direct struct access
         assert "mp_load_attr(obj, MP_QSTR_name)" in result
@@ -5976,7 +6239,7 @@ def get_name_from_trait(obj: Named) -> str:
 
     def test_concrete_class_param_uses_direct_access(self):
         """Test that non-trait class params still use direct struct access."""
-        source = '''
+        source = """
 class Point:
     x: int
     y: int
@@ -5986,7 +6249,7 @@ class Point:
 
 def get_x(p: Point) -> int:
     return p.x
-'''
+"""
         result = compile_source(source, "test")
         # Regular class should use direct struct access
         assert "((test_Point_obj_t *)MP_OBJ_TO_PTR(p))->x" in result
@@ -5999,10 +6262,10 @@ class TestAsyncFunctions:
 
     def test_simple_async_function_compiles(self):
         """Test that a simple async function compiles to coroutine type."""
-        source = '''
+        source = """
 async def simple_coro() -> int:
     return 42
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should have coroutine struct
         assert "typedef struct _test_simple_coro_coro_t" in result
@@ -6020,11 +6283,11 @@ async def simple_coro() -> int:
 
     def test_async_function_with_await_compiles(self):
         """Test that await expressions compile correctly."""
-        source = '''
+        source = """
 async def fetch_data() -> int:
     result = await some_async_op()
     return result
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should have result field in struct
         assert "mp_obj_t result;" in result
@@ -6035,10 +6298,10 @@ async def fetch_data() -> int:
 
     def test_async_function_with_await_discarded(self):
         """Test that await without assignment works."""
-        source = '''
+        source = """
 async def do_something() -> None:
     await some_async_op()
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should compile without result storage
         assert "static mp_obj_t test_do_something_coro_iternext" in result
@@ -6047,12 +6310,12 @@ async def do_something() -> None:
 
     def test_async_function_multiple_awaits(self):
         """Test that multiple await expressions each get their own state."""
-        source = '''
+        source = """
 async def multi_await() -> int:
     x = await first_op()
     y = await second_op()
     return x + y
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should have multiple states
         assert "case 1: goto state_1;" in result
@@ -6063,11 +6326,11 @@ async def multi_await() -> int:
 
     def test_async_function_with_parameters(self):
         """Test async function with parameters."""
-        source = '''
+        source = """
 async def process(n: int) -> int:
     result = await compute(n)
     return result
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should have parameter in struct
         assert "mp_int_t n;" in result
@@ -6078,10 +6341,10 @@ async def process(n: int) -> int:
 
     def test_async_coroutine_type_has_all_methods(self):
         """Test that coroutine type has send and __await__ in locals dict."""
-        source = '''
+        source = """
 async def my_coro() -> None:
     pass
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should have locals dict with both methods
         assert "MP_QSTR_send" in result
@@ -6090,11 +6353,11 @@ async def my_coro() -> None:
 
     def test_await_module_function_call(self):
         """Test await on module.func() pattern like asyncio.sleep()."""
-        source = '''
+        source = """
 async def with_sleep() -> int:
     await asyncio.sleep(0)
     return 42
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should import module at runtime using qstr_from_str for dynamic lookup
         assert 'mp_import_name(qstr_from_str("asyncio")' in result
@@ -6107,11 +6370,11 @@ async def with_sleep() -> int:
 
     def test_await_module_function_with_result(self):
         """Test await on module.func() with result stored."""
-        source = '''
+        source = """
 async def fetch_with_delay() -> int:
     result = await asyncio.sleep_ms(100)
     return 42
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should have result field
         assert "mp_obj_t result;" in result
@@ -6120,21 +6383,21 @@ async def fetch_with_delay() -> int:
 
     def test_await_module_function_multiple_args(self):
         """Test await on module.func() with multiple arguments."""
-        source = '''
+        source = """
 async def fetch_data() -> int:
     await some_module.fetch(1, 2)
     return 0
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should call with two arguments
         assert "mp_call_function_2(_fn," in result
 
     def test_await_module_function_no_args(self):
         """Test await on module.func() with no arguments."""
-        source = '''
+        source = """
 async def ping() -> None:
     await network.ping()
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should call with zero arguments
         assert "mp_call_function_0(_fn)" in result
@@ -6293,7 +6556,7 @@ class TestAutoNarrowing:
 
     def test_auto_narrow_basic(self):
         """isinstance(a, Dog) should auto-narrow a to Dog in if-body."""
-        source = '''
+        source = """
 class Animal:
     name: str
     def __init__(self, name: str) -> None:
@@ -6309,14 +6572,14 @@ def get_breed(a: object) -> str:
     if isinstance(a, Dog):
         return a.breed
     return "unknown"
-'''
-        result = compile_source(source, 'test')
+"""
+        result = compile_source(source, "test")
         # Direct struct access (auto-narrowed) -- no manual 'd: Dog = a' needed
-        assert '((test_Dog_obj_t *)MP_OBJ_TO_PTR(a))->breed' in result
+        assert "((test_Dog_obj_t *)MP_OBJ_TO_PTR(a))->breed" in result
 
     def test_auto_narrow_no_leak(self):
         """Narrowing should not leak outside the if-block."""
-        source = '''
+        source = """
 class Dog:
     breed: str
     def __init__(self, breed: str) -> None:
@@ -6326,16 +6589,16 @@ def check(a: object) -> str:
     if isinstance(a, Dog):
         x: str = a.breed
     return str(a)
-'''
-        result = compile_source(source, 'test', type_check=False)
+"""
+        result = compile_source(source, "test", type_check=False)
         # Inside if: direct struct access
-        assert '((test_Dog_obj_t *)MP_OBJ_TO_PTR(a))->breed' in result
+        assert "((test_Dog_obj_t *)MP_OBJ_TO_PTR(a))->breed" in result
         # a.breed accessed only once via direct struct (not leaked)
-        assert result.count('((test_Dog_obj_t *)MP_OBJ_TO_PTR(a))->breed') == 1
+        assert result.count("((test_Dog_obj_t *)MP_OBJ_TO_PTR(a))->breed") == 1
 
     def test_auto_narrow_negated(self):
         """not isinstance(a, Dog) should narrow in the else branch."""
-        source = '''
+        source = """
 class Dog:
     breed: str
     def __init__(self, breed: str) -> None:
@@ -6346,14 +6609,14 @@ def get_breed_negated(a: object) -> str:
         return "not a dog"
     else:
         return a.breed
-'''
-        result = compile_source(source, 'test', type_check=False)
+"""
+        result = compile_source(source, "test", type_check=False)
         # In the else branch, a should be narrowed to Dog
-        assert '((test_Dog_obj_t *)MP_OBJ_TO_PTR(a))->breed' in result
+        assert "((test_Dog_obj_t *)MP_OBJ_TO_PTR(a))->breed" in result
 
     def test_auto_narrow_elif_chain(self):
         """Each elif branch should narrow independently."""
-        source = '''
+        source = """
 class Dog:
     breed: str
     def __init__(self, breed: str) -> None:
@@ -6370,14 +6633,14 @@ def describe(a: object) -> str:
     elif isinstance(a, Cat):
         return a.color
     return "unknown"
-'''
-        result = compile_source(source, 'test', type_check=False)
-        assert '((test_Dog_obj_t *)MP_OBJ_TO_PTR(a))->breed' in result
-        assert '((test_Cat_obj_t *)MP_OBJ_TO_PTR(a))->color' in result
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "((test_Dog_obj_t *)MP_OBJ_TO_PTR(a))->breed" in result
+        assert "((test_Cat_obj_t *)MP_OBJ_TO_PTR(a))->color" in result
 
     def test_auto_narrow_method_context(self):
         """isinstance narrowing works inside class methods."""
-        source = '''
+        source = """
 class Shape:
     name: str
     def __init__(self, name: str) -> None:
@@ -6394,14 +6657,14 @@ class Checker:
         if isinstance(s, Circle):
             return s.radius
         return 0
-'''
-        result = compile_source(source, 'test', type_check=False)
+"""
+        result = compile_source(source, "test", type_check=False)
         # Method context should also auto-narrow
-        assert '((test_Circle_obj_t *)MP_OBJ_TO_PTR(s))->radius' in result
+        assert "((test_Circle_obj_t *)MP_OBJ_TO_PTR(s))->radius" in result
 
     def test_auto_narrow_mvu_pattern(self):
         """MVU-style dispatch without manual narrowing annotations."""
-        source = '''
+        source = """
 from dataclasses import dataclass
 
 @dataclass(frozen=True)
@@ -6423,11 +6686,11 @@ def process(msg: object, count: int) -> int:
     elif isinstance(msg, Reset):
         return 0
     return count
-'''
-        result = compile_source(source, 'test', type_check=False)
+"""
+        result = compile_source(source, "test", type_check=False)
         # Each branch should auto-narrow to access the correct field
-        assert '((test_Increment_obj_t *)MP_OBJ_TO_PTR(msg))->amount' in result
-        assert '((test_SetValue_obj_t *)MP_OBJ_TO_PTR(msg))->value' in result
+        assert "((test_Increment_obj_t *)MP_OBJ_TO_PTR(msg))->amount" in result
+        assert "((test_SetValue_obj_t *)MP_OBJ_TO_PTR(msg))->value" in result
 
 
 class TestEnumOperations:
@@ -6435,14 +6698,14 @@ class TestEnumOperations:
 
     def test_basic_int_enum(self):
         """Test basic IntEnum compilation."""
-        source = '''
+        source = """
 from enum import IntEnum
 
 class Color(IntEnum):
     RED = 1
     GREEN = 2
     BLUE = 3
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "MP_ROM_INT(1)" in result
         assert "MP_ROM_INT(2)" in result
@@ -6453,14 +6716,14 @@ class Color(IntEnum):
 
     def test_enum_with_annotated_assignments(self):
         """Test enum with type-annotated members."""
-        source = '''
+        source = """
 from enum import IntEnum
 
 class Status(IntEnum):
     OK: int = 200
     NOT_FOUND: int = 404
     ERROR: int = 500
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "MP_QSTR_Status_OK" in result
         assert "MP_ROM_INT(200)" in result
@@ -6471,7 +6734,7 @@ class Status(IntEnum):
 
     def test_enum_member_access_in_function(self):
         """Test enum member access resolves to compile-time constant."""
-        source = '''
+        source = """
 from enum import IntEnum
 
 class Color(IntEnum):
@@ -6481,14 +6744,14 @@ class Color(IntEnum):
 
 def get_red() -> int:
     return Color.RED
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Color.RED should resolve to compile-time constant 1
         assert "mp_obj_new_int(1)" in result
 
     def test_enum_member_in_comparison(self):
         """Test enum member used in comparison."""
-        source = '''
+        source = """
 from enum import IntEnum
 
 class Direction(IntEnum):
@@ -6499,21 +6762,21 @@ class Direction(IntEnum):
 
 def is_vertical(d: int) -> bool:
     return d == Direction.UP or d == Direction.DOWN
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Direction.UP/DOWN should resolve to 0/1
         assert "(d == 0)" in result or "(d ==0)" in result or "d == 0" in result
 
     def test_enum_negative_values(self):
         """Test enum with negative values."""
-        source = '''
+        source = """
 from enum import IntEnum
 
 class Offset(IntEnum):
     NEGATIVE = -10
     ZERO = 0
     POSITIVE = 10
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "MP_ROM_INT(-10)" in result
         assert "MP_ROM_INT(0)" in result
@@ -6521,7 +6784,7 @@ class Offset(IntEnum):
 
     def test_enum_bitwise_values(self):
         """Test enum with bitwise shift expressions."""
-        source = '''
+        source = """
 from enum import IntEnum
 
 class Permission(IntEnum):
@@ -6529,7 +6792,7 @@ class Permission(IntEnum):
     WRITE = 1 << 1
     EXECUTE = 1 << 2
     ALL = 7
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "MP_QSTR_Permission_READ" in result
         assert "MP_ROM_INT(1)" in result
@@ -6541,13 +6804,13 @@ class Permission(IntEnum):
 
     def test_enum_not_treated_as_class(self):
         """Test that enum classes do NOT generate struct/type definitions."""
-        source = '''
+        source = """
 from enum import IntEnum
 
 class Color(IntEnum):
     RED = 1
     GREEN = 2
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should NOT have class struct or type object
         assert "Color_obj_t" not in result
@@ -6556,7 +6819,7 @@ class Color(IntEnum):
 
     def test_enum_with_regular_class(self):
         """Test enum coexists with regular classes."""
-        source = '''
+        source = """
 from enum import IntEnum
 
 class Color(IntEnum):
@@ -6569,7 +6832,7 @@ class Point:
     def __init__(self, x: int, y: int) -> None:
         self.x = x
         self.y = y
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should have enum entries
         assert "MP_QSTR_Color_RED" in result
@@ -6580,7 +6843,7 @@ class Point:
 
     def test_enum_multiple_enums(self):
         """Test multiple enum classes in one module."""
-        source = '''
+        source = """
 from enum import IntEnum
 
 class Color(IntEnum):
@@ -6590,7 +6853,7 @@ class Color(IntEnum):
 class Direction(IntEnum):
     UP = 0
     DOWN = 1
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "MP_QSTR_Color_RED" in result
         assert "MP_QSTR_Color_GREEN" in result
@@ -6599,14 +6862,14 @@ class Direction(IntEnum):
 
     def test_enum_bare_enum_base(self):
         """Test enum using bare Enum (not IntEnum)."""
-        source = '''
+        source = """
 from enum import Enum
 
 class State(Enum):
     IDLE = 0
     RUNNING = 1
     STOPPED = 2
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "MP_QSTR_State_IDLE" in result
         assert "MP_ROM_INT(0)" in result
@@ -6615,7 +6878,7 @@ class State(Enum):
 
     def test_enum_used_as_function_arg(self):
         """Test passing enum member as function argument."""
-        source = '''
+        source = """
 from enum import IntEnum
 
 class Mode(IntEnum):
@@ -6627,7 +6890,291 @@ def set_mode(mode: int) -> int:
 
 def use_enum() -> int:
     return set_mode(Mode.FAST)
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Mode.FAST should resolve to 0
         assert "mp_obj_new_int(0)" in result
+
+
+class TestModuleLevelMutableVars:
+    def test_module_level_dict_annassign_emits_static_and_init(self):
+        source = """
+_REGISTRY: dict = {}
+
+def put(k: int, v: int) -> None:
+    _REGISTRY[k] = v
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "static mp_obj_t test__REGISTRY;" in result
+        assert "test__module_init" in result
+        assert "test__REGISTRY = mp_obj_new_dict(0);" in result
+
+
+class TestSortedBuiltinRuntimeLookup:
+    def test_sorted_uses_runtime_global_lookup(self):
+        source = """
+def sort_list(lst: list) -> list:
+    return sorted(lst)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_load_global(MP_QSTR_sorted)" in result
+
+    def test_sorted_with_key_kwarg_uses_n_kw(self):
+        source = """
+def key_fn(x: int) -> int:
+    return x
+
+def sort_list(lst: list) -> list:
+    return sorted(lst, key=key_fn)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_load_global(MP_QSTR_sorted)" in result
+        assert "MP_OBJ_NEW_QSTR(MP_QSTR_key)" in result
+        assert "mp_call_function_n_kw" in result
+
+
+class TestCrossModuleEnumResolution:
+    def test_compile_package_resolves_enum_from_sibling_module(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pkg_dir = Path(tmpdir) / "mvu_pkg"
+            pkg_dir.mkdir(parents=True)
+            (pkg_dir / "__init__.py").write_text("def v() -> int:\n    return 1\n")
+            (pkg_dir / "attrs.py").write_text(
+                "from enum import IntEnum\n\nclass AttrKey(IntEnum):\n    CHECKED = 143\n"
+            )
+            (pkg_dir / "builders.py").write_text(
+                "from .attrs import AttrKey\n\n"
+                "def checked_key() -> int:\n"
+                "    return AttrKey.CHECKED\n"
+            )
+
+            result = compile_package(pkg_dir, type_check=False)
+
+        assert result.success is True
+        assert "mvu_pkg_builders_checked_key" in result.c_code
+        assert "mp_obj_new_int(143)" in result.c_code
+
+
+class TestMethodArgBoxing:
+    def test_bool_arg_boxed_for_object_param_in_self_method_call(self):
+        source = """
+class Builder:
+    def set_attr(self, key: int, value: object) -> None:
+        return None
+
+    def checked(self, state: bool) -> None:
+        self.set_attr(1, state)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "set_attr_native(self, 1, mp_obj_new_bool(state))" in result
+
+    def test_int_arg_boxed_for_object_param(self):
+        source = """
+class Renderer:
+    def emit(self, key: int, value: object) -> None:
+        return None
+
+    def emit_int(self, k: int, v: int) -> None:
+        self.emit(k, v)
+"""
+        result = compile_source(source, "test", type_check=False)
+        # int v must be boxed when passed to object param
+        assert "emit_native(self," in result
+        assert "mp_obj_new_int(v)" in result
+
+    def test_native_type_not_boxed_for_matching_param(self):
+        source = """
+class Counter:
+    def add(self, a: int, b: int) -> int:
+        return a + b
+
+    def double(self, x: int) -> int:
+        return self.add(x, x)
+"""
+        result = compile_source(source, "test", type_check=False)
+        # int x passed to int param should NOT be boxed
+        assert "add_native(self, x, x)" in result
+
+
+class TestModuleLevelMutableVarsExtended:
+    def test_module_level_list_emits_static_and_init(self):
+        source = """
+_ITEMS: list = []
+
+def add(x: int) -> None:
+    _ITEMS.append(x)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "static mp_obj_t test__ITEMS;" in result
+        assert "test__ITEMS = mp_obj_new_list(0, NULL);" in result
+        assert "test__module_init" in result
+
+    def test_module_var_name_appears_in_function_body(self):
+        source = """
+_CACHE: dict = {}
+
+def get(k: int) -> object:
+    return _CACHE[k]
+"""
+        result = compile_source(source, "test", type_check=False)
+        # Function should reference the static global
+        assert "test__CACHE" in result
+        assert "mp_obj_subscr(test__CACHE" in result
+
+    def test_module_var_init_called_in_every_function(self):
+        source = """
+_DATA: dict = {}
+
+def write(k: int, v: int) -> None:
+    _DATA[k] = v
+
+def read(k: int) -> object:
+    return _DATA[k]
+"""
+        result = compile_source(source, "test", type_check=False)
+        # Init helper should be called in each function body
+        count = result.count("test__module_init();")
+        assert count >= 2, f"Expected init call in both functions, found {count}"
+
+    def test_typed_dict_var_recognized(self):
+        source = """
+_MAP: dict[str, int] = {}
+
+def store(k: str, v: int) -> None:
+    _MAP[k] = v
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "static mp_obj_t test__MAP;" in result
+        assert "test__MAP = mp_obj_new_dict(0);" in result
+
+    def test_regular_constant_not_treated_as_module_var(self):
+        source = """
+MAX_SIZE: int = 100
+
+def get_max() -> int:
+    return MAX_SIZE
+"""
+        result = compile_source(source, "test", type_check=False)
+        # int constant should NOT generate static var or init helper
+        assert "static mp_obj_t test_MAX_SIZE" not in result
+        assert "module_init" not in result
+
+
+class TestSortedBuiltinExtended:
+    def test_sorted_with_reverse_kwarg(self):
+        source = """
+def sort_desc(lst: list) -> list:
+    return sorted(lst, reverse=True)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_call_function_n_kw" in result
+        assert "MP_OBJ_NEW_QSTR(MP_QSTR_reverse)" in result
+
+    def test_sorted_with_key_and_reverse(self):
+        source = """
+def key_fn(x: int) -> int:
+    return x
+
+def sort_both(lst: list) -> list:
+    return sorted(lst, key=key_fn, reverse=True)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_call_function_n_kw" in result
+        # 1 positional + 2 keyword args
+        assert ", 1, 2," in result
+        assert "MP_OBJ_NEW_QSTR(MP_QSTR_key)" in result
+        assert "MP_OBJ_NEW_QSTR(MP_QSTR_reverse)" in result
+
+
+class TestFuncRefIR:
+    """Test function-as-value references (FuncRefIR)."""
+
+    def test_func_ref_in_sorted_key(self):
+        source = """
+def my_key(x: int) -> int:
+    return x
+
+def sort_list(lst: list) -> list:
+    return sorted(lst, key=my_key)
+"""
+        result = compile_source(source, "test", type_check=False)
+        # Function reference should use MP_OBJ_FROM_PTR, not mp_obj_new_int
+        assert "MP_OBJ_FROM_PTR(&test_my_key_obj)" in result
+        assert "mp_obj_new_int(my_key)" not in result
+
+    def test_func_ref_with_key_and_reverse(self):
+        source = """
+def my_key(x: int) -> int:
+    return x
+
+def sort_both(lst: list) -> list:
+    return sorted(lst, key=my_key, reverse=True)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_OBJ_FROM_PTR(&test_my_key_obj)" in result
+        assert "mp_call_function_n_kw" in result
+
+    def test_func_ref_passed_as_argument(self):
+        """Function reference used as a regular argument to another function."""
+        source = """
+def callback(x: int) -> int:
+    return x + 1
+
+def apply(fn: object, val: int) -> object:
+    return fn
+"""
+        result = compile_source(source, "test", type_check=False)
+        # callback should be available as a function reference for later functions
+        # but apply doesn't actually reference callback here, so just verify compilation works
+        assert "test_callback" in result
+        assert "test_apply" in result
+
+    def test_func_ref_not_confused_with_local_var(self):
+        """Local variable with same name as function should use NameIR, not FuncRefIR."""
+        source = """
+def helper(x: int) -> int:
+    return x
+
+def main() -> int:
+    helper: int = 42
+    return helper
+"""
+        result = compile_source(source, "test", type_check=False)
+        # 'helper' inside main() is a local variable, should NOT be MP_OBJ_FROM_PTR
+        # The local should be used as an int
+        assert "mp_obj_new_int(helper)" in result or "return mp_obj_new_int(helper);" in result
+
+    def test_func_ref_forward_reference(self):
+        """Function defined AFTER the caller should still be emitted as FuncRefIR.
+
+        This mirrors builders.py where a class method uses _attr_sort_key
+        which is defined after the class.
+        """
+        source = """
+def sort_list(lst: list) -> list:
+    return sorted(lst, key=my_key)
+
+def my_key(x: int) -> int:
+    return x
+"""
+        result = compile_source(source, "test", type_check=False)
+        # Forward reference: my_key defined after sort_list, but pre-scan should find it
+        assert "MP_OBJ_FROM_PTR(&test_my_key_obj)" in result
+        assert "mp_obj_new_int(my_key)" not in result
+
+    def test_func_ref_in_class_method_forward_reference(self):
+        """Class method uses a function defined after the class (builders.py pattern)."""
+        source = """
+class Builder:
+    def __init__(self) -> None:
+        self.items: list = [3, 1, 2]
+
+    def build(self) -> list:
+        return sorted(self.items, key=sort_key)
+
+def sort_key(x: int) -> int:
+    return x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_OBJ_FROM_PTR(&test_sort_key_obj)" in result
+        assert "mp_obj_new_int(sort_key)" not in result
