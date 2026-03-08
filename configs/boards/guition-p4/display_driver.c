@@ -114,14 +114,10 @@ static uint32_t tick_cb(void) {
 
 // LVGL flush callback for MIPI-DSI (DIRECT mode)
 // In DIRECT mode, LVGL writes directly to the DPI framebuffer.
-// We only need to swap byte order and signal the panel to refresh.
+// The DPI panel continuously refreshes from the framebuffer, so we just signal ready.
 static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
     // For DIRECT mode with DPI panel, LVGL already wrote to the framebuffer.
-    // Swap RGB565 bytes (LVGL is little-endian, panel may need big-endian)
-    int w = area->x2 - area->x1 + 1;
-    int h = area->y2 - area->y1 + 1;
-    lv_draw_sw_rgb565_swap(px_map, (uint32_t)(w * h));
-    
+    // No byte swap needed - MIPI-DSI handles the pixel format correctly.
     // Signal flush complete - the DPI panel continuously refreshes from the framebuffer
     lv_display_flush_ready(disp);
 }
