@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import re
+import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -264,6 +265,31 @@ class IRBuilder:
     def _fresh_temp(self) -> str:
         self._temp_counter += 1
         return f"_tmp{self._temp_counter}"
+
+    def _warn_type_tracking_fallback(
+        self,
+        context: str,
+        var_name: str,
+        attr_name: str | None = None,
+        hint: str | None = None,
+    ) -> None:
+        """Emit a warning when type tracking falls back to dynamic access.
+
+        Args:
+            context: Where the fallback occurred (e.g., 'attribute access', 'method call')
+            var_name: The variable name that couldn't be resolved
+            attr_name: The attribute being accessed (if applicable)
+            hint: Additional hint for fixing the issue
+        """
+        if attr_name:
+            msg = f"Type tracking fallback in {context}: '{var_name}.{attr_name}'"
+        else:
+            msg = f"Type tracking fallback in {context}: '{var_name}'"
+
+        if hint:
+            msg += f". {hint}"
+
+        warnings.warn(msg, stacklevel=3)
 
     def register_import(self, node: ast.Import | ast.ImportFrom) -> None:
         """Register import statements for later resolution of module.func() calls."""
@@ -3656,6 +3682,12 @@ class IRBuilder:
                             class_c_name=class_ir.c_name,
                         ), []
                     # Fallback to dynamic attribute access
+                    self._warn_type_tracking_fallback(
+                        "self attribute",
+                        "self",
+                        attr_name,
+                        f"Attribute '{attr_name}' not found in class '{class_ir.name}'"
+                    )
                     return SelfAttrIR(
                         ir_type=IRType.OBJ,
                         attr_name=attr_name,
@@ -3684,6 +3716,13 @@ class IRBuilder:
                                 is_trait_type=use_dynamic,
                             ), []
 
+                    # Fallback: attribute not found in class fields
+                    self._warn_type_tracking_fallback(
+                        "param attribute",
+                        var_name,
+                        attr_name,
+                        f"Attribute '{attr_name}' not found in class '{param_class_ir.name}'"
+                    )
                     return ParamAttrIR(
                         ir_type=IRType.OBJ,
                         param_name=var_name,
@@ -3717,7 +3756,21 @@ class IRBuilder:
                                 result_type=result_type,
                             )
                             return result_temp, base_prelude + [attr_access]
-
+                    # Field not found in resolved class - warn about fallback
+                    self._warn_type_tracking_fallback(
+                        "chained attribute",
+                        f"{ast.unparse(expr.value)}",
+                        attr_name,
+                        f"Attribute '{attr_name}' not found in class '{base_class_ir.name}'"
+                    )
+                else:
+                    # Could not resolve base class type - warn
+                    self._warn_type_tracking_fallback(
+                        "chained attribute",
+                        f"{ast.unparse(expr.value)}",
+                        attr_name,
+                        "Could not resolve class type for base expression"
+                    )
         if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute):
             if (
                 isinstance(expr.func.value, ast.Call)
