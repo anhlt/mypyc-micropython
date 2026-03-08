@@ -1,0 +1,57 @@
+# ESP32-P4 LVGL Optimized Configuration
+# =======================================
+# Optimizes PSRAM bandwidth and cache for MIPI-DSI display performance.
+# Fixes "can't fetch data from external memory fast enough, underrun happens" errors.
+
+# Flash Configuration (P4 typically has 16MB+ flash)
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# Enable experimental features (required for SPIRAM_SPEED_200M)
+CONFIG_IDF_EXPERIMENTAL_FEATURES=y
+
+# =============================================================================
+# PSRAM Bandwidth Optimizations (CRITICAL for MIPI-DSI)
+# =============================================================================
+# Enable XIP (eXecute In Place) from PSRAM - reduces flash access contention
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
+
+# Use 256KB L2 cache (maximum) for better PSRAM throughput
+CONFIG_CACHE_L2_CACHE_256KB=y
+
+# Use 128-byte cache lines for better streaming performance
+CONFIG_CACHE_L2_CACHE_LINE_128B=y
+
+# =============================================================================
+# Compiler Optimizations
+# =============================================================================
+# Optimize for performance over size
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# =============================================================================
+# LVGL Optimizations
+# =============================================================================
+# Use standard memcpy/memset (faster than LVGL's built-in)
+CONFIG_LV_MEMCPY_MEMSET_STD=y
+
+# =============================================================================
+# PSRAM Configuration
+# =============================================================================
+# Enable PSRAM
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_200M=y
+
+# Allow allocations from PSRAM
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+
+# =============================================================================
+# Memory Configuration
+# =============================================================================
+# Increase main task stack for LVGL
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# =============================================================================
+# FreeRTOS (required for MicroPython)
+# =============================================================================
+CONFIG_FREERTOS_HZ=1000
