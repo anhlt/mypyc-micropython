@@ -34,7 +34,7 @@ from mypyc_micropython.ir import (
     UnaryOpIR,
     WhileIR,
 )
-from mypyc_micropython.ir_builder import IRBuilder, sanitize_name
+from mypyc_micropython.ir_builder import BuildContext, IRBuilder, sanitize_name
 
 
 class TestSanitizeName:
@@ -821,6 +821,7 @@ def f():
         ann_assign = func_ir.body[0]
         # Dict with entries creates DictNewIR in prelude
         from mypyc_micropython.ir import DictNewIR
+
         assert len(ann_assign.prelude) >= 1
         assert isinstance(ann_assign.prelude[0], DictNewIR)
         assert len(ann_assign.prelude[0].entries) == 2
@@ -839,6 +840,7 @@ def f(lst: list, i: int, val: int) -> None:
         func_ir = builder.build_function(tree.body[0])
 
         from mypyc_micropython.ir import SubscriptAssignIR
+
         subscript_assign = func_ir.body[0]
         assert isinstance(subscript_assign, SubscriptAssignIR)
         assert isinstance(subscript_assign.container, NameIR)
@@ -854,6 +856,7 @@ def f(d: dict, key: str, val: int) -> None:
         func_ir = builder.build_function(tree.body[0])
 
         from mypyc_micropython.ir import SubscriptAssignIR
+
         subscript_assign = func_ir.body[0]
         assert isinstance(subscript_assign, SubscriptAssignIR)
 
@@ -873,23 +876,25 @@ def f():
         func_ir = builder.build_function(tree.body[0])
 
         from mypyc_micropython.ir import TupleUnpackIR
+
         # Second statement should be TupleUnpackIR
         unpack = func_ir.body[1]
         assert isinstance(unpack, TupleUnpackIR)
         assert len(unpack.targets) == 2
 
     def test_tuple_unpack_in_for(self):
-        source = '''
+        source = """
 def f(items: list[tuple[str, int]]) -> None:
     for k, v in items:
         pass
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         func_ir = builder.build_function(tree.body[0])
 
         # For loop with tuple unpacking should work
         assert len(func_ir.body) >= 1
+
 
 class TestBuildSlice:
     """Tests for slice IR building."""
@@ -907,6 +912,7 @@ def f(lst: list):
         assert isinstance(ret, ReturnIR)
         # Slice creates SubscriptIR with SliceIR as index
         from mypyc_micropython.ir import SliceIR
+
         assert isinstance(ret.value, SubscriptIR)
         assert isinstance(ret.value.slice_, SliceIR)
 
@@ -921,6 +927,7 @@ def f(lst: list):
 
         ret = func_ir.body[0]
         from mypyc_micropython.ir import SliceIR
+
         assert isinstance(ret.value.slice_, SliceIR)
         # Step should be ConstIR(2)
         assert ret.value.slice_.step is not None
@@ -939,6 +946,7 @@ def f(n: int) -> list:
         func_ir = builder.build_function(tree.body[0])
 
         from mypyc_micropython.ir import ListCompIR
+
         ret = func_ir.body[0]
         assert isinstance(ret, ReturnIR)
         # List comp should create ListCompIR in prelude
@@ -955,6 +963,7 @@ def f(n: int) -> list:
         func_ir = builder.build_function(tree.body[0])
 
         from mypyc_micropython.ir import ListCompIR
+
         ret = func_ir.body[0]
         assert len(ret.prelude) >= 1
         listcomp = ret.prelude[0]
@@ -1024,17 +1033,18 @@ def f(d: dict):
         assert isinstance(for_stmt, ForIterIR)
 
     def test_for_iter_over_dict_items(self):
-        source = '''
+        source = """
 def f(d: dict[str, int]) -> None:
     for k, v in d.items():
         pass
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         func_ir = builder.build_function(tree.body[0])
 
         # Items iteration with unpacking
         assert len(func_ir.body) >= 1
+
 
 class TestBuildWhileLoop:
     """Additional tests for while loop IR building."""
@@ -1212,7 +1222,7 @@ class TestMethodIdentityComparison:
 
     def test_is_none_in_method(self):
         """Test 'is None' comparison in class method produces 'is' operator."""
-        source = '''
+        source = """
 class Nav:
     _allowed: object
 
@@ -1223,7 +1233,7 @@ class Nav:
         if self._allowed is None:
             return True
         return False
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         class_ir = builder.build_class(tree.body[0])
@@ -1237,9 +1247,10 @@ class Nav:
         builder._list_vars = {}
         builder._temp_count = 0
         locals_ = []
+        builder._ctx = BuildContext(locals_=locals_, class_ir=class_ir, native=True)
         body = []
         for stmt in check_method.body_ast.body:
-            stmt_ir = builder._build_method_statement(stmt, locals_, class_ir, True)
+            stmt_ir = builder._build_statement(stmt, locals_)
             if stmt_ir:
                 body.append(stmt_ir)
 
@@ -1255,7 +1266,7 @@ class Nav:
 
     def test_is_not_none_in_method(self):
         """Test 'is not None' comparison in class method produces 'is not' operator."""
-        source = '''
+        source = """
 class Container:
     _data: object
 
@@ -1264,7 +1275,7 @@ class Container:
 
     def has_data(self) -> bool:
         return self._data is not None
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         class_ir = builder.build_class(tree.body[0])
@@ -1277,9 +1288,10 @@ class Container:
         builder._list_vars = {}
         builder._temp_count = 0
         locals_ = []
+        builder._ctx = BuildContext(locals_=locals_, class_ir=class_ir, native=True)
         body = []
         for stmt in has_data_method.body_ast.body:
-            stmt_ir = builder._build_method_statement(stmt, locals_, class_ir, True)
+            stmt_ir = builder._build_statement(stmt, locals_)
             if stmt_ir:
                 body.append(stmt_ir)
 
@@ -1294,11 +1306,11 @@ class Container:
 
     def test_is_comparison_with_object_parameter(self):
         """Test 'is' comparison between method parameters."""
-        source = '''
+        source = """
 class Comparer:
     def same(self, a: object, b: object) -> bool:
         return a is b
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         class_ir = builder.build_class(tree.body[0])
@@ -1308,9 +1320,10 @@ class Comparer:
         builder._list_vars = {}
         builder._temp_count = 0
         locals_ = ["a", "b"]
+        builder._ctx = BuildContext(locals_=locals_, class_ir=class_ir, native=True)
         body = []
         for stmt in same_method.body_ast.body:
-            stmt_ir = builder._build_method_statement(stmt, locals_, class_ir, True)
+            stmt_ir = builder._build_statement(stmt, locals_)
             if stmt_ir:
                 body.append(stmt_ir)
 
@@ -1318,7 +1331,6 @@ class Comparer:
         assert isinstance(ret_stmt, ReturnIR)
         assert isinstance(ret_stmt.value, CompareIR)
         assert ret_stmt.value.ops == ["is"]
-
 
 
 class TestIsInstanceBuilder:
@@ -1430,7 +1442,7 @@ class TestAutoNarrowing:
 
     def test_auto_narrow_produces_param_attr_ir(self):
         """Inside isinstance if-branch, attr access produces ParamAttrIR."""
-        source = '''
+        source = """
 class Dog:
     breed: str
     def __init__(self, breed: str) -> None:
@@ -1440,9 +1452,9 @@ def get_breed(a: object) -> str:
     if isinstance(a, Dog):
         return a.breed
     return "unknown"
-'''
+"""
         tree = ast.parse(source)
-        builder = IRBuilder('test')
+        builder = IRBuilder("test")
         builder.build_class(tree.body[0])
         func_ir = builder.build_function(tree.body[1])
 
@@ -1453,12 +1465,12 @@ def get_breed(a: object) -> str:
         assert isinstance(ret, ReturnIR)
         # ParamAttrIR means the builder recognized Dog-typed access
         assert isinstance(ret.value, ParamAttrIR)
-        assert ret.value.attr_name == 'breed'
-        assert ret.value.class_c_name == 'test_Dog'
+        assert ret.value.attr_name == "breed"
+        assert ret.value.class_c_name == "test_Dog"
 
     def test_auto_narrow_restores_after_if(self):
         """_class_typed_params should be restored after the if block."""
-        source = '''
+        source = """
 class Dog:
     breed: str
     def __init__(self, breed: str) -> None:
@@ -1468,18 +1480,18 @@ def check(a: object) -> bool:
     if isinstance(a, Dog):
         x: str = a.breed
     return True
-'''
+"""
         tree = ast.parse(source)
-        builder = IRBuilder('test')
+        builder = IRBuilder("test")
         builder.build_class(tree.body[0])
         # Before building function, _class_typed_params is empty
         builder.build_function(tree.body[1])
         # After building, 'a' should NOT be in _class_typed_params
-        assert 'a' not in builder._class_typed_params
+        assert "a" not in builder._class_typed_params
 
     def test_auto_narrow_negated_narrows_else(self):
         """not isinstance(a, Dog) should narrow 'a' in the else branch."""
-        source = '''
+        source = """
 class Dog:
     breed: str
     def __init__(self, breed: str) -> None:
@@ -1490,9 +1502,9 @@ def get_breed(a: object) -> str:
         return "nope"
     else:
         return a.breed
-'''
+"""
         tree = ast.parse(source)
-        builder = IRBuilder('test')
+        builder = IRBuilder("test")
         builder.build_class(tree.body[0])
         func_ir = builder.build_function(tree.body[1])
 
@@ -1502,11 +1514,11 @@ def get_breed(a: object) -> str:
         else_ret = if_ir.orelse[0]
         assert isinstance(else_ret, ReturnIR)
         assert isinstance(else_ret.value, ParamAttrIR)
-        assert else_ret.value.attr_name == 'breed'
+        assert else_ret.value.attr_name == "breed"
 
     def test_auto_narrow_elif_chain(self):
         """Each elif isinstance branch narrows independently."""
-        source = '''
+        source = """
 class Dog:
     breed: str
     def __init__(self, breed: str) -> None:
@@ -1523,9 +1535,9 @@ def describe(a: object) -> str:
     elif isinstance(a, Cat):
         return a.color
     return "unknown"
-'''
+"""
         tree = ast.parse(source)
-        builder = IRBuilder('test')
+        builder = IRBuilder("test")
         builder.build_class(tree.body[0])
         builder.build_class(tree.body[1])
         func_ir = builder.build_function(tree.body[2])
@@ -1536,7 +1548,7 @@ def describe(a: object) -> str:
         ret_dog = if_ir.body[0]
         assert isinstance(ret_dog, ReturnIR)
         assert isinstance(ret_dog.value, ParamAttrIR)
-        assert ret_dog.value.attr_name == 'breed'
+        assert ret_dog.value.attr_name == "breed"
 
         # elif is the first item in orelse (nested IfIR)
         elif_ir = if_ir.orelse[0]
@@ -1544,26 +1556,25 @@ def describe(a: object) -> str:
         ret_cat = elif_ir.body[0]
         assert isinstance(ret_cat, ReturnIR)
         assert isinstance(ret_cat.value, ParamAttrIR)
-        assert ret_cat.value.attr_name == 'color'
+        assert ret_cat.value.attr_name == "color"
 
 
 class TestFuncRefIR:
     """Test that function-as-value produces FuncRefIR."""
 
     def test_known_function_produces_func_ref(self):
-        source = '''
+        source = """
 def my_key(x: int) -> int:
     return x
 
 def sort_list(lst: list) -> list:
     return sorted(lst, key=my_key)
-'''
+"""
         from mypyc_micropython.ir import FuncRefIR
 
         tree = ast.parse(source)
         builder = IRBuilder("test")
-        funcs = [n for n in ast.iter_child_nodes(tree)
-                 if isinstance(n, ast.FunctionDef)]
+        funcs = [n for n in ast.iter_child_nodes(tree) if isinstance(n, ast.FunctionDef)]
         # Build first function and register it
         func_ir_key = builder.build_function(funcs[0])
         builder.register_function_name(func_ir_key.name, func_ir_key.c_name)
@@ -1584,14 +1595,13 @@ def sort_list(lst: list) -> list:
         assert kw_val.c_name == "test_my_key"
 
     def test_unknown_name_stays_as_name_ir(self):
-        source = '''
+        source = """
 def sort_list(lst: list) -> list:
     return sorted(lst, key=unknown_fn)
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
-        funcs = [n for n in ast.iter_child_nodes(tree)
-                 if isinstance(n, ast.FunctionDef)]
+        funcs = [n for n in ast.iter_child_nodes(tree) if isinstance(n, ast.FunctionDef)]
         func_ir = builder.build_function(funcs[0])
         ret = func_ir.body[0]
         assert isinstance(ret, ReturnIR)
