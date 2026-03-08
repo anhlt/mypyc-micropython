@@ -423,9 +423,10 @@ class ModuleEmitter:
                     f"    {{ MP_ROM_QSTR(MP_QSTR_{const_name}), MP_ROM_INT({const_value}) }},"
                 )
             elif isinstance(const_value, str):
-                # Use QSTR for string constants (escaped for C compatibility)
+                # Use QSTR for string constants - value is the actual string content
+                qstr_value = sanitize_name(const_value)
                 lines.append(
-                    f"    {{ MP_ROM_QSTR(MP_QSTR_{const_name}), MP_ROM_QSTR(MP_QSTR_{const_name}) }},"
+                    f"    {{ MP_ROM_QSTR(MP_QSTR_{const_name}), MP_ROM_QSTR(MP_QSTR_{qstr_value}) }},"
                 )
             # Note: float constants require special handling, skip for now
 
@@ -491,6 +492,21 @@ class ModuleEmitter:
                 qstr_name = f"{enum_ir.name}_{member_name}"
                 lines.append(
                     f"    {{ MP_ROM_QSTR(MP_QSTR_{qstr_name}), MP_ROM_INT({member_value}) }},"
+                )
+
+        # Export module-level constants
+        for const_name, const_value in module_ir.constants.items():
+            if isinstance(const_value, bool):
+                mp_val = "mp_const_true" if const_value else "mp_const_false"
+                lines.append(f"    {{ MP_ROM_QSTR(MP_QSTR_{const_name}), MP_ROM_PTR({mp_val}) }},")
+            elif isinstance(const_value, int):
+                lines.append(
+                    f"    {{ MP_ROM_QSTR(MP_QSTR_{const_name}), MP_ROM_INT({const_value}) }},"
+                )
+            elif isinstance(const_value, str):
+                qstr_value = sanitize_name(const_value)
+                lines.append(
+                    f"    {{ MP_ROM_QSTR(MP_QSTR_{const_name}), MP_ROM_QSTR(MP_QSTR_{qstr_value}) }},"
                 )
 
         # Add child sub-package references (for nested packages)
