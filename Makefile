@@ -65,8 +65,7 @@ endif
 
 .PHONY: help setup setup-idf setup-mpy compile build flash monitor clean clean-all \
         test test-device run-device-tests benchmark compile-all check-env check-board \
-        test-lvgl run-lvgl-tests run-lvgl-mvu-tests run-lvgl-tests-all \
-        erase run info repl run-nav-tests run-screen-navigation-tests
+        test-lvgl run-lvgl-tests erase run info repl run-nav-tests
 
 # Default target
 help:
@@ -98,9 +97,7 @@ help:
 	@echo "  make test-device    - Full cycle: compile + build + flash + test"
 	@echo "  make run-device-tests - Run device tests on flashed firmware"
 	@echo "  make run-lvgl-tests - Run LVGL test suite on device"
-	@echo "  make run-lvgl-mvu-tests - Run LVGL MVU-only test suite on device"
-	@echo "  make run-lvgl-tests-all - Run all LVGL suites on device"
-	@echo "  make test-navigation - Run ScreenManager navigation test"
+	@echo "  make run-nav-tests  - Run navigation tests on device"
 	@echo "  make test-lvgl      - Quick LVGL display test"
 	@echo "  make benchmark      - Run native vs vanilla performance tests"
 	@echo "  make repl           - Open MicroPython REPL"
@@ -403,13 +400,6 @@ test-lvgl:
 run-lvgl-tests:
 	@echo "Running LVGL test suite on $(PORT)..."
 	mpremote connect $(PORT) run tests/device/run_lvgl_tests.py
-
-run-lvgl-mvu-tests:
-	@echo "Running LVGL MVU-only test suite on $(PORT)..."
-	mpremote connect $(PORT) run tests/device/run_lvgl_mvu_tests.py
-
-run-lvgl-tests-all: run-lvgl-tests run-lvgl-mvu-tests
-	@echo "LVGL full test pass complete"
 
 run-nav-tests:
 	@echo "Running navigation tests on $(PORT)..."
