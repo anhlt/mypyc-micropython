@@ -124,7 +124,7 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 
 // Flush ready callback (called by MIPI-DSI driver when DMA transfer completes)
 static bool IRAM_ATTR on_color_trans_done(esp_lcd_panel_handle_t panel,
-                                          const esp_lcd_dpi_panel_event_data_t *edata,
+                                          esp_lcd_dpi_panel_event_data_t *edata,
                                           void *user_ctx) {
     lv_display_t *disp = (lv_display_t *)user_ctx;
     lv_display_flush_ready(disp);

@@ -6,7 +6,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-INCLUDE_LINE = '#include "st7789_driver.h"'
+INCLUDE_LINE = '#include "display_driver.h"'
 HEADER_MARKER = '#include "lvgl.h"'
 GLOBALS_DICT_MARKER = "static MP_DEFINE_CONST_DICT(lvgl_module_globals, lvgl_module_globals_table);"
 DRIVER_ENTRIES = (

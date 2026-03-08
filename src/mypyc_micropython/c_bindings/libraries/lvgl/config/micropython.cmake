@@ -2,7 +2,9 @@ add_library(usermod_lvgl INTERFACE)
 
 target_sources(usermod_lvgl INTERFACE
     ${CMAKE_CURRENT_LIST_DIR}/lvgl.c
-    ${CMAKE_CURRENT_LIST_DIR}/st7789_driver.c
+    ${CMAKE_CURRENT_LIST_DIR}/display_driver.c
+    ${CMAKE_CURRENT_LIST_DIR}/touch_driver.c
+    ${CMAKE_CURRENT_LIST_DIR}/st7701/esp_lcd_st7701.c
 )
 
 file(GLOB_RECURSE LVGL_SOURCES
@@ -13,6 +15,7 @@ target_sources(usermod_lvgl INTERFACE ${LVGL_SOURCES})
 
 target_include_directories(usermod_lvgl INTERFACE
     ${CMAKE_CURRENT_LIST_DIR}
+    ${CMAKE_CURRENT_LIST_DIR}/st7701
     ${CMAKE_CURRENT_LIST_DIR}/../../deps/lvgl
     ${CMAKE_CURRENT_LIST_DIR}/../../deps/lvgl/src
 )
@@ -34,6 +37,8 @@ endif()
 target_compile_options(usermod_lvgl INTERFACE
     -Wno-unused-function
     -Wno-unused-const-variable
+    -Wno-error=unused-const-variable
+    -Wno-incompatible-pointer-types
 )
 
 target_link_libraries(usermod INTERFACE usermod_lvgl)

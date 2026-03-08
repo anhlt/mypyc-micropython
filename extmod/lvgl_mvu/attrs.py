@@ -121,3 +121,10 @@ def registered_attrs() -> dict[int, AttrDef]:
     for k in _ATTR_REGISTRY:
         result[k] = _ATTR_REGISTRY[k]
     return result
+
+
+def get_attr_def_safe(key: int) -> AttrDef | None:
+    """Look up an attribute definition by key, returning None if not found."""
+    if key in _ATTR_REGISTRY:
+        return _ATTR_REGISTRY[key]
+    return None
