@@ -28,6 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - IR visualizer support for enum printing/dumping
   - 11 compiler tests, 2 C runtime tests, 24 device tests
   - Example: `examples/enum_demo.py`
+- Optional type narrowing optimization for `X | None` parameters
+  - After `if x is not None:`, attribute access uses static dispatch (direct struct pointer)
+  - After `if x is None: return`, subsequent code narrows to non-None type
+  - Narrowing applies to both function params and local variables
+  - Eliminates unnecessary `mp_load_attr()` calls in performance-critical paths
+- LVGL MVU framework: `user_key` refactored from `str | None` to `str` (sentinel `""`)
+- Blog 37: Optional type narrowing optimization documentation
+- `examples/optional_narrowing.py` demonstrating all narrowing patterns
+
+### Fixed
+- Trait-typed parameter attribute access now uses `mp_load_attr()` instead of direct struct access
 - Trait system for mypyc-style multiple inheritance
   - `@trait` decorator support (both `mypy_extensions.trait` and simple `@trait`)
   - ONE concrete base class + multiple traits allowed

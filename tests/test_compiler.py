@@ -2176,7 +2176,7 @@ class Calculator:
 
     def test_class_init_with_default_args(self):
         """Test class __init__ with default arguments."""
-        source = '''
+        source = """
 class App:
     model: int
     modulo: int
@@ -2186,7 +2186,7 @@ class App:
         self.model = model0 % modulo
         self.modulo = modulo
         self.capacity = capacity
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Check mp_arg_check_num allows 1-3 args (model0 required, modulo/capacity optional)
         assert "mp_arg_check_num(n_args, n_kw, 1, 3, false)" in result
@@ -2195,7 +2195,9 @@ class App:
         assert "(n_args > 2) ? args[2]" in result or "init_args[3] = (n_args > 2)" in result
         # Check __init__ wrapper uses VAR_BETWEEN with min/max
         assert "MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN" in result
-        assert "test_App___init___obj, 2, 4" in result  # 2 min (self + model0), 4 max (self + 3 params)
+        assert (
+            "test_App___init___obj, 2, 4" in result
+        )  # 2 min (self + model0), 4 max (self + 3 params)
 
 
 class TestStaticMethod:
@@ -3694,6 +3696,131 @@ def process(d: Data) -> int:
         assert "mp_const_none" not in result or "return mp_const_none" in result
 
 
+class TestOptionalNarrowing:
+    def test_optional_param_no_guard_uses_dynamic(self):
+        source = """
+class Point:
+    x: int
+
+def get_x(p: Point | None):
+    return p.x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "return mp_load_attr(p, MP_QSTR_x);" in result
+
+    def test_optional_param_is_not_none_uses_static(self):
+        source = """
+class Point:
+    x: int
+
+def get_x(p: Point | None) -> int:
+    if p is not None:
+        return p.x
+    return 0
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "if ((p != mp_const_none))" in result
+        assert "return mp_obj_new_int(((test_Point_obj_t *)MP_OBJ_TO_PTR(p))->x);" in result
+        assert "mp_load_attr(p, MP_QSTR_x)" not in result
+
+    def test_optional_param_early_return_guard(self):
+        source = """
+class Point:
+    x: int
+
+def get_x(p: Point | None) -> int:
+    if p is None:
+        return 0
+    return p.x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "if ((p == mp_const_none))" in result
+        assert "return mp_obj_new_int(((test_Point_obj_t *)MP_OBJ_TO_PTR(p))->x);" in result
+        assert "mp_load_attr(p, MP_QSTR_x)" not in result
+
+    def test_optional_param_else_branch_narrowing(self):
+        source = """
+class Point:
+    x: int
+
+def get_x(p: Point | None) -> int:
+    if p is None:
+        return -1
+    else:
+        return p.x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "if ((p == mp_const_none))" in result
+        assert "return mp_obj_new_int(((test_Point_obj_t *)MP_OBJ_TO_PTR(p))->x);" in result
+        assert "mp_load_attr(p, MP_QSTR_x)" not in result
+
+    def test_optional_multiple_params(self):
+        source = """
+class Point:
+    x: int
+
+def sum_x(p1: Point | None, p2: Point | None) -> int:
+    total: int = 0
+    if p1 is not None:
+        total += p1.x
+    if p2 is not None:
+        total += p2.x
+    return total
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "if ((p1 != mp_const_none))" in result
+        assert "if ((p2 != mp_const_none))" in result
+        assert "MP_OBJ_TO_PTR(p1)" in result
+        assert "MP_OBJ_TO_PTR(p2)" in result
+        assert "mp_load_attr" not in result
+
+    def test_non_optional_param_always_static(self):
+        source = """
+class Point:
+    x: int
+
+def get_x(p: Point) -> int:
+    return p.x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "return mp_obj_new_int(((test_Point_obj_t *)MP_OBJ_TO_PTR(p))->x);" in result
+        assert "mp_load_attr(p, MP_QSTR_x)" not in result
+
+    def test_optional_param_in_method(self):
+        source = """
+class Point:
+    x: int
+
+class Reader:
+    def read_x(self, p: Point | None) -> int:
+        if p is None:
+            return 0
+        return p.x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "if ((p == mp_const_none))" in result
+        assert "MP_OBJ_TO_PTR(p)" in result
+        assert "mp_load_attr(p, MP_QSTR_x)" not in result
+
+    def test_optional_local_var(self):
+        source = """
+class Point:
+    x: int
+
+def get_x(flag: bool, p: Point) -> int:
+    q: Point | None = None
+    if flag:
+        q = p
+    if q is None:
+        return 0
+    return q.x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "if ((q == mp_const_none))" in result
+        assert "return mp_obj_new_int(((test_Point_obj_t *)MP_OBJ_TO_PTR(q))->x);" in result
+        assert "mp_load_attr(q, MP_QSTR_x)" not in result
+
+
 class TestChainedClassAttrAccess:
     """Tests for chained attribute access on nested class types."""
 
@@ -5059,12 +5186,12 @@ def combo(n: int) -> int:
 
     def test_module_call_with_kwargs(self):
         """Module call with keyword arguments: module.func(a, key=value)."""
-        source = '''
+        source = """
 import nav
 
 def create_nav() -> object:
     return nav.Nav(capacity=8, builders=())  # noqa: type - demo kwargs
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should use mp_call_function_n_kw
         assert "mp_call_function_n_kw" in result
@@ -5076,12 +5203,12 @@ def create_nav() -> object:
 
     def test_module_call_mixed_args_kwargs(self):
         """Module call with positional and keyword arguments."""
-        source = '''
+        source = """
 import nav
 
 def create_nav2(cap: int) -> object:
     return nav.Nav(cap, builders=())  # noqa: type - demo mixed
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should use mp_call_function_n_kw with n_args=1, n_kw=1
         assert "mp_call_function_n_kw(" in result
@@ -5822,7 +5949,7 @@ class TestTraitSystem:
 
     def test_trait_decorator_detected(self):
         """Test that @trait decorator is recognized."""
-        source = '''
+        source = """
 from mypy_extensions import trait
 
 @trait
@@ -5830,7 +5957,7 @@ class Named:
     name: str
     def get_name(self) -> str:
         return self.name
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Trait should not have make_new slot
         assert "make_new, test_Named_make_new" not in result
@@ -5839,7 +5966,7 @@ class Named:
 
     def test_trait_with_concrete_base(self):
         """Test class inheriting concrete base + trait."""
-        source = '''
+        source = """
 from mypy_extensions import trait
 
 @trait
@@ -5859,7 +5986,7 @@ class Person(Entity, Named):
         self.id = id
         self.name = name
         self.age = age
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Person should have Entity as parent
         assert "parent, &test_Entity_type" in result
@@ -5870,7 +5997,7 @@ class Person(Entity, Named):
 
     def test_multiple_traits(self):
         """Test class inheriting multiple traits."""
-        source = '''
+        source = """
 from mypy_extensions import trait
 
 @trait
@@ -5893,7 +6020,7 @@ class Person(Entity, Named, Describable):
         self.age = age
     def describe(self) -> str:
         return "person"
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Person should exist and have Entity as parent
         assert "test_Person_type" in result
@@ -5904,7 +6031,7 @@ class Person(Entity, Named, Describable):
 
     def test_trait_only_inheritance(self):
         """Test class inheriting only from trait (no concrete base)."""
-        source = '''
+        source = """
 from mypy_extensions import trait
 
 @trait
@@ -5918,7 +6045,7 @@ class Document(Printable):
         self.title = title
     def to_string(self) -> str:
         return self.title
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Document should have make_new
         assert "test_Document_make_new" in result
@@ -5927,7 +6054,7 @@ class Document(Printable):
 
     def test_simple_trait_decorator(self):
         """Test simple @trait decorator (without mypy_extensions import)."""
-        source = '''
+        source = """
 def trait(cls):
     return cls
 
@@ -5940,17 +6067,16 @@ class Named:
 class Person(Named):
     def __init__(self, name: str) -> None:
         self.name = name
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Named should be detected as trait
         assert "make_new, test_Named_make_new" not in result
         # Person should have make_new
         assert "test_Person_make_new" in result
 
-
     def test_trait_typed_parameter_attribute_access(self):
         """Test that attribute access on trait-typed parameters uses dynamic lookup."""
-        source = '''
+        source = """
 from mypy_extensions import trait
 
 @trait
@@ -5967,7 +6093,7 @@ class Person(Named):
 
 def get_name_from_trait(obj: Named) -> str:
     return obj.name
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Trait-typed parameter should use mp_load_attr, not direct struct access
         assert "mp_load_attr(obj, MP_QSTR_name)" in result
@@ -5976,7 +6102,7 @@ def get_name_from_trait(obj: Named) -> str:
 
     def test_concrete_class_param_uses_direct_access(self):
         """Test that non-trait class params still use direct struct access."""
-        source = '''
+        source = """
 class Point:
     x: int
     y: int
@@ -5986,7 +6112,7 @@ class Point:
 
 def get_x(p: Point) -> int:
     return p.x
-'''
+"""
         result = compile_source(source, "test")
         # Regular class should use direct struct access
         assert "((test_Point_obj_t *)MP_OBJ_TO_PTR(p))->x" in result
@@ -5999,10 +6125,10 @@ class TestAsyncFunctions:
 
     def test_simple_async_function_compiles(self):
         """Test that a simple async function compiles to coroutine type."""
-        source = '''
+        source = """
 async def simple_coro() -> int:
     return 42
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should have coroutine struct
         assert "typedef struct _test_simple_coro_coro_t" in result
@@ -6020,11 +6146,11 @@ async def simple_coro() -> int:
 
     def test_async_function_with_await_compiles(self):
         """Test that await expressions compile correctly."""
-        source = '''
+        source = """
 async def fetch_data() -> int:
     result = await some_async_op()
     return result
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should have result field in struct
         assert "mp_obj_t result;" in result
@@ -6035,10 +6161,10 @@ async def fetch_data() -> int:
 
     def test_async_function_with_await_discarded(self):
         """Test that await without assignment works."""
-        source = '''
+        source = """
 async def do_something() -> None:
     await some_async_op()
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should compile without result storage
         assert "static mp_obj_t test_do_something_coro_iternext" in result
@@ -6047,12 +6173,12 @@ async def do_something() -> None:
 
     def test_async_function_multiple_awaits(self):
         """Test that multiple await expressions each get their own state."""
-        source = '''
+        source = """
 async def multi_await() -> int:
     x = await first_op()
     y = await second_op()
     return x + y
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should have multiple states
         assert "case 1: goto state_1;" in result
@@ -6063,11 +6189,11 @@ async def multi_await() -> int:
 
     def test_async_function_with_parameters(self):
         """Test async function with parameters."""
-        source = '''
+        source = """
 async def process(n: int) -> int:
     result = await compute(n)
     return result
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should have parameter in struct
         assert "mp_int_t n;" in result
@@ -6078,10 +6204,10 @@ async def process(n: int) -> int:
 
     def test_async_coroutine_type_has_all_methods(self):
         """Test that coroutine type has send and __await__ in locals dict."""
-        source = '''
+        source = """
 async def my_coro() -> None:
     pass
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should have locals dict with both methods
         assert "MP_QSTR_send" in result
@@ -6090,11 +6216,11 @@ async def my_coro() -> None:
 
     def test_await_module_function_call(self):
         """Test await on module.func() pattern like asyncio.sleep()."""
-        source = '''
+        source = """
 async def with_sleep() -> int:
     await asyncio.sleep(0)
     return 42
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should import module at runtime using qstr_from_str for dynamic lookup
         assert 'mp_import_name(qstr_from_str("asyncio")' in result
@@ -6107,11 +6233,11 @@ async def with_sleep() -> int:
 
     def test_await_module_function_with_result(self):
         """Test await on module.func() with result stored."""
-        source = '''
+        source = """
 async def fetch_with_delay() -> int:
     result = await asyncio.sleep_ms(100)
     return 42
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should have result field
         assert "mp_obj_t result;" in result
@@ -6120,21 +6246,21 @@ async def fetch_with_delay() -> int:
 
     def test_await_module_function_multiple_args(self):
         """Test await on module.func() with multiple arguments."""
-        source = '''
+        source = """
 async def fetch_data() -> int:
     await some_module.fetch(1, 2)
     return 0
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should call with two arguments
         assert "mp_call_function_2(_fn," in result
 
     def test_await_module_function_no_args(self):
         """Test await on module.func() with no arguments."""
-        source = '''
+        source = """
 async def ping() -> None:
     await network.ping()
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should call with zero arguments
         assert "mp_call_function_0(_fn)" in result

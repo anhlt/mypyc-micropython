@@ -237,6 +237,7 @@ def _compile_module_parts(
     strict: bool,
     external_libs: dict[str, Any] | None = None,
     sibling_modules: dict[str, str] | None = None,  # maps import name -> C prefix
+    known_classes: dict[str, Any] | None = None,
 ) -> _ModuleCompileParts:
     from .async_emitter import AsyncEmitter
     from .class_emitter import ClassEmitter
@@ -261,7 +262,10 @@ def _compile_module_parts(
     module_ir = ModuleIR(name=module_name, c_name=c_name)
 
     ir_builder = IRBuilder(
-        module_name, mypy_types=mypy_types, external_libs=external_libs,
+        module_name,
+        known_classes=known_classes,
+        mypy_types=mypy_types,
+        external_libs=external_libs,
         sibling_modules=sibling_modules,
     )
     function_irs: list[FuncIR] = []
@@ -341,8 +345,7 @@ def _compile_module_parts(
         # This ensures bound method objects (e.g., self._build_home) are defined
         # before being referenced in __init__
         methods_ordered = sorted(
-            class_ir.methods.values(),
-            key=lambda m: (m.name == "__init__", m.name)
+            class_ir.methods.values(), key=lambda m: (m.name == "__init__", m.name)
         )
         for method_ir in methods_ordered:
             method_emitter = MethodEmitter(method_ir, class_ir)
@@ -469,6 +472,22 @@ def _scan_package_recursive(
     """
     submodules: list[_PackageSubmodule] = []
 
+    from .ir_builder import IRBuilder as _IRBuilder
+
+    package_classes: dict[str, Any] = {}
+    for py_file in sorted(package_path.glob("*.py")):
+        if py_file.name == "__init__.py":
+            continue
+        source = py_file.read_text()
+        tree = ast.parse(source)
+        scanner = _IRBuilder(sanitize_name(f"{parent_prefix}_{py_file.stem}"))
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                scanner.register_import(node)
+            elif isinstance(node, ast.ClassDef):
+                class_ir = scanner.build_class(node)
+                package_classes[class_ir.name] = class_ir
+
     # First: compile .py files at this level
     for py_file in sorted(package_path.glob("*.py")):
         if py_file.name == "__init__.py":
@@ -482,6 +501,7 @@ def _scan_package_recursive(
             type_check=type_check,
             strict=strict,
             sibling_modules=sibling_modules,
+            known_classes=package_classes,
         )
         submodules.append(
             _PackageSubmodule(

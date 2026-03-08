@@ -862,6 +862,40 @@ t("has_write(3)", enum_demo.has_write(3), "True")
 t("has_write(4)", enum_demo.has_write(4), "False")
 t("default_permissions()", enum_demo.default_permissions(), "3")
 
+suite("optional_narrowing")
+import optional_narrowing as on
+
+p1 = on.Point(10, 20)
+p2 = on.Point(30, 40)
+c1 = on.Container(99, p1)
+
+# Pattern 1: if x is not None narrowing
+t("is_not_none guard", on.get_x_or_default(p1, 0), "10")
+t("is_not_none None", on.get_x_or_default(None, 42), "42")
+
+# Pattern 2: early return guard narrowing
+t("early return guard", on.get_y_with_guard(p1), "20")
+t("early return None", on.get_y_with_guard(None), "-1")
+
+# Pattern 3: else branch narrowing
+t("else narrowing T", on.describe_point(p1), "10,20")
+t("else narrowing F", on.describe_point(None), "no point")
+
+# Pattern 4: multiple Optional params
+t("multi opt both", on.add_points(p1, p2), "100")
+t("multi opt a only", on.add_points(p1, None), "30")
+t("multi opt none", on.add_points(None, p2), "0")
+
+# Pattern 5: Optional container
+t("opt container T", on.get_container_x(c1), "99")
+t("opt container F", on.get_container_x(None), "0")
+
+# Pattern 6: non-Optional baseline
+t("direct access", on.get_x_direct(p1), "10")
+
+# Full integration test
+t("full test", on.test_optional_narrowing(), "10,42,20,-1,10,20,no point,100,30,0,99,0,10")
+
 # ---- summary ----
 gc.collect()
 print("@D:" + str(_total) + "|" + str(_passed) + "|" + str(_failed))
