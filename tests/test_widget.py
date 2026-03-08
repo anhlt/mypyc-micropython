@@ -173,12 +173,12 @@ class TestAttrRegistry:
         def noop(_obj: object, _val: object) -> None:
             pass
 
-        defn = AttrDef(key=AttrKey.WIDTH, name="width", default=0, apply_fn=noop)
+        defn = AttrDef(key=AttrKey.WIDTH, name="width", default_val=0, apply_fn=noop)
         register_attr(defn)
         retrieved = get_attr_def(AttrKey.WIDTH)
         assert retrieved is defn
         assert retrieved.name == "width"
-        assert retrieved.default == 0
+        assert retrieved.default_val == 0
 
     def test_get_unregistered_raises(self):
         with pytest.raises(KeyError):
@@ -191,8 +191,8 @@ class TestAttrRegistry:
         def fn2(_o: object, _v: object) -> None:
             pass
 
-        d1 = AttrDef(key=AttrKey.HEIGHT, name="height", default=0, apply_fn=fn1)
-        d2 = AttrDef(key=AttrKey.HEIGHT, name="height_v2", default=10, apply_fn=fn2)
+        d1 = AttrDef(key=AttrKey.HEIGHT, name="height", default_val=0, apply_fn=fn1)
+        d2 = AttrDef(key=AttrKey.HEIGHT, name="height_v2", default_val=10, apply_fn=fn2)
         register_attr(d1)
         register_attr(d2)
         assert get_attr_def(AttrKey.HEIGHT) is d2
@@ -201,7 +201,7 @@ class TestAttrRegistry:
         def noop(_o: object, _v: object) -> None:
             pass
 
-        register_attr(AttrDef(key=AttrKey.BG_COLOR, name="bg_color", default=0, apply_fn=noop))
+        register_attr(AttrDef(key=AttrKey.BG_COLOR, name="bg_color", default_val=0, apply_fn=noop))
         snap = registered_attrs()
         assert AttrKey.BG_COLOR in snap
         snap.pop(AttrKey.BG_COLOR)
@@ -211,7 +211,7 @@ class TestAttrRegistry:
         def noop(_o: object, _v: object) -> None:
             pass
 
-        register_attr(AttrDef(key=AttrKey.TEXT, name="text", default="", apply_fn=noop))
+        register_attr(AttrDef(key=AttrKey.TEXT, name="text", default_val="", apply_fn=noop))
         assert get_attr_def(100).name == "text"
 
     def test_attr_def_with_compare_fn(self):
@@ -224,7 +224,7 @@ class TestAttrRegistry:
         defn = AttrDef(
             key=AttrKey.BORDER_COLOR,
             name="border_color",
-            default=0,
+            default_val=0,
             apply_fn=noop,
             compare_fn=always_equal,
         )

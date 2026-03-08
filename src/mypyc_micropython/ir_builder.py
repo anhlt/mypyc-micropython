@@ -45,6 +45,7 @@ from .ir import (
     ForIterIR,
     ForRangeIR,
     FuncIR,
+    FuncRefIR,
     IfExprIR,
     IfIR,
     IRType,
@@ -196,6 +197,7 @@ class IRBuilder:
         self,
         module_name: str,
         known_classes: dict[str, ClassIR] | None = None,
+        known_enums: dict[str, EnumIR] | None = None,
         mypy_types: "MypyTypeInfo | None" = None,
         external_libs: dict[str, CLibraryDef] | None = None,
         sibling_modules: dict[str, str] | None = None,  # maps old name -> package prefix
@@ -244,8 +246,12 @@ class IRBuilder:
         self._imported_modules: set[str] = set()
         self._uses_external_libs: set[str] = set()
         self._module_constants: dict[str, int | float | str | bool | None] = {}
-        self._sibling_modules: dict[str, str] = sibling_modules or {}  # maps import name -> C prefix
-        self._known_enums: dict[str, EnumIR] = {}
+        self._module_vars: dict[str, str] = {}
+        self._sibling_modules: dict[str, str] = (
+            sibling_modules or {}
+        )  # maps import name -> C prefix
+        self._known_enums: dict[str, EnumIR] = dict(known_enums or {})
+        self._known_functions: dict[str, str] = {}  # py_name -> c_name for module-level funcs
 
     def _fresh_temp(self) -> str:
         self._temp_counter += 1
@@ -291,10 +297,67 @@ class IRBuilder:
                 return True
         return False
 
+    def register_module_var(self, node: ast.AnnAssign) -> bool:
+        if not isinstance(node.target, ast.Name) or node.value is None:
+            return False
+
+        # First: check if this is a literal constant (NAME: type = literal_value)
+        # Register as module constant so functions can resolve the value at compile time
+        if isinstance(node.value, ast.Constant):
+            self._module_constants[node.target.id] = node.value.value
+            return True
+        if isinstance(node.value, ast.UnaryOp) and isinstance(node.value.op, ast.USub):
+            if isinstance(node.value.operand, ast.Constant) and isinstance(
+                node.value.operand.value, (int, float)
+            ):
+                self._module_constants[node.target.id] = -node.value.operand.value
+                return True
+
+        ann = node.annotation
+        if (
+            isinstance(ann, ast.Subscript)
+            and isinstance(ann.value, ast.Name)
+            and ann.value.id == "Final"
+        ):
+            ann = ann.slice
+
+        kind: str | None = None
+        if isinstance(ann, ast.Subscript) and isinstance(ann.value, ast.Name):
+            if ann.value.id in {"dict", "Dict"}:
+                kind = "dict"
+            elif ann.value.id in {"list", "List"}:
+                kind = "list"
+        elif isinstance(ann, ast.Name):
+            if ann.id in {"dict", "Dict"}:
+                kind = "dict"
+            elif ann.id in {"list", "List"}:
+                kind = "list"
+
+        if kind == "dict" and isinstance(node.value, ast.Dict):
+            self._module_vars[node.target.id] = "dict"
+            return True
+        if kind == "list" and isinstance(node.value, ast.List):
+            self._module_vars[node.target.id] = "list"
+            return True
+        return False
+
+    def register_function_name(self, name: str, c_name: str) -> None:
+        """Register a module-level function name so it can be referenced as a value.
+
+        Called by the compiler after each function definition so that later
+        functions in the same module can use the function as a first-class value
+        (e.g., ``sorted(items, key=my_func)``).
+        """
+        self._known_functions[name] = c_name
+
     @property
     def module_constants(self) -> dict[str, int | float | str | bool | None]:
         """Dict of module-level constants (name -> value)."""
         return self._module_constants
+
+    @property
+    def module_vars(self) -> dict[str, str]:
+        return self._module_vars
 
     @property
     def imported_modules(self) -> set[str]:
@@ -586,7 +649,6 @@ class IRBuilder:
             state_id=self._next_yield_state_id(),
         )
 
-
     def _detect_none_check(self, test: ast.expr) -> tuple[str | None, bool]:
         """Detect 'x is None' or 'x is not None' patterns in an if test.
 
@@ -681,12 +743,7 @@ class IRBuilder:
 
         # Early-return narrowing: if 'if x is None: return/raise' pattern,
         # x is not None after the if statement
-        if (
-            saved_optional
-            and is_none_check
-            and body
-            and isinstance(body[-1], (ReturnIR, RaiseIR))
-        ):
+        if saved_optional and is_none_check and body and isinstance(body[-1], (ReturnIR, RaiseIR)):
             # Body always exits -> everything after this if has x narrowed
             self._optional_class_params.discard(saved_optional)
 
@@ -1177,6 +1234,22 @@ class IRBuilder:
             elif const_val is None:
                 return ConstIR(ir_type=IRType.OBJ, value=None)
 
+        if name in self._module_vars and name not in self._var_types:
+            return NameIR(
+                ir_type=IRType.OBJ,
+                py_name=name,
+                c_name=f"{self.c_name}_{sanitize_name(name)}",
+            )
+
+        # Check for module-level function references (function-as-value)
+        if name in self._known_functions and name not in self._var_types:
+            func_c_name = self._known_functions[name]
+            return FuncRefIR(
+                ir_type=IRType.OBJ,
+                py_name=name,
+                c_name=func_c_name,
+            )
+
         # Check for import aliases - return ModuleRefIR for imported modules
         if name in self._import_aliases:
             module_name = self._import_aliases[name]
@@ -1338,7 +1411,17 @@ class IRBuilder:
             args.append(val)
             arg_preludes.append(prelude)
 
+        kwargs: list[tuple[str, ValueIR]] = []
+        kwarg_preludes: list[list] = []
+        for kw in expr.keywords:
+            if kw.arg is None:
+                continue
+            val, prelude = self._build_expr(kw.value, locals_)
+            kwargs.append((kw.arg, val))
+            kwarg_preludes.append(prelude)
+
         all_preludes = [p for pl in arg_preludes for p in pl]
+        all_preludes.extend(p for pl in kwarg_preludes for p in pl)
 
         if func_name in BUILTIN_FUNCTIONS:
             is_list_len_opt = False
@@ -1368,6 +1451,7 @@ class IRBuilder:
                 func_name=func_name,
                 c_func_name=func_name,
                 args=args,
+                kwargs=kwargs,
                 arg_preludes=arg_preludes,
                 is_builtin=True,
                 builtin_kind=func_name,
@@ -1383,14 +1467,13 @@ class IRBuilder:
             func_name=func_name,
             c_func_name=c_func_name,
             args=args,
+            kwargs=kwargs,
             arg_preludes=arg_preludes,
             is_builtin=False,
             builtin_kind=None,
         ), all_preludes
 
-    def _build_isinstance(
-        self, expr: ast.Call, locals_: list[str]
-    ) -> tuple[ValueIR, list]:
+    def _build_isinstance(self, expr: ast.Call, locals_: list[str]) -> tuple[ValueIR, list]:
         """Build isinstance(obj, ClassName) -> IsInstanceIR.
 
         Only supports compile-time-known concrete classes.
@@ -1455,9 +1538,7 @@ class IRBuilder:
             obj_prelude=obj_prelude,
         ), obj_prelude
 
-    def _extract_isinstance_narrowing(
-        self, test: ast.expr
-    ) -> tuple[str, str, bool] | None:
+    def _extract_isinstance_narrowing(self, test: ast.expr) -> tuple[str, str, bool] | None:
         """Extract isinstance narrowing info from an if-test AST node.
 
         Returns (var_name, class_name, is_negated) if the test is:
@@ -1484,9 +1565,7 @@ class IRBuilder:
 
         # Must be isinstance(var, ClassName)
         if not (
-            isinstance(call.func, ast.Name)
-            and call.func.id == "isinstance"
-            and len(call.args) == 2
+            isinstance(call.func, ast.Name) and call.func.id == "isinstance" and len(call.args) == 2
         ):
             return None
 
@@ -2518,7 +2597,9 @@ class IRBuilder:
         self._known_enums[enum_name] = enum_ir
         return enum_ir
 
-    def _eval_enum_value(self, node: ast.expr, resolved: dict[str, int] | None = None) -> int | None:
+    def _eval_enum_value(
+        self, node: ast.expr, resolved: dict[str, int] | None = None
+    ) -> int | None:
         """Evaluate a constant integer expression for an enum value.
 
         Supports: int literals, negative ints, bitwise shift (1 << N),
@@ -3109,14 +3190,12 @@ class IRBuilder:
             if is_none_check:
                 # 'if x is None:' -> body: x is None (keep optional), orelse: x narrowed
                 body = [
-                    self._build_method_statement(s, locals_, class_ir, native)
-                    for s in stmt.body
+                    self._build_method_statement(s, locals_, class_ir, native) for s in stmt.body
                 ]
                 body = [s for s in body if s is not None]
                 self._optional_class_params.discard(narrowed_var)
                 orelse = [
-                    self._build_method_statement(s, locals_, class_ir, native)
-                    for s in stmt.orelse
+                    self._build_method_statement(s, locals_, class_ir, native) for s in stmt.orelse
                 ]
                 orelse = [s for s in orelse if s is not None]
                 self._optional_class_params.add(narrowed_var)
@@ -3124,20 +3203,16 @@ class IRBuilder:
                 # 'if x is not None:' -> body: x narrowed, orelse: x is None (keep optional)
                 self._optional_class_params.discard(narrowed_var)
                 body = [
-                    self._build_method_statement(s, locals_, class_ir, native)
-                    for s in stmt.body
+                    self._build_method_statement(s, locals_, class_ir, native) for s in stmt.body
                 ]
                 body = [s for s in body if s is not None]
                 self._optional_class_params.add(narrowed_var)
                 orelse = [
-                    self._build_method_statement(s, locals_, class_ir, native)
-                    for s in stmt.orelse
+                    self._build_method_statement(s, locals_, class_ir, native) for s in stmt.orelse
                 ]
                 orelse = [s for s in orelse if s is not None]
         else:
-            body = [
-                self._build_method_statement(s, locals_, class_ir, native) for s in stmt.body
-            ]
+            body = [self._build_method_statement(s, locals_, class_ir, native) for s in stmt.body]
             body = [s for s in body if s is not None]
 
             # Restore isinstance narrowing after body, apply to orelse if negated
@@ -3152,8 +3227,7 @@ class IRBuilder:
                     self._class_typed_params[narrow_var] = narrow_class
 
             orelse = [
-                self._build_method_statement(s, locals_, class_ir, native)
-                for s in stmt.orelse
+                self._build_method_statement(s, locals_, class_ir, native) for s in stmt.orelse
             ]
             orelse = [s for s in orelse if s is not None]
 
@@ -3167,12 +3241,7 @@ class IRBuilder:
 
         # Early-return narrowing: if 'if x is None: return/raise' pattern,
         # x is not None after the if statement
-        if (
-            saved_optional
-            and is_none_check
-            and body
-            and isinstance(body[-1], (ReturnIR, RaiseIR))
-        ):
+        if saved_optional and is_none_check and body and isinstance(body[-1], (ReturnIR, RaiseIR)):
             self._optional_class_params.discard(saved_optional)
 
         return IfIR(test=test, body=body, orelse=orelse, test_prelude=test_prelude)
@@ -3355,10 +3424,7 @@ class IRBuilder:
                     param_class_ir = self._known_classes[param_class_name]
 
                     # Optional params use dynamic dispatch unless narrowed
-                    use_dynamic = (
-                        param_class_ir.is_trait
-                        or var_name in self._optional_class_params
-                    )
+                    use_dynamic = param_class_ir.is_trait or var_name in self._optional_class_params
 
                     for fld, path in param_class_ir.get_all_fields_with_path():
                         if fld.name == attr_name:
@@ -3464,6 +3530,10 @@ class IRBuilder:
                     return_type = IRType.from_c_type_str(method_ir.return_type.to_c_type_str())
 
                 all_preludes = [p for pl in arg_preludes for p in pl]
+                param_types: list[IRType] = []
+                if method_ir:
+                    for _pname, ptype in method_ir.params:
+                        param_types.append(IRType.from_c_type_str(ptype.to_c_type_str()))
                 return SelfMethodCallIR(
                     ir_type=return_type,
                     method_name=method_name,
@@ -3471,6 +3541,7 @@ class IRBuilder:
                     args=args,
                     return_type=return_type,
                     arg_preludes=arg_preludes,
+                    param_types=param_types,
                 ), all_preludes
 
         # Handle BinOp with recursive method context
@@ -3637,6 +3708,28 @@ class IRBuilder:
         if isinstance(expr, ast.Call):
             return self._build_method_call_general(expr, locals_, class_ir, native)
 
+
+        # Handle BoolOp (and/or) with recursive method context
+        if isinstance(expr, ast.BoolOp):
+            c_op = "&&" if isinstance(expr.op, ast.And) else "||"
+            values = expr.values
+            left, left_prelude = self._build_method_expr(values[0], locals_, class_ir, native)
+            all_prelude = left_prelude[:]
+            for i in range(1, len(values)):
+                right, right_prelude = self._build_method_expr(
+                    values[i], locals_, class_ir, native
+                )
+                all_prelude.extend(right_prelude)
+                left = BinOpIR(
+                    ir_type=IRType.BOOL,
+                    left=left,
+                    op=c_op,
+                    right=right,
+                    left_prelude=[],
+                    right_prelude=right_prelude,
+                )
+            return left, all_prelude
+
         # Fall back to regular expression building for simple expressions
         return self._build_expr(expr, locals_)
 
@@ -3668,24 +3761,27 @@ class IRBuilder:
 
             # Process positional arguments
             args: list[ValueIR] = []
+            arg_preludes_all: list = []
             for arg in expr.args:
-                val, _ = self._build_method_expr(arg, locals_, class_ir, native)
+                val, prelude = self._build_method_expr(arg, locals_, class_ir, native)
                 args.append(val)
+                arg_preludes_all.extend(prelude)
 
             # Process keyword arguments
             kwargs: list[tuple[str, ValueIR]] = []
             for kw in expr.keywords:
                 if kw.arg is None:  # **kwargs - not supported
                     continue
-                val, _ = self._build_method_expr(kw.value, locals_, class_ir, native)
+                val, prelude = self._build_method_expr(kw.value, locals_, class_ir, native)
                 kwargs.append((kw.arg, val))
+                arg_preludes_all.extend(prelude)
 
             temp_name = self._fresh_temp()
             result = TempIR(ir_type=IRType.OBJ, name=temp_name)
             method_call = MethodCallIR(
                 result=result, receiver=receiver, method=method_name, args=args, kwargs=kwargs
             )
-            return result, recv_prelude + [method_call]
+            return result, recv_prelude + arg_preludes_all + [method_call]
 
         if not isinstance(expr.func, ast.Name):
             return ConstIR(ir_type=IRType.OBJ, value=None), []
@@ -3706,7 +3802,17 @@ class IRBuilder:
             args.append(val)
             arg_preludes.append(prelude)
 
+        kwargs: list[tuple[str, ValueIR]] = []
+        kwarg_preludes: list[list] = []
+        for kw in expr.keywords:
+            if kw.arg is None:
+                continue
+            val, prelude = self._build_method_expr(kw.value, locals_, class_ir, native)
+            kwargs.append((kw.arg, val))
+            kwarg_preludes.append(prelude)
+
         all_preludes = [p for pl in arg_preludes for p in pl]
+        all_preludes.extend(p for pl in kwarg_preludes for p in pl)
 
         if func_name in BUILTIN_FUNCTIONS:
             ir_type = _builtin_ir_type(func_name)
@@ -3715,6 +3821,7 @@ class IRBuilder:
                 func_name=func_name,
                 c_func_name=func_name,
                 args=args,
+                kwargs=kwargs,
                 arg_preludes=arg_preludes,
                 is_builtin=True,
                 builtin_kind=func_name,
@@ -3726,6 +3833,7 @@ class IRBuilder:
             func_name=func_name,
             c_func_name=c_func_name,
             args=args,
+            kwargs=kwargs,
             arg_preludes=arg_preludes,
             is_builtin=False,
             builtin_kind=None,

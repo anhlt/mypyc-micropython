@@ -99,6 +99,8 @@ class ModuleEmitter:
         functions: list[FuncIR],
     ) -> str:
         lines: list[str] = []
+        module_var_entries = self._collect_module_var_entries()
+        module_init_name = f"{self.c_name}__module_init"
 
         lines.extend(self._emit_includes())
         lines.append("")
@@ -131,8 +133,17 @@ class ModuleEmitter:
             lines.extend(struct_code)
             lines.append("")
 
+        if module_var_entries:
+            lines.extend(self._emit_module_var_declarations(module_var_entries))
+            lines.append("")
+            lines.extend(self._emit_module_var_init_helper(module_init_name, module_var_entries))
+            lines.append("")
+
         for func_code in function_code:
-            lines.append(func_code)
+            if module_var_entries:
+                lines.append(self._inject_module_init_call(func_code, module_init_name))
+            else:
+                lines.append(func_code)
 
         for cls_code in class_code:
             lines.append(cls_code)
@@ -153,9 +164,7 @@ class ModuleEmitter:
                 wrapper_name = f"{func_def.c_name}_wrapper"
                 # Check for CALLBACK params - must use VAR_BETWEEN calling convention
                 # to match CEmitter._make_wrapper_extern_decl
-                has_callback = any(
-                    p.type_def.base_type == CType.CALLBACK for p in func_def.params
-                )
+                has_callback = any(p.type_def.base_type == CType.CALLBACK for p in func_def.params)
                 if has_callback or n_args > 3:
                     parts.append(f"extern mp_obj_t {wrapper_name}(size_t, const mp_obj_t *);")
                 elif n_args == 0:
@@ -177,6 +186,8 @@ class ModuleEmitter:
         submodules: list[object],
     ) -> str:
         lines: list[str] = []
+        module_var_entries = self._collect_module_var_entries(submodules)
+        module_init_name = f"{self.c_name}__module_init"
 
         lines.extend(self._emit_includes())
         lines.append("")
@@ -205,8 +216,17 @@ class ModuleEmitter:
             lines.extend(struct_code)
             lines.append("")
 
+        if module_var_entries:
+            lines.extend(self._emit_module_var_declarations(module_var_entries))
+            lines.append("")
+            lines.extend(self._emit_module_var_init_helper(module_init_name, module_var_entries))
+            lines.append("")
+
         for func_code in function_code:
-            lines.append(func_code)
+            if module_var_entries:
+                lines.append(self._inject_module_init_call(func_code, module_init_name))
+            else:
+                lines.append(func_code)
 
         for cls_code in class_code:
             lines.append(cls_code)
@@ -223,6 +243,64 @@ class ModuleEmitter:
         lines.extend(self._emit_module_registration())
 
         return "\n".join(lines)
+
+    def _iter_submodules(self, submodules: list[object]) -> list[object]:
+        out: list[object] = []
+        for submodule in submodules:
+            out.append(submodule)
+            children = getattr(submodule, "children", None) or []
+            out.extend(self._iter_submodules(children))
+        return out
+
+    def _collect_module_var_entries(
+        self, submodules: list[object] | None = None
+    ) -> list[tuple[str, str, str]]:
+        entries: list[tuple[str, str, str]] = []
+        for name, kind in self.module_ir.module_vars.items():
+            entries.append((self.module_ir.c_name, name, kind))
+        if submodules:
+            for submodule in self._iter_submodules(submodules):
+                sub_ir = getattr(submodule, "module_ir")
+                for name, kind in sub_ir.module_vars.items():
+                    entries.append((sub_ir.c_name, name, kind))
+        return entries
+
+    def _emit_module_var_declarations(self, entries: list[tuple[str, str, str]]) -> list[str]:
+        lines: list[str] = []
+        for module_c_name, var_name, _ in entries:
+            lines.append(f"static mp_obj_t {module_c_name}_{sanitize_name(var_name)};")
+        return lines
+
+    def _emit_module_var_init_helper(
+        self,
+        init_name: str,
+        entries: list[tuple[str, str, str]],
+    ) -> list[str]:
+        lines = [
+            f"static bool {self.c_name}__module_inited = false;",
+            f"static void {init_name}(void) {{",
+            f"    if ({self.c_name}__module_inited) {{",
+            "        return;",
+            "    }",
+            f"    {self.c_name}__module_inited = true;",
+        ]
+        for module_c_name, var_name, kind in entries:
+            c_var = f"{module_c_name}_{sanitize_name(var_name)}"
+            if kind == "dict":
+                lines.append(f"    {c_var} = mp_obj_new_dict(0);")
+            else:
+                lines.append(f"    {c_var} = mp_obj_new_list(0, NULL);")
+        lines.append("}")
+        return lines
+
+    def _inject_module_init_call(self, func_code: str, init_name: str) -> str:
+        brace_idx = func_code.find("{")
+        if brace_idx < 0:
+            return func_code
+        insert_at = brace_idx + 1
+        if insert_at < len(func_code) and func_code[insert_at] == "\n":
+            return func_code[: insert_at + 1] + f"    {init_name}();\n" + func_code[insert_at + 1 :]
+        return func_code[:insert_at] + f"\n    {init_name}();" + func_code[insert_at:]
 
     def _emit_includes(self) -> list[str]:
         lines = [
@@ -339,9 +417,7 @@ class ModuleEmitter:
         for const_name, const_value in self.module_ir.constants.items():
             if isinstance(const_value, bool):
                 mp_val = "mp_const_true" if const_value else "mp_const_false"
-                lines.append(
-                    f"    {{ MP_ROM_QSTR(MP_QSTR_{const_name}), MP_ROM_PTR({mp_val}) }},"
-                )
+                lines.append(f"    {{ MP_ROM_QSTR(MP_QSTR_{const_name}), MP_ROM_PTR({mp_val}) }},")
             elif isinstance(const_value, int):
                 lines.append(
                     f"    {{ MP_ROM_QSTR(MP_QSTR_{const_name}), MP_ROM_INT({const_value}) }},"
@@ -352,6 +428,7 @@ class ModuleEmitter:
                     f"    {{ MP_ROM_QSTR(MP_QSTR_{const_name}), MP_ROM_QSTR(MP_QSTR_{const_name}) }},"
                 )
             # Note: float constants require special handling, skip for now
+
 
         for func in functions:
             lines.append(
@@ -405,6 +482,7 @@ class ModuleEmitter:
             lines.append(
                 f"    {{ MP_ROM_QSTR(MP_QSTR_{class_ir.name}), MP_ROM_PTR(&{class_ir.c_name}_type) }},"
             )
+
 
         # Export enum members
         for enum_name in module_ir.enum_order:
@@ -475,6 +553,7 @@ class ModuleEmitter:
             lines.append(
                 f"    {{ MP_ROM_QSTR(MP_QSTR_{class_ir.name}), MP_ROM_PTR(&{class_ir.c_name}_type) }},"
             )
+
 
         # Export enum members
         for enum_name in self.module_ir.enum_order:

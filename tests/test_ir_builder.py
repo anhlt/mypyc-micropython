@@ -1545,3 +1545,59 @@ def describe(a: object) -> str:
         assert isinstance(ret_cat, ReturnIR)
         assert isinstance(ret_cat.value, ParamAttrIR)
         assert ret_cat.value.attr_name == 'color'
+
+
+class TestFuncRefIR:
+    """Test that function-as-value produces FuncRefIR."""
+
+    def test_known_function_produces_func_ref(self):
+        source = '''
+def my_key(x: int) -> int:
+    return x
+
+def sort_list(lst: list) -> list:
+    return sorted(lst, key=my_key)
+'''
+        from mypyc_micropython.ir import FuncRefIR
+
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        funcs = [n for n in ast.iter_child_nodes(tree)
+                 if isinstance(n, ast.FunctionDef)]
+        # Build first function and register it
+        func_ir_key = builder.build_function(funcs[0])
+        builder.register_function_name(func_ir_key.name, func_ir_key.c_name)
+
+        # Build second function - should reference my_key as FuncRefIR
+        func_ir_sort = builder.build_function(funcs[1])
+        # The sorted() call's kwargs should contain a FuncRefIR for my_key
+        ret = func_ir_sort.body[0]
+        assert isinstance(ret, ReturnIR)
+        call = ret.value
+        assert isinstance(call, CallIR)
+        assert call.func_name == "sorted"
+        assert len(call.kwargs) == 1
+        kw_name, kw_val = call.kwargs[0]
+        assert kw_name == "key"
+        assert isinstance(kw_val, FuncRefIR)
+        assert kw_val.py_name == "my_key"
+        assert kw_val.c_name == "test_my_key"
+
+    def test_unknown_name_stays_as_name_ir(self):
+        source = '''
+def sort_list(lst: list) -> list:
+    return sorted(lst, key=unknown_fn)
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        funcs = [n for n in ast.iter_child_nodes(tree)
+                 if isinstance(n, ast.FunctionDef)]
+        func_ir = builder.build_function(funcs[0])
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        call = ret.value
+        assert isinstance(call, CallIR)
+        kw_name, kw_val = call.kwargs[0]
+        assert kw_name == "key"
+        # unknown_fn is not registered, so it stays as NameIR
+        assert isinstance(kw_val, NameIR)

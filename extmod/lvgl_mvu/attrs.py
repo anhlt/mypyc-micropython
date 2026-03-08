@@ -92,7 +92,7 @@ class AttrDef:
 
     key: int
     name: str
-    default: object
+    default_val: object
     apply_fn: object
     compare_fn: object | None = None
 

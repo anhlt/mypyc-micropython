@@ -238,6 +238,7 @@ def _compile_module_parts(
     external_libs: dict[str, Any] | None = None,
     sibling_modules: dict[str, str] | None = None,  # maps import name -> C prefix
     known_classes: dict[str, Any] | None = None,
+    known_enums: dict[str, Any] | None = None,
 ) -> _ModuleCompileParts:
     from .async_emitter import AsyncEmitter
     from .class_emitter import ClassEmitter
@@ -264,6 +265,7 @@ def _compile_module_parts(
     ir_builder = IRBuilder(
         module_name,
         known_classes=known_classes,
+        known_enums=known_enums,
         mypy_types=mypy_types,
         external_libs=external_libs,
         sibling_modules=sibling_modules,
@@ -281,12 +283,22 @@ def _compile_module_parts(
     uses_imports = False
     used_rtuples: set[RTuple] = set()
 
+    # Pre-scan: collect all module-level function names so that functions/classes
+    # defined earlier can reference functions defined later as first-class values
+    # (e.g., sorted(items, key=my_func) where my_func is defined after the caller).
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            func_c_name = f"{c_name}_{sanitize_name(node.name)}"
+            ir_builder.register_function_name(node.name, func_c_name)
+
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             ir_builder.register_import(node)
         elif isinstance(node, ast.Assign):
             # Register module-level constants (NAME = literal)
             ir_builder.register_constant(node)
+        elif isinstance(node, ast.AnnAssign):
+            ir_builder.register_module_var(node)
         elif isinstance(node, ast.ClassDef):
             if ir_builder.is_enum_class(node):
                 enum_ir = ir_builder.build_enum(node)
@@ -298,6 +310,7 @@ def _compile_module_parts(
             func_ir = ir_builder.build_function(node)
             function_irs.append(func_ir)
             module_ir.add_function(func_ir)
+
 
             # Select appropriate emitter based on function type
             if func_ir.is_async:
@@ -327,6 +340,7 @@ def _compile_module_parts(
 
     module_ir.imported_modules = ir_builder.imported_modules
     module_ir.constants = ir_builder.module_constants
+    module_ir.module_vars = ir_builder.module_vars
     module_ir.resolve_base_classes()
 
     for class_ir in module_ir.get_classes_in_order():
@@ -475,6 +489,7 @@ def _scan_package_recursive(
     from .ir_builder import IRBuilder as _IRBuilder
 
     package_classes: dict[str, Any] = {}
+    package_enums: dict[str, Any] = {}
     for py_file in sorted(package_path.glob("*.py")):
         if py_file.name == "__init__.py":
             continue
@@ -485,8 +500,12 @@ def _scan_package_recursive(
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 scanner.register_import(node)
             elif isinstance(node, ast.ClassDef):
-                class_ir = scanner.build_class(node)
-                package_classes[class_ir.name] = class_ir
+                if scanner.is_enum_class(node):
+                    enum_ir = scanner.build_enum(node)
+                    package_enums[enum_ir.name] = enum_ir
+                else:
+                    class_ir = scanner.build_class(node)
+                    package_classes[class_ir.name] = class_ir
 
     # First: compile .py files at this level
     for py_file in sorted(package_path.glob("*.py")):
@@ -502,6 +521,7 @@ def _scan_package_recursive(
             strict=strict,
             sibling_modules=sibling_modules,
             known_classes=package_classes,
+            known_enums=package_enums,
         )
         submodules.append(
             _PackageSubmodule(

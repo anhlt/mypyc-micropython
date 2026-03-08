@@ -41,6 +41,7 @@ from .ir import (
     ForIterIR,
     ForRangeIR,
     FuncIR,
+    FuncRefIR,
     GetItemIR,
     IfExprIR,
     IfIR,
@@ -658,6 +659,8 @@ class IRPrinter:
             return repr(value.value)
         elif isinstance(value, NameIR):
             return value.py_name
+        elif isinstance(value, FuncRefIR):
+            return f"<func:{value.py_name}>"
         elif isinstance(value, BinOpIR):
             left = self.print_value(value.left)
             right = self.print_value(value.right)
