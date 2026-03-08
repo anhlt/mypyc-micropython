@@ -112,8 +112,8 @@ def can_reuse(prev: Widget, next_w: Widget) -> bool:
 
     Rules:
     1. Widget type must match.
-    2. If either widget carries a user_key, keys must be equal.
-    3. Otherwise (both keys are None), reuse is allowed.
+    2. If either widget carries a non-empty user_key, the user_keys must be equal.
+    3. Otherwise (both user_keys are the empty-string sentinel / unset), reuse is allowed.
     """
     if prev.key != next_w.key:
         return False
@@ -172,7 +172,7 @@ def _events_changed(
     while i < len(prev):
         if prev[i][0] != next_evts[i][0]:
             return True
-        if prev[i][1] is not next_evts[i][1]:
+        if prev[i][1] != next_evts[i][1]:
             return True
         i += 1
     return False

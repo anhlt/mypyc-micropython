@@ -356,6 +356,25 @@ class TestDiffWidgets:
         diff = diff_widgets(None, w)
         assert diff.event_changes is False
 
+    def test_event_no_change_equal_but_distinct_payloads(self):
+        """Two separately constructed equal event payloads should NOT report changes.
+
+        Before fix, _events_changed used identity (is not) which would report
+        fresh tuple objects as changed even when logically equal.
+        """
+        prev = WidgetBuilder(WidgetKey.BUTTON).on(1, "click").build()
+        next_ = WidgetBuilder(WidgetKey.BUTTON).on(1, "click").build()
+        # These are separately constructed str objects -- may or may not be interned
+        # but the event comparison must use equality, not identity
+        diff = diff_widgets(prev, next_)
+        assert diff.event_changes is False
+
+    def test_event_no_change_equal_int_payloads(self):
+        """Integer payloads that are equal must not trigger event_changes."""
+        prev = WidgetBuilder(WidgetKey.BUTTON).on(1, 42).build()
+        next_ = WidgetBuilder(WidgetKey.BUTTON).on(1, 42).build()
+        diff = diff_widgets(prev, next_)
+        assert diff.event_changes is False
 
 # ---------------------------------------------------------------------------
 # Edge cases

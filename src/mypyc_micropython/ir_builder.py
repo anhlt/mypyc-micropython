@@ -2186,12 +2186,19 @@ class IRBuilder:
             name = annotation.id
             return name if name in self._known_classes else None
         if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
-            left_class = self._extract_class_from_annotation(annotation.left)
-            if left_class:
-                return left_class
-            right_class = self._extract_class_from_annotation(annotation.right)
-            if right_class:
-                return right_class
+            # Only handle X | None (Optional) unions -- not arbitrary X | Y
+            left_is_none = (
+                isinstance(annotation.left, ast.Constant) and annotation.left.value is None
+            )
+            right_is_none = (
+                isinstance(annotation.right, ast.Constant) and annotation.right.value is None
+            )
+            if left_is_none and not right_is_none:
+                return self._extract_class_from_annotation(annotation.right)
+            if right_is_none and not left_is_none:
+                return self._extract_class_from_annotation(annotation.left)
+            # For all other unions (e.g., Point | int, Point | OtherClass), do not infer
+            return None
         if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
             name = annotation.value
             return name if name in self._known_classes else None
@@ -3012,6 +3019,8 @@ class IRBuilder:
             class_name = self._extract_class_from_annotation(stmt.annotation)
             if class_name:
                 self._class_typed_params[var_name] = class_name
+                if self._is_optional_class_annotation(stmt.annotation):
+                    self._optional_class_params.add(var_name)
             else:
                 elem_class = self._extract_container_element_class(stmt.annotation)
                 if elem_class:

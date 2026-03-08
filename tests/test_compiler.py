@@ -3820,6 +3820,68 @@ def get_x(flag: bool, p: Point) -> int:
         assert "return mp_obj_new_int(((test_Point_obj_t *)MP_OBJ_TO_PTR(q))->x);" in result
         assert "mp_load_attr(q, MP_QSTR_x)" not in result
 
+    def test_non_optional_union_not_treated_as_class(self):
+        """Point | int should NOT get direct struct access -- it's not X | None."""
+        source = """
+class Point:
+    x: int
+
+def get_x(p: Point | int) -> int:
+    return p.x
+"""
+        result = compile_source(source, "test", type_check=False)
+        # Must NOT use direct struct access -- we don't know if p is Point or int
+        assert "MP_OBJ_TO_PTR(p)" not in result
+        assert "((test_Point_obj_t *)MP_OBJ_TO_PTR(p))->x" not in result
+
+    def test_two_class_union_not_treated_as_concrete(self):
+        """Point | Rect (two classes, no None) must use dynamic dispatch."""
+        source = """
+class Point:
+    x: int
+
+class Rect:
+    x: int
+
+def get_x(p: Point | Rect) -> int:
+    return p.x
+"""
+        result = compile_source(source, "test", type_check=False)
+        # Must NOT use direct struct access for either class
+        assert "((test_Point_obj_t *)MP_OBJ_TO_PTR(p))->x" not in result
+        assert "((test_Rect_obj_t *)MP_OBJ_TO_PTR(p))->x" not in result
+
+    def test_optional_local_in_method_dynamic_until_narrowed(self):
+        """Method-local q: Point | None must use dynamic dispatch until narrowed."""
+        source = """
+class Point:
+    x: int
+
+class Processor:
+    def process(self, p: Point) -> int:
+        q: Point | None = None
+        q = p
+        if q is not None:
+            return q.x
+        return 0
+"""
+        result = compile_source(source, "test", type_check=False)
+        # After narrowing, should use static dispatch
+        assert "MP_OBJ_TO_PTR(q)" in result
+
+    def test_optional_local_in_method_no_guard_is_dynamic(self):
+        """Method-local q: Point | None without guard must use mp_load_attr."""
+        source = """
+class Point:
+    x: int
+
+class Processor:
+    def process(self, p: Point) -> int:
+        q: Point | None = p
+        return q.x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_load_attr(q, MP_QSTR_x)" in result
 
 class TestChainedClassAttrAccess:
     """Tests for chained attribute access on nested class types."""
