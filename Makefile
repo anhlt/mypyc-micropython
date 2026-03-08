@@ -31,7 +31,7 @@ BUILD_DIR := $(ROOT_DIR)/build
 # LVGL paths
 LVGL_STUB_DIR := $(ROOT_DIR)/src/mypyc_micropython/c_bindings/libraries/lvgl/stubs
 LVGL_CONFIG_DIR := $(ROOT_DIR)/src/mypyc_micropython/c_bindings/libraries/lvgl/config
-LVGL_DRIVER_DIR := $(ROOT_DIR)/src/mypyc_micropython/c_bindings/libraries/lvgl/drivers
+# (removed LVGL_DRIVER_DIR - board profiles now required)
 LVGL_MODULE_DIR := $(MODULES_DIR)/usermod_lvgl
 
 # Board profile paths (display/touch drivers)
@@ -65,8 +65,8 @@ endif
 
 .PHONY: help setup setup-idf setup-mpy compile build flash monitor clean clean-all \
         test test-device run-device-tests benchmark compile-all check-env check-board \
-        compile-lvgl test-lvgl run-lvgl-tests run-lvgl-mvu-tests run-lvgl-tests-all \
-        erase run list-boards info repl
+        test-lvgl run-lvgl-tests run-lvgl-mvu-tests run-lvgl-tests-all \
+        erase run info repl run-nav-tests run-screen-navigation-tests
 
 # Default target
 help:
@@ -159,22 +159,19 @@ setup-idf:
 	else \
 		echo "ESP-IDF already exists at $(ESP_IDF_DIR)"; \
 	fi
-	@echo "Installing ESP-IDF toolchain (this takes ~20-30 minutes)..."
-	cd $(ESP_IDF_DIR) && ./install.sh esp32,esp32c3,esp32s3
-	@echo ""
-	@echo "Patching ESP-IDF Python check script (ruamel.yaml bug workaround)..."
-	@echo '#!/usr/bin/env python' > $(ESP_IDF_DIR)/tools/check_python_dependencies.py
-	@echo 'import sys; sys.exit(0)' >> $(ESP_IDF_DIR)/tools/check_python_dependencies.py
+	@echo "Installing ESP-IDF toolchain for ESP32-C3, ESP32-C6 and ESP32-P4 (~20-30 minutes)..."
+	cd $(ESP_IDF_DIR) && ./install.sh esp32c3,esp32c6,esp32p4
 	@echo ""
 	@echo "ESP-IDF installed! Before building, run:"
-	@echo "  source $(ESP_IDF_DIR)/export.sh"
 
 setup-mpy: check-env
+	@echo "Initializing MicroPython submodule..."
+	cd $(MICROPYTHON_DIR) && git submodule update --init --recursive
 	@echo "Building mpy-cross..."
 	$(MAKE) -C $(MICROPYTHON_DIR)/mpy-cross
 	@echo "Initializing ESP32 port submodules..."
-	cd $(MICROPYTHON_DIR) && git submodule update --init lib/berkeley-db-1.xx lib/micropython-lib
 	$(MAKE) -C $(MP_PORT_DIR) submodules
+	@echo "MicroPython setup complete."
 
 # ============================================================================
 # COMPILE TARGETS
@@ -212,24 +209,34 @@ compile-all: check-board
 		fi; \
 	done
 	@echo ""
-	@echo "Compiling extmod/lvui package..."
-	@if [ -f "$(EXTMOD_DIR)/lvui/__init__.py" ]; then \
-		echo "Compiling package $(EXTMOD_DIR)/lvui/ -> $(MODULES_DIR)/usermod_lvui/"; \
-		mpy-compile "$(EXTMOD_DIR)/lvui/" -o "$(MODULES_DIR)/usermod_lvui" || exit 1; \
+	@if [ "$(LVGL)" = "1" ]; then \
+		echo "Compiling extmod/lvui package..."; \
+		if [ -f "$(EXTMOD_DIR)/lvui/__init__.py" ]; then \
+			echo "Compiling package $(EXTMOD_DIR)/lvui/ -> $(MODULES_DIR)/usermod_lvui/"; \
+			mpy-compile "$(EXTMOD_DIR)/lvui/" -o "$(MODULES_DIR)/usermod_lvui" || exit 1; \
+		fi; \
+		echo ""; \
+		echo "Compiling extmod/lvgl_mvu package..."; \
+		if [ -f "$(EXTMOD_DIR)/lvgl_mvu/__init__.py" ]; then \
+			echo "Compiling package $(EXTMOD_DIR)/lvgl_mvu/ -> $(MODULES_DIR)/usermod_lvgl_mvu/"; \
+			mpy-compile "$(EXTMOD_DIR)/lvgl_mvu/" -o "$(MODULES_DIR)/usermod_lvgl_mvu" || exit 1; \
+		fi; \
+	else \
+		echo "Skipping LVGL packages (LVGL=0)"; \
 	fi
 	@echo ""
-	@echo "Compiling extmod/lvgl_mvu package..."
-	@if [ -f "$(EXTMOD_DIR)/lvgl_mvu/__init__.py" ]; then \
-		echo "Compiling package $(EXTMOD_DIR)/lvgl_mvu/ -> $(MODULES_DIR)/usermod_lvgl_mvu/"; \
-		mpy-compile "$(EXTMOD_DIR)/lvgl_mvu/" -o "$(MODULES_DIR)/usermod_lvgl_mvu" || exit 1; \
+	@if [ "$(LVGL)" = "1" ]; then \
+		echo "Compiling LVGL C bindings..."; \
+		$(MAKE) compile-lvgl-only; \
+	else \
+		echo "Skipping LVGL C bindings (LVGL=0)"; \
 	fi
-	@echo ""
-	@echo "Compiling LVGL C bindings..."
-	@$(MAKE) compile-lvgl-only
 	@echo ""
 	@echo "Generating $(MODULES_DIR)/micropython.cmake..."
 	@echo "# Auto-generated - include all compiled modules" > $(MODULES_DIR)/micropython.cmake
-	@echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_lvgl/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake
+	@if [ "$(LVGL)" = "1" ] && [ -d "$(LVGL_MODULE_DIR)" ]; then \
+		echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_lvgl/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
+	fi
 	@for f in examples/*.py; do \
 		MOD_NAME=$$(basename "$$f" .py); \
 		case "$$MOD_NAME" in \
@@ -259,8 +266,9 @@ compile-lvgl-only:
 		cp $(BOARD_PROFILE_DIR)/display_driver.c $(LVGL_MODULE_DIR)/; \
 		cp $(BOARD_PROFILE_DIR)/display_driver.h $(LVGL_MODULE_DIR)/; \
 	else \
-		cp $(LVGL_DRIVER_DIR)/st7789_driver.c $(LVGL_MODULE_DIR)/display_driver.c; \
-		cp $(LVGL_DRIVER_DIR)/st7789_driver.h $(LVGL_MODULE_DIR)/display_driver.h; \
+		echo "ERROR: No display_driver.c found in $(BOARD_PROFILE_DIR)"; \
+		echo "Available board profiles: waveshare-c6, guition-p4"; \
+		exit 1; \
 	fi
 	@if [ -d "$(BOARD_PROFILE_DIR)/st7701" ]; then \
 		mkdir -p $(LVGL_MODULE_DIR)/st7701; \
@@ -274,45 +282,6 @@ compile-lvgl-only:
 	@cp $(LVGL_CONFIG_DIR)/lv_conf.h $(LVGL_MODULE_DIR)/
 	@cp $(LVGL_CONFIG_DIR)/micropython.cmake $(LVGL_MODULE_DIR)/
 	@python3 scripts/patch_lvgl_c.py $(LVGL_MODULE_DIR)/lvgl.c
-
-compile-lvgl:
-	@echo "Compiling LVGL bindings from .pyi stub..."
-	@mkdir -p $(LVGL_MODULE_DIR)
-	mpy-compile-c $(LVGL_STUB_DIR)/lvgl.pyi -o $(LVGL_MODULE_DIR) --public -v
-	@echo "Using board profile: $(BOARD_PROFILE)"
-	@echo "Copying display driver, touch driver, config, and cmake..."
-	@if [ -f "$(BOARD_PROFILE_DIR)/display_driver.c" ]; then \
-		cp $(BOARD_PROFILE_DIR)/display_driver.c $(LVGL_MODULE_DIR)/; \
-		cp $(BOARD_PROFILE_DIR)/display_driver.h $(LVGL_MODULE_DIR)/; \
-	else \
-		cp $(LVGL_DRIVER_DIR)/st7789_driver.c $(LVGL_MODULE_DIR)/display_driver.c; \
-		cp $(LVGL_DRIVER_DIR)/st7789_driver.h $(LVGL_MODULE_DIR)/display_driver.h; \
-	fi
-	@if [ -d "$(BOARD_PROFILE_DIR)/st7701" ]; then \
-		echo "Copying ST7701 component..."; \
-		mkdir -p $(LVGL_MODULE_DIR)/st7701; \
-		cp $(BOARD_PROFILE_DIR)/st7701/*.c $(LVGL_MODULE_DIR)/st7701/; \
-		cp $(BOARD_PROFILE_DIR)/st7701/*.h $(LVGL_MODULE_DIR)/st7701/; \
-	fi
-	@if [ -f "$(BOARD_PROFILE_DIR)/touch_driver.c" ]; then \
-		cp $(BOARD_PROFILE_DIR)/touch_driver.c $(LVGL_MODULE_DIR)/; \
-		cp $(BOARD_PROFILE_DIR)/touch_driver.h $(LVGL_MODULE_DIR)/; \
-	fi
-	@cp $(LVGL_CONFIG_DIR)/lv_conf.h $(LVGL_MODULE_DIR)/
-	@cp $(LVGL_CONFIG_DIR)/micropython.cmake $(LVGL_MODULE_DIR)/
-	@echo "Patching lvgl.c with display driver entries..."
-	@python3 scripts/patch_lvgl_c.py $(LVGL_MODULE_DIR)/lvgl.c
-	@echo "LVGL module compiled successfully."
-	@echo ""
-	@echo "Adding LVGL to micropython.cmake..."
-	@if [ -f "$(MODULES_DIR)/micropython.cmake" ]; then \
-		if ! grep -q "usermod_lvgl/micropython.cmake" $(MODULES_DIR)/micropython.cmake 2>/dev/null; then \
-			echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_lvgl/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
-		fi; \
-	else \
-		echo "# Auto-generated" > $(MODULES_DIR)/micropython.cmake; \
-		echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_lvgl/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
-	fi
 
 # ============================================================================
 # BUILD TARGETS
@@ -480,11 +449,6 @@ clean-all: clean
 # ============================================================================
 # UTILITY TARGETS
 # ============================================================================
-
-list-boards:
-	@echo "Available boards:"
-	@ls $(MP_PORT_DIR)/boards/ | grep -v '\.py$$'
-
 info:
 	@echo "Configuration:"
 	@echo "  BOARD: $(BOARD)"
