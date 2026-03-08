@@ -1136,6 +1136,19 @@ class CallIR(ExprIR):
 
 
 @dataclass
+class DynamicCallIR(ExprIR):
+    """Dynamic callable invocation: local_var(args).
+
+    Used when calling a local variable that holds a callable object,
+    as opposed to CallIR which calls a statically-known function.
+    """
+
+    callable_var: str  # Name of the local variable holding the callable
+    args: list[ValueIR]
+    kwargs: list[tuple[str, ValueIR]] = field(default_factory=list)
+    arg_preludes: list[list[InstrIR]] = field(default_factory=list)
+
+@dataclass
 class SubscriptIR(ExprIR):
     """Subscript access: value[slice]."""
 
