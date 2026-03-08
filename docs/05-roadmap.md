@@ -43,16 +43,23 @@ A 7-phase roadmap for mypyc-micropython from proof-of-concept to production-read
   `@property` (getter + setter), `@staticmethod`, `@classmethod`
 - **IR pipeline**: Full two-phase architecture (IRBuilder → Emitters), StmtIR/ExprIR/ValueIR
   hierarchies, prelude pattern for side effects, BinOp type inference, RTuple optimization
-- **ESP32**: All 35 compiled modules verified on real ESP32-C6 hardware (415 device tests pass)
+- **ESP32**: 35 compiled modules + 2 packages verified on real ESP32-C6 hardware (495 device tests pass)
 - **Performance**: RTuple internal ops (57x speedup), list[tuple] (9.2x speedup), 22 benchmarks
   suite with 11.8x average speedup
-- **Testing**: 831 tests (unit + C runtime), comprehensive device test coverage
+- **Testing**: 1002 tests (unit + C runtime), comprehensive device test coverage
 - **Strings**: Full method support (`split`, `join`, `replace`, `find`, `strip`, `upper`, `lower`, etc.)
 - **Type Checking**: Optional mypy integration via `type_check=True` parameter, extracts function/class signatures
 - **Exception Handling**: `try`/`except`/`else`/`finally`, `raise`, multiple handlers, exception variable binding
 - **Other**: Local variables (typed and inferred), string literals, `None`, `True`/`False`
 - **isinstance()**: Concrete class type checking with automatic type narrowing in if/elif branches
 - **IntEnum**: Integer enumerations compiled to `MP_ROM_INT` constants
+- **Function references**: Functions as first-class values via `FuncRefIR` (e.g., `sorted(items, key=func)`)
+- **Keyword arguments**: `sorted()` with `key=` kwarg via `mp_call_function_n_kw`
+- **Boxed comparison**: `mp_obj_equal()` for `mp_obj_t` operands (correct Python equality semantics)
+- **Boolean truthiness**: `_to_bool_expr()` conversion at all branch points (`if`, `while`, ternary, `not`)
+- **Module-level variables**: Mutable module state with lazy once-guard initialization pattern
+- **Package compilation**: Multi-file package support with namespaced C submodules and cross-module calls
+- **Cross-package enums**: `known_enums` parameter for resolving enum constants across sibling modules
 
 ### What's Next ❌
 
@@ -71,7 +78,7 @@ Phase 1: Core Completion        ██████████████░  ~
 
 Phase 2: Functions & Arguments  █████████████░░  ~85% done
   default args ✅ │ *args ✅ │ **kwargs ✅ │ bool ✅ │ min/max ✅ │ sum ✅
-  enumerate ✅ │ zip ✅ │ sorted ✅ │ keyword-only args │ positional-only args
+  enumerate ✅ │ zip ✅ │ sorted(key=) ✅ │ func refs ✅ │ keyword-only args │ positional-only args
 
 Phase 3: Classes                ████████████████ 100% done
   class def ✅ │ __init__ ✅ │ methods ✅ │ @dataclass ✅ │ inheritance ✅
@@ -85,10 +92,10 @@ Phase 4: Exception Handling     ███████████████  ~
 Phase 5: Advanced Features      ████░░░░░░░░░░░  ~25% done
   generators ✅ (while/for-range/for-iter + yield) │ closures │ comprehensions │ map/filter
 
-Phase 6: Integration & Polish   ██████████████░  ~90% done
-  ESP32 modules ✅ (35 modules on ESP32-C6) │ RTuple optimization ✅ (57x speedup)
+Phase 6: Integration & Polish   ███████████████░ ~95% done
+  ESP32 modules ✅ (35 modules + 2 packages on ESP32-C6) │ RTuple optimization ✅ (57x speedup)
   list access optimization ✅ │ benchmarks ✅ (22 tests, 11.8x avg) │ Full IR pipeline ✅
-  831 tests ✅ │ type checking ✅ (strict by default) │ error messages │ docs
+  1002 tests ✅ │ type checking ✅ (strict by default) │ package compilation ✅ │ error messages │ docs
 
 Phase 7: Type-Based Optimizations  ░░░░░░░░░░░░░░░  TODO (new!)
   native int arithmetic │ typed local variables │ typed list access
@@ -415,7 +422,7 @@ Tasks:
 | `sum(iterable)` | ✅ Implemented |
 | `enumerate(iterable, start=0)` | ✅ Implemented |
 | `zip(*iterables)` | ✅ Implemented |
-| `sorted(iterable, key=None, reverse=False)` | ✅ Implemented (basic, no key/reverse) |
+| `sorted(iterable, key=None, reverse=False)` | ✅ Implemented (`key=` supported, `reverse=` not yet) |
 | `reversed(sequence)` | ❌ TODO |
 
 ---

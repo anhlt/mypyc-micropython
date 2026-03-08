@@ -62,8 +62,18 @@ This document defines what Python features mypyc-micropython will support, parti
 | Default arguments | ✅ Implemented | `int`, `float`, `bool`, `str`, `None`, empty containers |
 | `*args` | ✅ Implemented | Via `MP_DEFINE_CONST_FUN_OBJ_VAR` |
 | `**kwargs` | ✅ Implemented | Via `MP_DEFINE_CONST_FUN_OBJ_KW` |
+| Function references | ✅ Implemented | Functions as first-class values (e.g., `sorted(items, key=func)`) |
 | Keyword-only arguments | 📋 Planned | Phase 2 |
 | Positional-only arguments | 📋 Planned | Phase 2 |
+
+### Module Features ✅
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Module-level constants | ✅ Implemented | `str`, `int` constants as `MP_ROM` entries |
+| Module-level variables | ✅ Implemented | Mutable state with lazy once-guard initialization |
+| Package compilation | ✅ Implemented | Multi-file packages with namespaced C submodules |
+| Cross-package references | ✅ Implemented | Classes, enums, functions across sibling modules |
 
 ### Data Structures ✅
 
@@ -127,7 +137,7 @@ This document defines what Python features mypyc-micropython will support, parti
 | `enumerate()` | ✅ Implemented | Via `mp_type_enumerate` |
 | `zip()` | ✅ Implemented | Via `mp_type_zip` |
 | `map()`/`filter()` | 📋 Planned | Phase 5 |
-| `sorted()` | ✅ Implemented | Via `mp_builtin_sorted_obj` |
+| `sorted()` | ✅ Implemented | Via `mp_builtin_sorted_obj`, supports `key=` kwarg |
 | `isinstance()` | ✅ Implemented | Concrete classes + automatic type narrowing |
 | `type()` | 📋 Planned | Phase 3 |
 | `hasattr()`/`getattr()`/`setattr()` | 📋 Planned | Phase 3 |
@@ -764,11 +774,11 @@ if (n := len(data)) > 10:
 | Phase | Features |
 |-------|----------|
 | **1 (Core)** | `for` loops ✅, `list` ✅, `tuple` ✅, `dict` ✅, `set` ✅, `range()` ✅, `len()` ✅, `print()` ✅ |
-| **2 (Functions)** | Default args ✅, `*args` ✅, `**kwargs` ✅, `bool()` ✅, `min()`/`max()` ✅, `sum()` ✅, `enumerate()` ✅, `zip()` ✅, `sorted()` ✅ |
+| **2 (Functions)** | Default args ✅, `*args` ✅, `**kwargs` ✅, `bool()` ✅, `min()`/`max()` ✅, `sum()` ✅, `enumerate()` ✅, `zip()` ✅, `sorted(key=)` ✅, function refs ✅ |
 | **3 (Classes)** | Basic classes ✅, methods ✅, @dataclass ✅, single inheritance ✅, @property ✅, @staticmethod ✅, @classmethod ✅, traits ✅, isinstance() ✅, IntEnum ✅ |
 | **4 (Exceptions)** | `try`/`except`/`finally` ✅, `raise` ✅, custom exceptions |
 | **5 (Advanced)** | Simple generators ✅ (while/for-range/for-iter + yield), closures, `map()`/`filter()` |
-| **6 (Polish)** | Full IR pipeline ✅, RTuple optimization ✅ (47x speedup), list access optimization ✅, 831 tests ✅ |
+| **6 (Polish)** | Full IR pipeline ✅, RTuple optimization ✅ (47x speedup), list access optimization ✅, package compilation ✅, 1002 tests ✅ |
 
 ## See Also
 
