@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .ir import FuncIR, ModuleIR, RTuple
+from .ir import CType, FuncIR, ModuleIR, RTuple
 from .type_checker import TypeCheckResult, type_check_file, type_check_source
 
 
@@ -106,6 +106,48 @@ def sanitize_name(name: str) -> str:
     if result in C_RESERVED_WORDS:
         result = result + "_"
     return result
+
+
+def _get_return_type_from_annotation(returns: ast.expr | None) -> CType:
+    """Extract CType from a function's return type annotation.
+
+    Args:
+        returns: The AST node for the return type annotation (node.returns)
+
+    Returns:
+        CType corresponding to the annotation, or MP_INT_T as default
+    """
+    if returns is None:
+        return CType.VOID
+
+    # Handle ast.Name (simple types like 'int', 'float', 'bool', 'object')
+    if isinstance(returns, ast.Name):
+        type_name = returns.id
+        type_map = {
+            "int": CType.MP_INT_T,
+            "float": CType.MP_FLOAT_T,
+            "bool": CType.BOOL,
+            "object": CType.MP_OBJ_T,
+            "str": CType.MP_OBJ_T,
+            "list": CType.MP_OBJ_T,
+            "dict": CType.MP_OBJ_T,
+            "tuple": CType.MP_OBJ_T,
+            "set": CType.MP_OBJ_T,
+            "None": CType.VOID,
+        }
+        return type_map.get(type_name, CType.MP_INT_T)
+
+    # Handle ast.Constant for None
+    if isinstance(returns, ast.Constant) and returns.value is None:
+        return CType.VOID
+
+    # Handle ast.Subscript (generic types like list[int], dict[str, int], Optional[int])
+    if isinstance(returns, ast.Subscript):
+        # For now, treat all generic containers as mp_obj_t
+        return CType.MP_OBJ_T
+
+    # Default to INT for unknown annotations (backwards compatibility)
+    return CType.MP_INT_T
 
 
 def compile_to_micropython(
@@ -225,6 +267,12 @@ target_include_directories(usermod_{c_name} INTERFACE
     ${{CMAKE_CURRENT_LIST_DIR}}
 )
 
+target_compile_options(usermod_{c_name} INTERFACE
+    -Wno-error=unused-variable
+    -Wno-error=unused-function
+    -Wno-error=unused-const-variable=
+)
+
 target_link_libraries(usermod INTERFACE usermod_{c_name})
 """
 
@@ -237,8 +285,10 @@ def _compile_module_parts(
     strict: bool,
     external_libs: dict[str, Any] | None = None,
     sibling_modules: dict[str, str] | None = None,  # maps import name -> C prefix
+    sibling_constants: dict[str, dict[str, int | float | str | bool | None]] | None = None,
     known_classes: dict[str, Any] | None = None,
     known_enums: dict[str, Any] | None = None,
+    func_class_returns: dict[str, str] | None = None,
 ) -> _ModuleCompileParts:
     from .async_emitter import AsyncEmitter
     from .class_emitter import ClassEmitter
@@ -269,6 +319,8 @@ def _compile_module_parts(
         mypy_types=mypy_types,
         external_libs=external_libs,
         sibling_modules=sibling_modules,
+        sibling_constants=sibling_constants,
+        func_class_returns=func_class_returns,
     )
     function_irs: list[FuncIR] = []
     function_code: list[str] = []
@@ -289,7 +341,9 @@ def _compile_module_parts(
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             func_c_name = f"{c_name}_{sanitize_name(node.name)}"
-            ir_builder.register_function_name(node.name, func_c_name)
+            # Extract return type from function annotation
+            return_type = _get_return_type_from_annotation(node.returns)
+            ir_builder.register_function_name(node.name, func_c_name, return_type)
 
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
@@ -362,13 +416,14 @@ def _compile_module_parts(
             class_ir.methods.values(), key=lambda m: (m.name == "__init__", m.name)
         )
         for method_ir in methods_ordered:
-            method_emitter = MethodEmitter(method_ir, class_ir)
 
             # Private (__method) methods: emit native-only, no MP wrapper.
             # They are only called internally via direct C calls, so boxing/unboxing
             # at the MicroPython boundary is unnecessary.
             if method_ir.is_private:
                 native_body = ir_builder.build_method_body(method_ir, class_ir, native=True)
+                # Create emitter AFTER build_method_body so max_temp is correct
+                method_emitter = MethodEmitter(method_ir, class_ir)
                 function_code.append(method_emitter.emit_native(native_body))
                 function_code.append("")
                 continue
@@ -383,12 +438,16 @@ def _compile_module_parts(
 
             if needs_native:
                 native_body = ir_builder.build_method_body(method_ir, class_ir, native=True)
+                # Create emitter AFTER build_method_body so max_temp is correct
+                method_emitter = MethodEmitter(method_ir, class_ir)
                 function_code.append(method_emitter.emit_native(native_body))
                 function_code.append("")
 
             wrapper_body = None
             if not needs_native:
                 wrapper_body = ir_builder.build_method_body(method_ir, class_ir, native=False)
+                # Create emitter AFTER build_method_body so max_temp is correct
+                method_emitter = MethodEmitter(method_ir, class_ir)
 
             function_code.append(method_emitter.emit_mp_wrapper(wrapper_body))
             function_code.append("")
@@ -470,6 +529,38 @@ def compile_source(
     )
 
 
+def _extract_module_constants(source: str) -> dict[str, int | float | str | bool | None]:
+    """Extract module-level constants from Python source.
+
+    Returns a dict mapping constant names to their literal values.
+    Only handles simple NAME = literal_value assignments.
+    """
+    constants: dict[str, int | float | str | bool | None] = {}
+    tree = ast.parse(source)
+
+    for node in ast.iter_child_nodes(tree):
+        # Handle NAME = literal
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            if isinstance(target, ast.Name) and isinstance(node.value, ast.Constant):
+                constants[target.id] = node.value.value
+            elif isinstance(target, ast.Name) and isinstance(node.value, ast.UnaryOp):
+                # Handle negative numbers: -1, -3.14
+                if isinstance(node.value.op, ast.USub) and isinstance(node.value.operand, ast.Constant):
+                    if isinstance(node.value.operand.value, (int, float)):
+                        constants[target.id] = -node.value.operand.value
+
+        # Handle NAME: Type = literal
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if node.value and isinstance(node.value, ast.Constant):
+                constants[node.target.id] = node.value.value
+            elif node.value and isinstance(node.value, ast.UnaryOp):
+                if isinstance(node.value.op, ast.USub) and isinstance(node.value.operand, ast.Constant):
+                    if isinstance(node.value.operand.value, (int, float)):
+                        constants[node.target.id] = -node.value.operand.value
+
+    return constants
+
 def _scan_package_recursive(
     package_path: Path,
     parent_prefix: str,
@@ -490,12 +581,19 @@ def _scan_package_recursive(
 
     package_classes: dict[str, Any] = {}
     package_enums: dict[str, Any] = {}
+    package_constants: dict[str, dict[str, int | float | str | bool | None]] = {}
+    package_func_class_returns: dict[str, str] = {}  # func_name -> class return type
     for py_file in sorted(package_path.glob("*.py")):
         if py_file.name == "__init__.py":
             continue
-        source = py_file.read_text()
+        source = py_file.read_text()  
         tree = ast.parse(source)
         scanner = _IRBuilder(sanitize_name(f"{parent_prefix}_{py_file.stem}"))
+        
+        # Extract module-level constants
+        module_name = f"{parent_prefix}.{py_file.stem}".lstrip('.')
+        package_constants[module_name] = _extract_module_constants(source)
+        
         for node in ast.iter_child_nodes(tree):
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 scanner.register_import(node)
@@ -506,6 +604,19 @@ def _scan_package_recursive(
                 else:
                     class_ir = scanner.build_class(node)
                     package_classes[class_ir.name] = class_ir
+
+    # Second pass: scan function return types that return known classes
+    for py_file in sorted(package_path.glob("*.py")):
+        if py_file.name == "__init__.py":
+            continue
+        source = py_file.read_text()
+        tree = ast.parse(source)
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if node.returns and isinstance(node.returns, ast.Name):
+                    ret_name = node.returns.id
+                    if ret_name in package_classes:
+                        package_func_class_returns[node.name] = ret_name
 
     # First: compile .py files at this level
     for py_file in sorted(package_path.glob("*.py")):
@@ -520,8 +631,10 @@ def _scan_package_recursive(
             type_check=type_check,
             strict=strict,
             sibling_modules=sibling_modules,
+            sibling_constants=package_constants,
             known_classes=package_classes,
             known_enums=package_enums,
+            func_class_returns=package_func_class_returns,
         )
         submodules.append(
             _PackageSubmodule(
@@ -676,7 +789,9 @@ def compile_package(
                 continue
             submod_name = py_file.stem
             c_prefix = sanitize_name(f"{module_name}_{submod_name}")
+            # Map both short name and full qualified name
             sibling_modules[submod_name] = c_prefix
+            sibling_modules[f"{module_name}.{submod_name}"] = c_prefix
 
         submodules = _scan_package_recursive(
             package_path,
