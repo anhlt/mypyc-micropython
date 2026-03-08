@@ -2,7 +2,7 @@
 
 > Fabulous-style Model-View-Update framework for LVGL widgets, compiled to native C via mypyc-micropython.
 
-**Status**: Planning  
+**Status**: Milestone 3 Complete, Starting Milestone 4
 **Created**: 2026-03-07  
 **Target**: LVGL 9.6 / MicroPython 1.28.0
 
@@ -129,16 +129,16 @@ class Program(Generic[Model, Msg]):
 
 | Task | Description | Status |
 |------|-------------|--------|
-| 1.1 | Widget dataclass and WidgetKey enum | Pending |
-| 1.2 | ScalarAttr and attribute registry | Pending |
-| 1.3 | WidgetBuilder base class with fluent API | Pending |
-| 1.4 | Base widget attributes (size, pos, color) | Pending |
-| 1.5 | Unit tests for widget creation | Pending |
+| 1.1 | Widget dataclass and WidgetKey enum | Done |
+| 1.2 | ScalarAttr and attribute registry | Done |
+| 1.3 | WidgetBuilder base class with fluent API | Done |
+| 1.4 | Base widget attributes (size, pos, color) | Done |
+| 1.5 | Unit tests for widget creation | Done |
 
 **Deliverables**:
-- `src/lvgl_mvu/widget.py`
-- `src/lvgl_mvu/attrs.py`
-- `src/lvgl_mvu/builders.py`
+- `extmod/lvgl_mvu/widget.py`
+- `extmod/lvgl_mvu/attrs.py`
+- `extmod/lvgl_mvu/builders.py`
 - `tests/test_widget.py`
 
 **Exit Criteria**:
@@ -154,14 +154,14 @@ class Program(Generic[Model, Msg]):
 
 | Task | Description | Status |
 |------|-------------|--------|
-| 2.1 | AttrChange and WidgetDiff dataclasses | Pending |
-| 2.2 | Scalar attribute diffing (two-pointer) | Pending |
-| 2.3 | Child widget diffing (positional) | Pending |
-| 2.4 | Reuse strategy (can_reuse function) | Pending |
-| 2.5 | Unit tests with edge cases | Pending |
+| 2.1 | AttrChange and WidgetDiff dataclasses | Done |
+| 2.2 | Scalar attribute diffing (two-pointer) | Done |
+| 2.3 | Child widget diffing (positional) | Done |
+| 2.4 | Reuse strategy (can_reuse function) | Done |
+| 2.5 | Unit tests with edge cases | Done |
 
 **Deliverables**:
-- `src/lvgl_mvu/diff.py`
+- `extmod/lvgl_mvu/diff.py`
 - `tests/test_diff.py`
 
 **Exit Criteria**:
@@ -177,24 +177,31 @@ class Program(Generic[Model, Msg]):
 
 | Task | Description | Status |
 |------|-------------|--------|
-| 3.1 | ViewNode class wrapping LVGL objects | Pending |
-| 3.2 | apply_diff method for scalar changes | Pending |
-| 3.3 | Child reconciliation (insert/remove/update) | Pending |
-| 3.4 | Reconciler class orchestrating updates | Pending |
-| 3.5 | LVGL object lifecycle management | Pending |
-| 3.6 | Integration tests with mock LVGL | Pending |
+| 3.1 | ViewNode class wrapping LVGL objects | Done |
+| 3.2 | apply_diff method for scalar changes | Done |
+| 3.3 | Child reconciliation (insert/remove/update) | Done |
+| 3.4 | Reconciler class orchestrating updates | Done |
+| 3.5 | LVGL object lifecycle management | Done |
+| 3.6 | Integration tests with mock LVGL | Done |
 
 **Deliverables**:
-- `src/lvgl_mvu/viewnode.py`
-- `src/lvgl_mvu/reconciler.py`
+- `extmod/lvgl_mvu/viewnode.py`
+- `extmod/lvgl_mvu/reconciler.py`
 - `tests/test_reconciler.py`
+- `tests/device/run_device_tests.py` (ViewNode and Reconciler device tests)
 
 **Exit Criteria**:
 - ViewNode correctly wraps LVGL objects
 - Diffs are applied without object recreation
 - Proper cleanup of removed widgets
 
----
+**Resolved Limitation** (PR #45):
+The mypyc compiler previously had a limitation with cross-module function imports within packages.
+Functions imported from sibling modules (e.g., `from lvgl_mvu.diff import can_reuse`) generated
+incorrect C function names. This has been fixed in PR #45 with:
+1. Enhanced type tracking for dataclass instances returned from cross-module calls
+2. Proper resolution of Optional/dotted type strings for chained attribute access
+3. Fall back to runtime import for non-sibling modules
 
 ### Milestone 4: MVU Runtime (Week 4)
 
@@ -485,7 +492,7 @@ class Program(Generic[Model, Msg]):
 **Goal**: Create immutable widget descriptors separate from LVGL objects.
 
 ```python
-# src/lvgl_mvu/widget.py
+# extmod/lvgl_mvu/widget.py
 
 from dataclasses import dataclass
 from enum import IntEnum
@@ -543,7 +550,7 @@ class Widget:
 #### 1.2 Attribute Definition System
 
 ```python
-# src/lvgl_mvu/attrs.py
+# extmod/lvgl_mvu/attrs.py
 
 from dataclasses import dataclass
 from typing import Callable
@@ -643,7 +650,7 @@ def get_attr_def(key: AttrKey) -> AttrDef:
 #### 1.3 Widget Builder DSL
 
 ```python
-# src/lvgl_mvu/builders.py
+# extmod/lvgl_mvu/builders.py
 
 from dataclasses import dataclass, field
 from typing import TypeVar, Generic, Callable
@@ -734,7 +741,7 @@ class WidgetBuilder(Generic[Msg]):
 ### Phase 2: Diffing Engine
 
 ```python
-# src/lvgl_mvu/diff.py
+# extmod/lvgl_mvu/diff.py
 
 from dataclasses import dataclass
 from typing import Literal
@@ -851,7 +858,7 @@ def diff_widgets(prev: Widget | None, next: Widget) -> WidgetDiff:
 ### Phase 3: ViewNode & Reconciliation
 
 ```python
-# src/lvgl_mvu/viewnode.py
+# extmod/lvgl_mvu/viewnode.py
 
 from dataclasses import dataclass, field
 from .widget import Widget, WidgetKey
@@ -895,7 +902,7 @@ class ViewNode:
 ```
 
 ```python
-# src/lvgl_mvu/reconciler.py
+# extmod/lvgl_mvu/reconciler.py
 
 from .widget import Widget, WidgetKey
 from .viewnode import ViewNode
@@ -1002,7 +1009,7 @@ class Reconciler:
 ### Phase 4: MVU Runtime
 
 ```python
-# src/lvgl_mvu/program.py
+# extmod/lvgl_mvu/program.py
 
 from dataclasses import dataclass
 from typing import TypeVar, Generic, Callable
@@ -1069,7 +1076,7 @@ class Program(Generic[Model, Msg]):
 ```
 
 ```python
-# src/lvgl_mvu/app.py
+# extmod/lvgl_mvu/app.py
 
 from typing import TypeVar, Generic
 from .program import Program, Cmd, Sub, Dispatch
@@ -1158,7 +1165,7 @@ class App(Generic[Model, Msg]):
 **Goal**: Enable async/await for side effects without blocking UI.
 
 ```python
-# src/lvgl_mvu/async_cmd.py
+# extmod/lvgl_mvu/async_cmd.py
 
 from dataclasses import dataclass
 from typing import TypeVar, Generic, Callable, Coroutine, Any
@@ -1220,7 +1227,7 @@ class AsyncCmd(Generic[Msg]):
 #### 5.2 Async Application Runner
 
 ```python
-# src/lvgl_mvu/async_app.py
+# extmod/lvgl_mvu/async_app.py
 
 from typing import TypeVar, Generic
 import asyncio
@@ -1346,7 +1353,7 @@ class AsyncApp(Generic[Model, Msg]):
 #### 5.3 Async Subscriptions
 
 ```python
-# src/lvgl_mvu/async_sub.py
+# extmod/lvgl_mvu/async_sub.py
 
 from dataclasses import dataclass
 from typing import TypeVar, Generic, Callable, Coroutine, Any
@@ -1416,7 +1423,7 @@ class AsyncSub(Generic[Msg]):
 #### 5.4 Background Task Manager
 
 ```python
-# src/lvgl_mvu/tasks.py
+# extmod/lvgl_mvu/tasks.py
 
 from dataclasses import dataclass, field
 from typing import TypeVar, Generic, Callable, Any
@@ -1707,7 +1714,7 @@ await task_mgr.cancel_all()
 ## File Structure
 
 ```
-src/lvgl_mvu/
+extmod/lvgl_mvu/
 ├── __init__.py              # Public API exports
 ├── widget.py                # Widget, ScalarAttr, WidgetKey
 ├── attrs.py                 # AttrKey, AttrDef, registry
