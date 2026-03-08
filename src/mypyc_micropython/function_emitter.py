@@ -25,6 +25,7 @@ from .ir import (
     ConstIR,
     ContinueIR,
     CType,
+    DynamicCallIR,
     ExprStmtIR,
     ForIterIR,
     ForRangeIR,
@@ -398,7 +399,7 @@ class BaseEmitter:
                 lines.append(f'    mp_raise_msg({mp_type}, MP_ERROR_TEXT("{msg_str}"));')
             else:
                 lines.append(
-                    f'    mp_raise_msg_varg({mp_type}, "%s", mp_obj_str_get_str({msg_expr}));'
+                    f'    mp_raise_msg_varg({mp_type}, MP_ERROR_TEXT("%s"), mp_obj_str_get_str({msg_expr}));'
                 )
         else:
             lines.append(f"    mp_raise_msg({mp_type}, NULL);")
@@ -586,6 +587,8 @@ class BaseEmitter:
             return self._emit_sibling_module_call(value, native)
         elif isinstance(value, SiblingClassInstantiationIR):
             return self._emit_sibling_class_instantiation(value, native)
+        elif isinstance(value, DynamicCallIR):
+            return self._emit_dynamic_call(value, native)
 
     def _emit_const(self, const: ConstIR) -> tuple[str, str]:
         val = const.value
@@ -762,6 +765,34 @@ class BaseEmitter:
 
         args_str = ", ".join(args)
         return f"{call.c_func_name}({args_str})", "mp_obj_t"
+
+    def _emit_dynamic_call(self, call: DynamicCallIR, native: bool = False) -> tuple[str, str]:
+        """Emit a dynamic call to a callable stored in a local variable."""
+        del native  # Always use mp_call_function_n
+
+        # Build args list, boxing as needed
+        args = []
+        for arg in call.args:
+            arg_expr, arg_type = self._emit_expr(arg, False)
+            args.append(self._box_value(arg_expr, arg_type))
+
+        n_args = len(args)
+        callable_var = call.callable_var
+
+        if n_args == 0:
+            return f"mp_call_function_0({callable_var})", "mp_obj_t"
+        elif n_args == 1:
+            return f"mp_call_function_1({callable_var}, {args[0]})", "mp_obj_t"
+        elif n_args == 2:
+            return f"mp_call_function_2({callable_var}, {args[0]}, {args[1]})", "mp_obj_t"
+        else:
+            # For 3+ args, use mp_call_function_n_kw
+            args_str = ", ".join(args)
+            return (
+                f"mp_call_function_n_kw({callable_var}, {n_args}, 0, "
+                f"(const mp_obj_t[]){{{args_str}}})",
+                "mp_obj_t"
+            )
 
     def _emit_clib_call(self, call: CLibCallIR, native: bool = False) -> tuple[str, str]:
         args = []
