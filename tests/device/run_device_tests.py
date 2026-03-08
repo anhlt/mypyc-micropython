@@ -899,6 +899,7 @@ t("full test", on.test_optional_narrowing(), "10,42,20,-1,10,20,no point,100,30,
 gc.collect()
 suite("lvgl_mvu_diff")
 import lvgl_mvu
+
 Widget = lvgl_mvu.widget.Widget
 ScalarAttr = lvgl_mvu.widget.ScalarAttr
 diff_widgets = lvgl_mvu.diff.diff_widgets
