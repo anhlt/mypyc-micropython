@@ -175,6 +175,12 @@ compile-all:
 		mpy-compile "$(EXTMOD_DIR)/lvui/" -o "$(MODULES_DIR)/usermod_lvui" || exit 1; \
 	fi
 	@echo ""
+	@echo "Compiling extmod/lvgl_mvu package..."
+	@if [ -f "$(EXTMOD_DIR)/lvgl_mvu/__init__.py" ]; then \
+		echo "Compiling package $(EXTMOD_DIR)/lvgl_mvu/ -> $(MODULES_DIR)/usermod_lvgl_mvu/"; \
+		mpy-compile "$(EXTMOD_DIR)/lvgl_mvu/" -o "$(MODULES_DIR)/usermod_lvgl_mvu" || exit 1; \
+	fi
+	@echo ""
 	@echo "Compiling LVGL C bindings..."
 	@$(MAKE) compile-lvgl-only
 	@echo ""
