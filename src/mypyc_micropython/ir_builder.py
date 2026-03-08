@@ -39,8 +39,6 @@ from .ir import (
     DefaultArg,
     DictNewIR,
     DynamicCallIR,
-    DefaultArg,
-    DictNewIR,
     EnumIR,
     ExceptHandlerIR,
     ExprStmtIR,

@@ -586,14 +586,14 @@ def _scan_package_recursive(
     for py_file in sorted(package_path.glob("*.py")):
         if py_file.name == "__init__.py":
             continue
-        source = py_file.read_text()  
+        source = py_file.read_text()
         tree = ast.parse(source)
         scanner = _IRBuilder(sanitize_name(f"{parent_prefix}_{py_file.stem}"))
-        
+
         # Extract module-level constants
         module_name = f"{parent_prefix}.{py_file.stem}".lstrip('.')
         package_constants[module_name] = _extract_module_constants(source)
-        
+
         for node in ast.iter_child_nodes(tree):
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 scanner.register_import(node)
