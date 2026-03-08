@@ -115,10 +115,13 @@ def _get_return_type_from_annotation(returns: ast.expr | None) -> CType:
         returns: The AST node for the return type annotation (node.returns)
 
     Returns:
-        CType corresponding to the annotation, or MP_INT_T as default
+        CType corresponding to the annotation.
+        - None annotation (no return type specified) -> MP_OBJ_T (returns mp_const_none)
+        - Unknown type annotations -> MP_OBJ_T (consistent with CType.from_python_type)
     """
     if returns is None:
-        return CType.VOID
+        # No return annotation - function returns mp_const_none by default
+        return CType.MP_OBJ_T
 
     # Handle ast.Name (simple types like 'int', 'float', 'bool', 'object')
     if isinstance(returns, ast.Name):
@@ -135,7 +138,8 @@ def _get_return_type_from_annotation(returns: ast.expr | None) -> CType:
             "set": CType.MP_OBJ_T,
             "None": CType.VOID,
         }
-        return type_map.get(type_name, CType.MP_INT_T)
+        # Default to MP_OBJ_T for unknown types (consistent with CType.from_python_type)
+        return type_map.get(type_name, CType.MP_OBJ_T)
 
     # Handle ast.Constant for None
     if isinstance(returns, ast.Constant) and returns.value is None:
@@ -146,8 +150,8 @@ def _get_return_type_from_annotation(returns: ast.expr | None) -> CType:
         # For now, treat all generic containers as mp_obj_t
         return CType.MP_OBJ_T
 
-    # Default to INT for unknown annotations (backwards compatibility)
-    return CType.MP_INT_T
+    # Default to MP_OBJ_T for unknown annotations (consistent with CType.from_python_type)
+    return CType.MP_OBJ_T
 
 
 def compile_to_micropython(
@@ -270,7 +274,7 @@ target_include_directories(usermod_{c_name} INTERFACE
 target_compile_options(usermod_{c_name} INTERFACE
     -Wno-error=unused-variable
     -Wno-error=unused-function
-    -Wno-error=unused-const-variable=
+    -Wno-error=unused-const-variable
 )
 
 target_link_libraries(usermod INTERFACE usermod_{c_name})

@@ -589,7 +589,6 @@ class BaseEmitter:
             return self._emit_sibling_class_instantiation(value, native)
         elif isinstance(value, DynamicCallIR):
             return self._emit_dynamic_call(value, native)
-            return self._emit_sibling_class_instantiation(value, native)
 
     def _emit_const(self, const: ConstIR) -> tuple[str, str]:
         val = const.value
@@ -794,7 +793,6 @@ class BaseEmitter:
                 f"(const mp_obj_t[]){{{args_str}}})",
                 "mp_obj_t"
             )
-        return f"{call.c_func_name}({args_str})", "mp_obj_t"
 
     def _emit_clib_call(self, call: CLibCallIR, native: bool = False) -> tuple[str, str]:
         args = []

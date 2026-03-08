@@ -1269,11 +1269,36 @@ class IRBuilder:
                 return ConstIR(ir_type=IRType.OBJ, value=None)
 
         # Check for cross-module constants (imported from sibling modules)
+        # Note: _sibling_constants may be keyed by fully-qualified module names
+        # (e.g. 'pkg.diff'), while source_module can be a short name (e.g. 'diff').
+        # Try both exact and short-name matches.
         if name in self._imported_from:
             source_module = self._imported_from[name]
+            const_val = None
+            # Try exact match first
             if source_module in self._sibling_constants:
                 if name in self._sibling_constants[source_module]:
                     const_val = self._sibling_constants[source_module][name]
+            else:
+                # Try matching by short name (last component)
+                for mod_key, consts in self._sibling_constants.items():
+                    if mod_key.rsplit(".", 1)[-1] == source_module:
+                        if name in consts:
+                            const_val = consts[name]
+                            break
+            if const_val is not None or (name in self._imported_from and
+                    any(name in c for c in self._sibling_constants.values())):
+                # Check if we found a constant with value None (different from not found)
+                found_none = False
+                if const_val is None:
+                    if source_module in self._sibling_constants:
+                        found_none = name in self._sibling_constants[source_module]
+                    else:
+                        for mod_key, consts in self._sibling_constants.items():
+                            if mod_key.rsplit(".", 1)[-1] == source_module:
+                                found_none = name in consts
+                                break
+                if const_val is not None or found_none:
                     if isinstance(const_val, bool):
                         return ConstIR(ir_type=IRType.BOOL, value=const_val)
                     elif isinstance(const_val, int):
@@ -1517,13 +1542,29 @@ class IRBuilder:
             source_module = self._imported_from[func_name]
             # Check if source module is a sibling module in the same package
             # e.g., 'lvgl_mvu.diff' -> look up 'lvgl_mvu.diff' in _sibling_modules
-            if source_module in self._sibling_modules:
+            is_sibling = source_module in self._sibling_modules
+            # Also check if it matches by short name
+            if not is_sibling:
+                for mod_key in self._sibling_modules:
+                    if mod_key.rsplit(".", 1)[-1] == source_module:
+                        is_sibling = True
+                        source_module = mod_key  # Use the full module name
+                        break
+            if is_sibling:
                 c_prefix = self._sibling_modules[source_module]
                 c_func_name = f"{c_prefix}_{sanitize_name(func_name)}"
             else:
-                # For external modules, use the full module path as prefix
-                c_prefix = sanitize_name(source_module.replace('.', '_'))
-                c_func_name = f"{c_prefix}_{sanitize_name(func_name)}"
+                # For external/non-sibling modules, there's no compiled C symbol.
+                # Fall back to runtime import/call via ModuleCallIR.
+                self._uses_imports = True
+                return ModuleCallIR(
+                    ir_type=IRType.OBJ,
+                    module_name=source_module,
+                    func_name=func_name,
+                    args=args,
+                    arg_preludes=arg_preludes,
+                    kwargs=kwargs,
+                ), all_preludes
         else:
             c_func_name = f"{self.c_name}_{sanitize_name(func_name)}"
 
@@ -2187,24 +2228,35 @@ class IRBuilder:
         return result, [list_comp]
 
     def _resolve_class_name_from_type_str(self, type_str: str) -> str | None:
-        """Extract a known class name from a type string, handling Optional/union."""
+        """Extract a known class name from a type string, handling Optional/union.
+
+        Handles:
+        - Direct class names: 'WidgetDiff'
+        - Optional types: 'WidgetDiff | None'
+        - Dotted optional types: 'pkg.WidgetDiff | None'
+        - Dotted names: 'module.ClassName'
+        """
         # Direct match
         if type_str in self._known_classes:
             return type_str
-        # Handle "X | None" or "None | X"
+
+        # First, strip ' | None' or 'None | ' to get the base type
+        base_type = type_str
         if "|" in type_str:
             parts = [p.strip() for p in type_str.split("|")]
             non_none = [p for p in parts if p != "None"]
             if len(non_none) == 1:
-                candidate = non_none[0]
-                if candidate in self._known_classes:
-                    return candidate
-        # Handle dotted names: "module.ClassName" -> "ClassName"
-        base = type_str.split("|")[0].strip() if "|" not in type_str else type_str
-        if "|" not in base and "." in base:
-            short = base.rsplit(".", 1)[-1]
+                base_type = non_none[0]
+                # Check if the unwrapped type matches directly
+                if base_type in self._known_classes:
+                    return base_type
+
+        # Handle dotted names: 'module.ClassName' or 'pkg.module.ClassName' -> 'ClassName'
+        if "." in base_type:
+            short = base_type.rsplit(".", 1)[-1]
             if short in self._known_classes:
                 return short
+
         return None
 
     def _get_class_type_of_attr(self, expr: ast.Attribute) -> str | None:
@@ -2224,7 +2276,7 @@ class IRBuilder:
                 class_ir = self._known_classes[parent_class]
                 for fld in class_ir.get_all_fields():
                     if fld.name == expr.attr:
-                            return self._resolve_class_name_from_type_str(fld.py_type)
+                        return self._resolve_class_name_from_type_str(fld.py_type)
         return None
 
     def _get_method_attr_class_type(self, expr: ast.Attribute, class_ir: ClassIR) -> str | None:
@@ -2248,7 +2300,7 @@ class IRBuilder:
                 parent_ir = self._known_classes[parent_type]
                 for fld in parent_ir.get_all_fields():
                     if fld.name == expr.attr:
-                            return self._resolve_class_name_from_type_str(fld.py_type)
+                        return self._resolve_class_name_from_type_str(fld.py_type)
         return None
 
     def _build_slice(self, slice_node: ast.Slice, locals_: list[str]) -> SliceIR:
