@@ -1280,176 +1280,25 @@ class IRBuilder:
             )
 
         if self._ctx.is_method:
-            class_ir = self._ctx.class_ir
-
             if isinstance(expr, ast.Attribute):
                 if isinstance(expr.value, ast.Name):
                     var_name = expr.value.id
                     attr_name = expr.attr
-
                     if var_name == "self":
-                        for fld, path in class_ir.get_all_fields_with_path():
-                            if fld.name == attr_name:
-                                result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
-                                return SelfAttrIR(
-                                    ir_type=result_type,
-                                    attr_name=attr_name,
-                                    attr_path=path,
-                                    result_type=result_type,
-                                ), []
-                        if attr_name in class_ir.methods:
-                            method_ir = class_ir.methods[attr_name]
-                            return SelfMethodRefIR(
-                                ir_type=IRType.OBJ,
-                                method_name=attr_name,
-                                method_c_name=method_ir.c_name,
-                                class_c_name=class_ir.c_name,
-                            ), []
-                        self._warn_type_tracking_fallback(
-                            "self attribute",
-                            "self",
-                            attr_name,
-                            f"Attribute '{attr_name}' not found in class '{class_ir.name}'",
-                        )
-                        return SelfAttrIR(
-                            ir_type=IRType.OBJ,
-                            attr_name=attr_name,
-                            attr_path=attr_name,
-                            result_type=IRType.OBJ,
-                        ), []
-
+                        return self._build_self_attr(attr_name)
                     if var_name in self._class_typed_params:
-                        param_class_name = self._class_typed_params[var_name]
-                        param_class_ir = self._known_classes[param_class_name]
-                        use_dynamic = (
-                            param_class_ir.is_trait or var_name in self._optional_class_params
-                        )
-                        for fld, path in param_class_ir.get_all_fields_with_path():
-                            if fld.name == attr_name:
-                                result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
-                                return ParamAttrIR(
-                                    ir_type=result_type,
-                                    param_name=var_name,
-                                    c_param_name=sanitize_name(var_name),
-                                    attr_name=attr_name,
-                                    attr_path=path,
-                                    class_c_name=param_class_ir.c_name,
-                                    result_type=result_type,
-                                    is_trait_type=use_dynamic,
-                                ), []
-                        self._warn_type_tracking_fallback(
-                            "param attribute",
-                            var_name,
-                            attr_name,
-                            f"Attribute '{attr_name}' not found in class '{param_class_ir.name}'",
-                        )
-                        return ParamAttrIR(
-                            ir_type=IRType.OBJ,
-                            param_name=var_name,
-                            c_param_name=sanitize_name(var_name),
-                            attr_name=attr_name,
-                            attr_path=attr_name,
-                            class_c_name=param_class_ir.c_name,
-                            result_type=IRType.OBJ,
-                            is_trait_type=use_dynamic,
-                        ), []
-
+                        return self._build_param_attr(var_name, attr_name)
                 if isinstance(expr.value, ast.Attribute):
-                    attr_name = expr.attr
-                    base_class_name = self._get_method_attr_class_type(expr.value, class_ir)
-                    if base_class_name and base_class_name in self._known_classes:
-                        base_class_ir = self._known_classes[base_class_name]
-                        base_value, base_prelude = self._build_expr(expr.value, locals_)
-                        for fld in base_class_ir.get_all_fields():
-                            if fld.name == attr_name:
-                                result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
-                                temp_name = self._fresh_temp()
-                                result_temp = TempIR(ir_type=result_type, name=temp_name)
-                                attr_access = AttrAccessIR(
-                                    result=result_temp,
-                                    obj=base_value,
-                                    attr_name=attr_name,
-                                    class_c_name=base_class_ir.c_name,
-                                    result_type=result_type,
-                                )
-                                return result_temp, base_prelude + [attr_access]
-                        self._warn_type_tracking_fallback(
-                            "chained attribute",
-                            f"{ast.unparse(expr.value)}",
-                            attr_name,
-                            f"Attribute '{attr_name}' not found in class '{base_class_ir.name}'",
-                        )
-                    else:
-                        self._warn_type_tracking_fallback(
-                            "chained attribute",
-                            f"{ast.unparse(expr.value)}",
-                            expr.attr,
-                            "Could not resolve class type for base expression",
-                        )
+                    result = self._build_chained_attr(expr, locals_)
+                    if result is not None:
+                        return result
 
             if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute):
-                if (
-                    isinstance(expr.func.value, ast.Call)
-                    and isinstance(expr.func.value.func, ast.Name)
-                    and expr.func.value.func.id == "super"
-                    and len(expr.func.value.args) == 0
-                    and len(expr.func.value.keywords) == 0
-                ):
-                    method_name = expr.func.attr
-                    parent_class = class_ir.base
-                    while parent_class is not None and method_name not in parent_class.methods:
-                        parent_class = parent_class.base
-                    if parent_class is not None:
-                        parent_method = parent_class.methods[method_name]
-                        args: list[ValueIR] = []
-                        arg_preludes: list[list] = []
-                        for arg in expr.args:
-                            val, prelude = self._build_expr(arg, locals_)
-                            args.append(val)
-                            arg_preludes.append(prelude)
-                        return_type = IRType.from_c_type_str(
-                            parent_method.return_type.to_c_type_str()
-                        )
-                        all_preludes = [p for pl in arg_preludes for p in pl]
-                        return SuperCallIR(
-                            ir_type=return_type,
-                            method_name=method_name,
-                            parent_c_name=parent_class.c_name,
-                            parent_method_c_name=parent_method.c_name,
-                            args=args,
-                            return_type=return_type,
-                            is_init=method_name == "__init__",
-                            arg_preludes=arg_preludes,
-                        ), all_preludes
-
-            if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute):
+                result = self._build_super_call(expr, locals_)
+                if result is not None:
+                    return result
                 if isinstance(expr.func.value, ast.Name) and expr.func.value.id == "self":
-                    method_name = expr.func.attr
-                    method_ir = class_ir.methods.get(method_name)
-                    c_method_name = f"{class_ir.c_name}_{sanitize_name(method_name)}"
-                    args: list[ValueIR] = []
-                    arg_preludes: list[list] = []
-                    for arg in expr.args:
-                        val, prelude = self._build_expr(arg, locals_)
-                        args.append(val)
-                        arg_preludes.append(prelude)
-                    return_type = IRType.OBJ
-                    if method_ir:
-                        return_type = IRType.from_c_type_str(method_ir.return_type.to_c_type_str())
-                    all_preludes = [p for pl in arg_preludes for p in pl]
-                    param_types: list[IRType] = []
-                    if method_ir:
-                        for _pname, ptype in method_ir.params:
-                            param_types.append(IRType.from_c_type_str(ptype.to_c_type_str()))
-                    return SelfMethodCallIR(
-                        ir_type=return_type,
-                        method_name=method_name,
-                        c_method_name=c_method_name,
-                        args=args,
-                        return_type=return_type,
-                        arg_preludes=arg_preludes,
-                        param_types=param_types,
-                    ), all_preludes
+                    return self._build_self_call(expr, locals_)
 
         if isinstance(expr, ast.Constant):
             return self._build_constant(expr), []
@@ -1718,47 +1567,170 @@ class IRBuilder:
             comparator_preludes=comparator_preludes,
         ), all_preludes
 
-    def _build_call(self, expr: ast.Call, locals_: list[str]) -> tuple[ValueIR, list]:
-        if isinstance(expr.func, ast.Attribute):
-            return self._build_method_call(expr, locals_)
-
-        if not isinstance(expr.func, ast.Name):
-            return ConstIR(ir_type=IRType.OBJ, value=None), []
-
-        func_name = expr.func.id
-
-        if func_name in self._known_classes:
-            return self._build_class_instantiation(expr, func_name, locals_)
-
-        # isinstance(obj, ClassName) -> IsInstanceIR
-        if func_name == "isinstance" and len(expr.args) == 2:
-            return self._build_isinstance(expr, locals_)
-
-        if func_name in locals_:
-            args: list[ValueIR] = []
-            arg_preludes: list[list] = []
-            for arg in expr.args:
-                val, prelude = self._build_expr(arg, locals_)
-                args.append(val)
-                arg_preludes.append(prelude)
-            kwargs: list[tuple[str, ValueIR]] = []
-            kwarg_preludes: list[list] = []
-            for kw in expr.keywords:
-                if kw.arg is None:
-                    continue
-                val, prelude = self._build_expr(kw.value, locals_)
-                kwargs.append((kw.arg, val))
-                kwarg_preludes.append(prelude)
-            all_preludes = [p for pl in arg_preludes for p in pl]
-            all_preludes.extend(p for pl in kwarg_preludes for p in pl)
-            return DynamicCallIR(
+    def _build_self_attr(self, attr_name: str) -> tuple[ValueIR, list]:
+        class_ir = self._ctx.class_ir
+        for fld, path in class_ir.get_all_fields_with_path():
+            if fld.name == attr_name:
+                result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
+                return SelfAttrIR(
+                    ir_type=result_type,
+                    attr_name=attr_name,
+                    attr_path=path,
+                    result_type=result_type,
+                ), []
+        if attr_name in class_ir.methods:
+            method_ir = class_ir.methods[attr_name]
+            return SelfMethodRefIR(
                 ir_type=IRType.OBJ,
-                callable_var=func_name,
-                args=args,
-                kwargs=kwargs,
-                arg_preludes=arg_preludes,
-            ), all_preludes
+                method_name=attr_name,
+                method_c_name=method_ir.c_name,
+                class_c_name=class_ir.c_name,
+            ), []
+        self._warn_type_tracking_fallback(
+            "self attribute",
+            "self",
+            attr_name,
+            f"Attribute '{attr_name}' not found in class '{class_ir.name}'",
+        )
+        return SelfAttrIR(
+            ir_type=IRType.OBJ,
+            attr_name=attr_name,
+            attr_path=attr_name,
+            result_type=IRType.OBJ,
+        ), []
 
+    def _build_param_attr(self, var_name: str, attr_name: str) -> tuple[ValueIR, list]:
+        param_class_name = self._class_typed_params[var_name]
+        param_class_ir = self._known_classes[param_class_name]
+        use_dynamic = param_class_ir.is_trait or var_name in self._optional_class_params
+        for fld, path in param_class_ir.get_all_fields_with_path():
+            if fld.name == attr_name:
+                result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
+                return ParamAttrIR(
+                    ir_type=result_type,
+                    param_name=var_name,
+                    c_param_name=sanitize_name(var_name),
+                    attr_name=attr_name,
+                    attr_path=path,
+                    class_c_name=param_class_ir.c_name,
+                    result_type=result_type,
+                    is_trait_type=use_dynamic,
+                ), []
+        self._warn_type_tracking_fallback(
+            "param attribute",
+            var_name,
+            attr_name,
+            f"Attribute '{attr_name}' not found in class '{param_class_ir.name}'",
+        )
+        return ParamAttrIR(
+            ir_type=IRType.OBJ,
+            param_name=var_name,
+            c_param_name=sanitize_name(var_name),
+            attr_name=attr_name,
+            attr_path=attr_name,
+            class_c_name=param_class_ir.c_name,
+            result_type=IRType.OBJ,
+            is_trait_type=use_dynamic,
+        ), []
+
+    def _build_chained_attr(
+        self, expr: ast.Attribute, locals_: list[str]
+    ) -> tuple[ValueIR, list] | None:
+        class_ir = self._ctx.class_ir
+        attr_name = expr.attr
+        base_class_name = self._get_method_attr_class_type(expr.value, class_ir)
+        if base_class_name and base_class_name in self._known_classes:
+            base_class_ir = self._known_classes[base_class_name]
+            base_value, base_prelude = self._build_expr(expr.value, locals_)
+            for fld in base_class_ir.get_all_fields():
+                if fld.name == attr_name:
+                    result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
+                    temp_name = self._fresh_temp()
+                    result_temp = TempIR(ir_type=result_type, name=temp_name)
+                    attr_access = AttrAccessIR(
+                        result=result_temp,
+                        obj=base_value,
+                        attr_name=attr_name,
+                        class_c_name=base_class_ir.c_name,
+                        result_type=result_type,
+                    )
+                    return result_temp, base_prelude + [attr_access]
+            self._warn_type_tracking_fallback(
+                "chained attribute",
+                f"{ast.unparse(expr.value)}",
+                attr_name,
+                f"Attribute '{attr_name}' not found in class '{base_class_ir.name}'",
+            )
+        else:
+            self._warn_type_tracking_fallback(
+                "chained attribute",
+                f"{ast.unparse(expr.value)}",
+                expr.attr,
+                "Could not resolve class type for base expression",
+            )
+        return None
+
+    def _build_super_call(self, expr: ast.Call, locals_: list[str]) -> tuple[ValueIR, list] | None:
+        class_ir = self._ctx.class_ir
+        if not (
+            isinstance(expr.func.value, ast.Call)
+            and isinstance(expr.func.value.func, ast.Name)
+            and expr.func.value.func.id == "super"
+            and len(expr.func.value.args) == 0
+            and len(expr.func.value.keywords) == 0
+        ):
+            return None
+        method_name = expr.func.attr
+        parent_class = class_ir.base
+        while parent_class is not None and method_name not in parent_class.methods:
+            parent_class = parent_class.base
+        if parent_class is None:
+            return None
+        parent_method = parent_class.methods[method_name]
+        args, _, arg_preludes, _, all_preludes = self._build_call_args(expr, locals_)
+        return_type = IRType.from_c_type_str(parent_method.return_type.to_c_type_str())
+        return SuperCallIR(
+            ir_type=return_type,
+            method_name=method_name,
+            parent_c_name=parent_class.c_name,
+            parent_method_c_name=parent_method.c_name,
+            args=args,
+            return_type=return_type,
+            is_init=method_name == "__init__",
+            arg_preludes=arg_preludes,
+        ), all_preludes
+
+    def _build_self_call(self, expr: ast.Call, locals_: list[str]) -> tuple[ValueIR, list]:
+        class_ir = self._ctx.class_ir
+        method_name = expr.func.attr
+        method_ir = class_ir.methods.get(method_name)
+        c_method_name = f"{class_ir.c_name}_{sanitize_name(method_name)}"
+        args, _, arg_preludes, _, all_preludes = self._build_call_args(expr, locals_)
+        return_type = IRType.OBJ
+        if method_ir:
+            return_type = IRType.from_c_type_str(method_ir.return_type.to_c_type_str())
+        param_types: list[IRType] = []
+        if method_ir:
+            for _pname, ptype in method_ir.params:
+                param_types.append(IRType.from_c_type_str(ptype.to_c_type_str()))
+        return SelfMethodCallIR(
+            ir_type=return_type,
+            method_name=method_name,
+            c_method_name=c_method_name,
+            args=args,
+            return_type=return_type,
+            arg_preludes=arg_preludes,
+            param_types=param_types,
+        ), all_preludes
+
+    def _build_call_args(
+        self, expr: ast.Call, locals_: list[str]
+    ) -> tuple[list[ValueIR], list[tuple[str, ValueIR]], list[list], list[list], list]:
+        """Build positional and keyword arguments from a call expression.
+
+        Returns:
+            (args, kwargs, arg_preludes, kwarg_preludes, all_preludes)
+        """
         args: list[ValueIR] = []
         arg_preludes: list[list] = []
         for arg in expr.args:
@@ -1775,8 +1747,38 @@ class IRBuilder:
             kwargs.append((kw.arg, val))
             kwarg_preludes.append(prelude)
 
-        all_preludes = [p for pl in arg_preludes for p in pl]
+        all_preludes: list = [p for pl in arg_preludes for p in pl]
         all_preludes.extend(p for pl in kwarg_preludes for p in pl)
+
+        return args, kwargs, arg_preludes, kwarg_preludes, all_preludes
+
+    def _build_call(self, expr: ast.Call, locals_: list[str]) -> tuple[ValueIR, list]:
+        if isinstance(expr.func, ast.Attribute):
+            return self._build_attr_call(expr, locals_)
+
+        if not isinstance(expr.func, ast.Name):
+            return ConstIR(ir_type=IRType.OBJ, value=None), []
+
+        func_name = expr.func.id
+
+        if func_name in self._known_classes:
+            return self._build_class_instantiation(expr, func_name, locals_)
+
+        # isinstance(obj, ClassName) -> IsInstanceIR
+        if func_name == "isinstance" and len(expr.args) == 2:
+            return self._build_isinstance(expr, locals_)
+
+        if func_name in locals_:
+            args, kwargs, arg_preludes, _, all_preludes = self._build_call_args(expr, locals_)
+            return DynamicCallIR(
+                ir_type=IRType.OBJ,
+                callable_var=func_name,
+                args=args,
+                kwargs=kwargs,
+                arg_preludes=arg_preludes,
+            ), all_preludes
+
+        args, kwargs, arg_preludes, _, all_preludes = self._build_call_args(expr, locals_)
 
         if func_name in BUILTIN_FUNCTIONS:
             is_list_len_opt = False
@@ -1985,7 +1987,7 @@ class IRBuilder:
         """Check if name is a private identifier (__name without trailing __)."""
         return name.startswith("__") and not name.endswith("__")
 
-    def _build_method_call(self, expr: ast.Call, locals_: list[str]) -> tuple[ValueIR, list]:
+    def _build_attr_call(self, expr: ast.Call, locals_: list[str]) -> tuple[ValueIR, list]:
         if not isinstance(expr.func, ast.Attribute):
             return ConstIR(ir_type=IRType.OBJ, value=None), []
 
@@ -2005,20 +2007,8 @@ class IRBuilder:
         if self._is_private_name(method_name) and not (self._ctx.is_method and is_self_call):
             raise TypeError(f"Cannot access private method '{method_name}' from outside its class")
 
-        args: list[ValueIR] = []
-        all_preludes = list(recv_prelude)
-        for arg in expr.args:
-            val, prelude = self._build_expr(arg, locals_)
-            all_preludes.extend(prelude)
-            args.append(val)
-
-        kwargs: list[tuple[str, ValueIR]] = []
-        for kw in expr.keywords:
-            if kw.arg is None:
-                continue
-            val, prelude = self._build_expr(kw.value, locals_)
-            kwargs.append((kw.arg, val))
-            all_preludes.extend(prelude)
+        args, kwargs, _, _, call_preludes = self._build_call_args(expr, locals_)
+        all_preludes = list(recv_prelude) + call_preludes
 
         temp_name = self._fresh_temp()
         result = TempIR(ir_type=IRType.OBJ, name=temp_name)
@@ -2044,13 +2034,7 @@ class IRBuilder:
 
         func_def = lib_def.functions.get(func_name)
 
-        args: list[ValueIR] = []
-        arg_preludes: list[list] = []
-        for arg in expr.args:
-            val, prelude = self._build_expr(arg, locals_)
-            args.append(val)
-            arg_preludes.append(prelude)
-        all_preludes = [p for pl in arg_preludes for p in pl]
+        args, _, arg_preludes, _, all_preludes = self._build_call_args(expr, locals_)
 
         has_callback = False
         if func_def:
@@ -2086,26 +2070,9 @@ class IRBuilder:
         func_name = expr.func.attr
         self._uses_imports = True
 
-        # Process positional arguments
-        args: list[ValueIR] = []
-        arg_preludes: list[list] = []
-        for arg in expr.args:
-            val, prelude = self._build_expr(arg, locals_)
-            args.append(val)
-            arg_preludes.append(prelude)
-
-        # Process keyword arguments
-        kwargs: list[tuple[str, ValueIR]] = []
-        kwarg_preludes: list[list] = []
-        for kw in expr.keywords:
-            if kw.arg is None:  # **kwargs - not supported
-                continue
-            val, prelude = self._build_expr(kw.value, locals_)
-            kwargs.append((kw.arg, val))
-            kwarg_preludes.append(prelude)
-
-        all_preludes = [p for pl in arg_preludes for p in pl]
-        all_preludes.extend([p for pl in kwarg_preludes for p in pl])
+        args, kwargs, arg_preludes, kwarg_preludes, all_preludes = self._build_call_args(
+            expr, locals_
+        )
 
         # Check if this is a sibling module in the same package
         if module_name in self._sibling_modules:
@@ -2141,14 +2108,7 @@ class IRBuilder:
         self, expr: ast.Call, class_name: str, locals_: list[str]
     ) -> tuple[ClassInstantiationIR, list]:
         class_ir = self._known_classes[class_name]
-        args: list[ValueIR] = []
-        arg_preludes: list[list] = []
-        for arg in expr.args:
-            val, prelude = self._build_expr(arg, locals_)
-            args.append(val)
-            arg_preludes.append(prelude)
-
-        all_preludes = [p for pl in arg_preludes for p in pl]
+        args, _, arg_preludes, _, all_preludes = self._build_call_args(expr, locals_)
 
         return ClassInstantiationIR(
             ir_type=IRType.OBJ,
