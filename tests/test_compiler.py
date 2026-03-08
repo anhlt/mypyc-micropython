@@ -644,72 +644,72 @@ class TestObjectComparisons:
     """Tests for comparison operations between boxed mp_obj_t values."""
 
     def test_str_eq_uses_mp_obj_equal(self):
-        source = '''
+        source = """
 def check_str(s: str) -> bool:
     return s == "hello"
-'''
+"""
         result = compile_source(source, "test")
         assert "mp_obj_equal" in result
         assert "mp_obj_get_int" not in result or "mp_obj_get_int(s" not in result
 
     def test_str_ne_uses_mp_obj_equal(self):
-        source = '''
+        source = """
 def check_ne(s: str) -> bool:
     return s != ""
-'''
+"""
         result = compile_source(source, "test")
         assert "mp_obj_equal" in result
 
     def test_str_eq_empty_string(self):
-        source = '''
+        source = """
 def is_empty(s: str) -> bool:
     return s == ""
-'''
+"""
         result = compile_source(source, "test")
         assert "mp_obj_equal" in result
         # Must NOT unbox strings to int
-        assert 'mp_obj_get_int(mp_obj_new_str' not in result
+        assert "mp_obj_get_int(mp_obj_new_str" not in result
 
     def test_object_eq_uses_mp_obj_equal(self):
-        source = '''
+        source = """
 def check_eq(a: object, b: object) -> bool:
     return a == b
-'''
+"""
         result = compile_source(source, "test")
         assert "mp_obj_equal" in result
 
     def test_object_ne_uses_mp_obj_equal(self):
-        source = '''
+        source = """
 def check_ne(a: object, b: object) -> bool:
     return a != b
-'''
+"""
         result = compile_source(source, "test")
         assert "!mp_obj_equal" in result
 
     def test_int_compare_still_unboxes(self):
         """Ensure int comparisons still use native C operators."""
-        source = '''
+        source = """
 def cmp(a: int, b: int) -> bool:
     return a == b
-'''
+"""
         result = compile_source(source, "test")
         assert "(a == b)" in result
 
     def test_mixed_int_obj_unboxes(self):
         """When one side is int and other is mp_obj_t, unbox to int."""
-        source = '''
+        source = """
 def check(a: int, b: object) -> bool:
     return a == b
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "mp_obj_get_int" in result
 
     def test_object_ordering_uses_binary_op(self):
         """Ordering comparisons on mp_obj_t use mp_binary_op."""
-        source = '''
+        source = """
 def less(a: str, b: str) -> bool:
     return a < b
-'''
+"""
         result = compile_source(source, "test")
         assert "MP_BINARY_OP_LESS" in result
 
@@ -7178,3 +7178,37 @@ def sort_key(x: int) -> int:
         result = compile_source(source, "test", type_check=False)
         assert "MP_OBJ_FROM_PTR(&test_sort_key_obj)" in result
         assert "mp_obj_new_int(sort_key)" not in result
+
+
+class TestObjectAttributeAccess:
+    def test_object_param_attr_uses_mp_load_attr(self):
+        source = """
+def process(item: object) -> object:
+    return item.key
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_load_attr(item, MP_QSTR_key)" in result
+
+    def test_object_param_attr_in_class_method(self):
+        source = """
+class Foo:
+    def process(self, item: object) -> object:
+        return item.key
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_load_attr(item, MP_QSTR_key)" in result
+
+    def test_object_param_attr_in_try_except_inside_for_loop(self):
+        source = """
+class Reconciler:
+    def apply_attrs(self, widget: object) -> None:
+        for attr in widget.attrs:
+            try:
+                x = attr.key
+            except KeyError:
+                pass
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_load_attr" in result
+        assert "nlr_push" in result
+        assert "while ((attr = mp_iternext(" in result

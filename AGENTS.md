@@ -304,6 +304,58 @@ def test_c_sum_range(compile_and_run):
     assert stdout.strip() == "10"
 ```
 
+### Bug Fix Regression Tests (MANDATORY)
+
+**After every bug fix, add regression tests to prevent the bug from recurring.**
+
+When you fix a bug in IR building or code emission:
+
+1. **Add IR builder test** (`test_ir_builder.py`) — Verify the IR structure is correct
+2. **Add emitter test** (`test_emitters.py`) — Verify the generated C code is correct
+3. **Add compiler test** (`test_compiler.py`) — End-to-end source → C validation
+
+Example workflow for a bug fix:
+
+```python
+# 1. IR Builder test - verify correct IR is generated
+class TestPreludeHandling:
+    def test_tuple_elements_collect_preludes(self):
+        """Regression: tuple elements were discarding preludes."""
+        source = '''
+def make_tuple(obj: object) -> tuple:
+    return (obj.x, obj.y)
+'''
+        func_ir = build_function_ir(source, "make_tuple")
+        # Verify preludes are collected, not discarded
+        assert len(func_ir.body[0].preludes) == 2
+
+# 2. Emitter test - verify correct C is generated
+class TestTupleEmission:
+    def test_tuple_with_attr_access(self):
+        """Regression: tuple attr access missing prelude statements."""
+        ir = TupleIR(elements=[...])
+        code = emit_tuple(ir)
+        assert "_tmp" in code  # Temp vars for preludes
+
+# 3. Compiler test - end-to-end validation
+class TestTupleOperations:
+    def test_tuple_with_method_calls(self):
+        """Regression: method calls in tuples lost side effects."""
+        source = '''
+def get_pair(obj: object) -> tuple:
+    return (obj.get_x(), obj.get_y())
+'''
+        result = compile_source(source, "test")
+        # Verify method calls appear before tuple construction
+        assert result.index("get_x") < result.index("mp_obj_new_tuple")
+```
+
+**Why this is mandatory:**
+- Unit tests passing does NOT guarantee correct runtime behavior
+- Device-only bugs are expensive to debug
+- Regression tests document the bug and prevent recurrence
+- Future refactoring is safer with comprehensive test coverage
+
 ### Device tests (tests/device/run_device_tests.py)
 
 **IMPORTANT**: When adding or updating features, ALWAYS update `tests/device/run_device_tests.py` with corresponding device tests.

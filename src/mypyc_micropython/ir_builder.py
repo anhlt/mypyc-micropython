@@ -2309,6 +2309,17 @@ class IRBuilder:
                     result_type=IRType.OBJ,
                     is_trait_type=use_dynamic,
                 ), []
+            elif var_name in locals_:
+                return ParamAttrIR(
+                    ir_type=IRType.OBJ,
+                    param_name=var_name,
+                    c_param_name=sanitize_name(var_name),
+                    attr_name=attr_name,
+                    attr_path=attr_name,
+                    class_c_name="",
+                    result_type=IRType.OBJ,
+                    is_trait_type=True,
+                ), []
 
         if isinstance(expr.value, ast.Attribute):
             base_value, base_prelude = self._build_attribute(expr.value, locals_)

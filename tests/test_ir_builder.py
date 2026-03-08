@@ -1611,3 +1611,45 @@ def sort_list(lst: list) -> list:
         assert kw_name == "key"
         # unknown_fn is not registered, so it stays as NameIR
         assert isinstance(kw_val, NameIR)
+
+
+class TestObjectAttributeAccess:
+    def test_object_param_attr_access_in_function(self):
+        source = """
+def process(item: object) -> object:
+    return item.key
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        assert isinstance(ret.value, ParamAttrIR)
+        assert ret.value.param_name == "item"
+        assert ret.value.attr_name == "key"
+        assert ret.value.is_trait_type is True
+
+    def test_object_param_attr_in_try_except_loop(self):
+        from mypyc_micropython.ir import TryIR
+
+        source = """
+def process(items: object) -> None:
+    for item in items:
+        try:
+            x = item.key
+        except KeyError:
+            pass
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        for_stmt = func_ir.body[0]
+        assert isinstance(for_stmt, ForIterIR)
+        try_stmt = for_stmt.body[0]
+        assert isinstance(try_stmt, TryIR)
+        assign = try_stmt.body[0]
+        assert isinstance(assign, AssignIR)
+        assert isinstance(assign.value, ParamAttrIR)
+        assert assign.value.is_trait_type is True
