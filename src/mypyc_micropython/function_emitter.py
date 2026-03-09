@@ -321,7 +321,9 @@ class BaseEmitter:
 
         if has_handlers:
             exc_var = self._fresh_temp()
-            lines.append(f"        mp_obj_t {exc_var} = MP_OBJ_FROM_PTR({nlr_buf}.ret_val);")
+            # nlr.ret_val is a void* pointing to the exception object
+            # Access the type field directly via cast, matching MicroPython's pattern
+            lines.append(f"        mp_obj_base_t *{exc_var} = (mp_obj_base_t *){nlr_buf}.ret_val;")
 
             for i, handler in enumerate(stmt.handlers):
                 if handler.exc_type is None:
@@ -333,7 +335,7 @@ class BaseEmitter:
                     mp_type = self._get_mp_exception_type(handler.exc_type)
                     cond = (
                         f"mp_obj_is_subclass_fast("
-                        f"MP_OBJ_FROM_PTR(mp_obj_get_type({exc_var})), "
+                        f"MP_OBJ_FROM_PTR({exc_var}->type), "
                         f"MP_OBJ_FROM_PTR({mp_type}))"
                     )
                     if i == 0:
@@ -342,7 +344,8 @@ class BaseEmitter:
                         lines.append(f"        }} else if ({cond}) {{")
 
                 if handler.exc_var and handler.c_exc_var:
-                    lines.append(f"            mp_obj_t {handler.c_exc_var} = {exc_var};")
+                    # Convert base pointer back to mp_obj_t for user access
+                    lines.append(f"            mp_obj_t {handler.c_exc_var} = MP_OBJ_FROM_PTR({exc_var});")
 
                 for s in handler.body:
                     for line in self._emit_statement(s, native):
