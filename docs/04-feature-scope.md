@@ -130,7 +130,7 @@ This document defines what Python features mypyc-micropython will support, parti
 | `float()` | ✅ Implemented | |
 | `bool()` | ✅ Implemented | `mp_obj_is_true()` for truthiness |
 | `len()` | ✅ Implemented | For list, dict, tuple, set, and other collections |
-| `range()` | ✅ Implemented | 1, 2, and 3 argument forms |
+| `range()` | ✅ Implemented | 1, 2, and 3 argument forms. **Note:** Complex expressions with side effects as arguments may not work correctly (see [known-issues.md](known-issues.md#rangeslice-arguments-with-side-effects-may-be-silently-discarded)) |
 | `print()` | ✅ Implemented | With space separator |
 | `min()`/`max()` | ✅ Implemented | 2+ args, inline optimization for 2-3 int args |
 | `sum()` | ✅ Implemented | With optional start, inline optimization for `list[int]` |

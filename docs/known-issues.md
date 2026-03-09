@@ -208,3 +208,131 @@ def sum_keys(c: Container) -> int:
     # Should compile and run without crashing
     result = compile_and_run(source, ...)
 ```
+
+---
+
+## Range/Slice Arguments with Side Effects May Be Silently Discarded
+
+**Status**: Documented, fix planned
+**Discovered**: 2026-03-09
+**Severity**: Silent incorrect behavior
+
+### Problem
+
+When using `range()` in for-loops, slice expressions, or generator for-loops, the compiler discards preludes (side-effect instructions) from the arguments. This means if you pass an expression with side effects (like a function call) as an argument to `range()`, those side effects may be evaluated but then discarded.
+
+**Example that silently fails:**
+
+```python
+def get_length() -> int:
+    print("called")  # Side effect
+    return 10
+
+def process() -> int:
+    total: int = 0
+    for i in range(get_length()):  # get_length() called but prelude discarded
+        total += i
+    return total
+```
+
+In most cases this works correctly because:
+1. Simple expressions like `range(n)`, `range(0, n)`, `range(0, n, 1)` have no preludes
+2. Constants and variable references have no preludes
+
+**Cases that could fail:**
+
+```python
+# Complex expressions as range arguments
+for i in range(len(some_func())):  # If some_func() has preludes, they're lost
+    ...
+
+# Slice with side effects
+items = my_list[start_func():end_func()]  # Preludes discarded
+
+# Generator for-loops
+def gen():
+    for i in range(complex_expr):  # Preludes discarded
+        yield i
+```
+
+### Affected Code Locations
+
+In `ir_builder.py`:
+- Lines ~928-951: `for` loop range arguments
+- Lines ~2512-2519: Generator `for` loop range arguments
+- Lines ~2643-2647: Slice `lower`/`upper`/`step` expressions
+
+Pattern causing the issue:
+```python
+# This discards preludes:
+start_val, _ = self._build_expr(start, locals_)  # _ discards preludes!
+```
+
+### Current Workaround
+
+Extract complex expressions to local variables before using in `range()` or slices:
+
+```python
+# Instead of:
+for i in range(len(compute_list())):
+    ...
+
+# Use:
+length = len(compute_list())
+for i in range(length):
+    ...
+```
+
+### Proper Fix (TODO)
+
+Collect and emit preludes for range/slice arguments:
+
+```python
+# In _translate_for_range:
+all_preludes: list[InstrIR] = []
+
+start_val, start_preludes = self._build_expr(start, locals_)
+all_preludes.extend(start_preludes)
+
+stop_val, stop_preludes = self._build_expr(stop, locals_)
+all_preludes.extend(stop_preludes)
+
+step_val, step_preludes = self._build_expr(step, locals_)
+all_preludes.extend(step_preludes)
+
+# Emit all preludes before the for loop
+for prelude in all_preludes:
+    emit_instr(prelude)
+```
+
+### Files to Modify
+
+- `src/mypyc_micropython/ir_builder.py` - `_translate_for_range()`, `_build_generator_for_range()`, `_build_slice()`
+
+### Test Case to Add
+
+```python
+def test_range_with_prelude_expression():
+    """Range arguments with side effects should execute correctly."""
+    source = '''
+call_count: int = 0
+
+def get_length() -> int:
+    global call_count
+    call_count += 1
+    return 5
+
+def sum_range() -> int:
+    total: int = 0
+    for i in range(get_length()):
+        total += i
+    return total
+
+def get_call_count() -> int:
+    return call_count
+'''
+    result = compile_source(source, "test")
+    # After calling sum_range(), call_count should be 1
+    # Currently this may not work correctly if preludes are discarded
+```
+

@@ -52,7 +52,6 @@ from .ir import (
     IfIR,
     IRType,
     IsInstanceIR,
-    LambdaIR,
     ListCompIR,
     ListNewIR,
     MethodCallIR,
@@ -181,6 +180,23 @@ def sanitize_name(name: str) -> str:
 
 
 @dataclass
+class BuildContext:
+    """Context for building IR from AST nodes.
+
+    Encapsulates the differences between function context and method context,
+    allowing unified code paths for both.
+    """
+
+    locals_: list[str]
+    class_ir: ClassIR | None = None
+    native: bool = False
+
+    @property
+    def is_method(self) -> bool:
+        return self.class_ir is not None
+
+
+@dataclass
 class MypyTypeInfo:
     """Container for mypy type information passed to IRBuilder."""
 
@@ -247,7 +263,7 @@ class IRBuilder:
                 if elem_class:
                     self._class_field_element_types[(class_ir.name, stmt.target.id)] = elem_class
         self._mypy_local_types: dict[str, str] = {}
-        self._param_py_types: dict[str, str] = {}  # Python type annotations for parameters
+        self._param_py_types: dict[str, str] = {}  # Python type annotations for params
         self._external_libs: dict[str, CLibraryDef] = external_libs or {}
         self._import_aliases: dict[str, str] = {}
         self._imported_modules: set[str] = set()
@@ -263,8 +279,7 @@ class IRBuilder:
         )  # maps module_name -> {const_name: value}
         self._known_enums: dict[str, EnumIR] = dict(known_enums or {})
         self._known_functions: dict[str, tuple[str, CType]] = {}  # py_name -> (c_name, return_type)
-        self._lambda_counter = 0
-        self._lambda_functions: list[FuncIR] = []
+        self._ctx: BuildContext = BuildContext(locals_=[])
 
     def _fresh_temp(self) -> str:
         self._temp_counter += 1
@@ -427,8 +442,8 @@ class IRBuilder:
         self._class_typed_params = {}
         self._optional_class_params = set()
         self._container_element_types = {}
+        self._param_py_types: dict[str, str] = {}  # Python type annotations for params
         self._mypy_local_types = {}
-        self._param_py_types = {}  # Python type annotations for parameters
 
         # Check if this is an async function
         is_async = isinstance(node, ast.AsyncFunctionDef)
@@ -507,10 +522,6 @@ class IRBuilder:
             arg_types.append(c_type_str)
             self._var_types[arg.arg] = c_type_str
             if arg.annotation:
-                # Store Python type annotation for receiver_py_type in MethodCallIR
-                py_type = self._annotation_to_py_type(arg.annotation)
-                if py_type:
-                    self._param_py_types[arg.arg] = py_type
                 is_list, elem_type = self._is_list_annotation(arg.annotation)
                 if is_list:
                     self._list_vars[arg.arg] = elem_type
@@ -523,6 +534,10 @@ class IRBuilder:
                     elem_class = self._extract_container_element_class(arg.annotation)
                     if elem_class:
                         self._container_element_types[arg.arg] = elem_class
+                # Track Python type annotation for receiver_py_type in MethodCallIR
+                py_type = self._annotation_to_py_type(arg.annotation)
+                if py_type:
+                    self._param_py_types[arg.arg] = py_type
 
         defaults = self._parse_defaults(node.args, len(params))
 
@@ -548,6 +563,7 @@ class IRBuilder:
             self._var_types[star_kwargs.name] = "mp_obj_t"
             self._star_c_names[star_kwargs.name] = f"_star_{sanitize_name(star_kwargs.name)}"
 
+        self._ctx = BuildContext(locals_=local_vars)
         body_ir: list[StmtIR] = []
         for stmt in node.body:
             stmt_ir = self._build_statement(stmt, local_vars)
@@ -1043,6 +1059,23 @@ class IRBuilder:
 
         target = stmt.targets[0]
 
+        if self._ctx.is_method and isinstance(target, ast.Attribute):
+            if isinstance(target.value, ast.Name) and target.value.id == "self":
+                attr_name = target.attr
+                value, prelude = self._build_expr(stmt.value, locals_)
+                attr_path = attr_name
+                class_ir = self._ctx.class_ir
+                for fld, path in class_ir.get_all_fields_with_path():
+                    if fld.name == attr_name:
+                        attr_path = path
+                        break
+                return AttrAssignIR(
+                    attr_name=attr_name,
+                    attr_path=attr_path,
+                    value=value,
+                    prelude=prelude,
+                )
+
         if isinstance(target, ast.Subscript):
             return self._build_subscript_assign(target, stmt.value, locals_)
 
@@ -1183,14 +1216,9 @@ class IRBuilder:
             is_new_var=is_new_var,
         )
 
-    def _build_aug_assign(self, stmt: ast.AugAssign, locals_: list[str]) -> AugAssignIR | None:
-        if not isinstance(stmt.target, ast.Name):
-            return None
-
-        var_name = stmt.target.id
-        c_var_name = sanitize_name(var_name)
-        value, prelude = self._build_expr(stmt.value, locals_)
-
+    def _build_aug_assign(
+        self, stmt: ast.AugAssign, locals_: list[str]
+    ) -> AugAssignIR | SelfAugAssignIR | None:
         op_map = {
             ast.Add: "+=",
             ast.Sub: "-=",
@@ -1205,6 +1233,26 @@ class IRBuilder:
             ast.RShift: ">>=",
         }
         c_op = op_map.get(type(stmt.op), "+=")
+
+        if self._ctx.is_method and isinstance(stmt.target, ast.Attribute):
+            if isinstance(stmt.target.value, ast.Name) and stmt.target.value.id == "self":
+                attr_name = stmt.target.attr
+                value, prelude = self._build_expr(stmt.value, locals_)
+                return SelfAugAssignIR(
+                    attr_name=attr_name,
+                    attr_path=attr_name,
+                    op=c_op,
+                    value=value,
+                    prelude=prelude,
+                )
+            return None
+
+        if not isinstance(stmt.target, ast.Name):
+            return None
+
+        var_name = stmt.target.id
+        c_var_name = sanitize_name(var_name)
+        value, prelude = self._build_expr(stmt.value, locals_)
 
         target_c_type = self._var_types.get(var_name, "mp_int_t")
 
@@ -1236,6 +1284,179 @@ class IRBuilder:
             raise NotImplementedError(
                 f"yield as an expression is not supported (line {expr.lineno})"
             )
+
+        if self._ctx.is_method:
+            class_ir = self._ctx.class_ir
+
+            if isinstance(expr, ast.Attribute):
+                if isinstance(expr.value, ast.Name):
+                    var_name = expr.value.id
+                    attr_name = expr.attr
+
+                    if var_name == "self":
+                        for fld, path in class_ir.get_all_fields_with_path():
+                            if fld.name == attr_name:
+                                result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
+                                return SelfAttrIR(
+                                    ir_type=result_type,
+                                    attr_name=attr_name,
+                                    attr_path=path,
+                                    result_type=result_type,
+                                ), []
+                        if attr_name in class_ir.methods:
+                            method_ir = class_ir.methods[attr_name]
+                            return SelfMethodRefIR(
+                                ir_type=IRType.OBJ,
+                                method_name=attr_name,
+                                method_c_name=method_ir.c_name,
+                                class_c_name=class_ir.c_name,
+                            ), []
+                        self._warn_type_tracking_fallback(
+                            "self attribute",
+                            "self",
+                            attr_name,
+                            f"Attribute '{attr_name}' not found in class '{class_ir.name}'",
+                        )
+                        return SelfAttrIR(
+                            ir_type=IRType.OBJ,
+                            attr_name=attr_name,
+                            attr_path=attr_name,
+                            result_type=IRType.OBJ,
+                        ), []
+
+                    if var_name in self._class_typed_params:
+                        param_class_name = self._class_typed_params[var_name]
+                        param_class_ir = self._known_classes[param_class_name]
+                        use_dynamic = (
+                            param_class_ir.is_trait or var_name in self._optional_class_params
+                        )
+                        for fld, path in param_class_ir.get_all_fields_with_path():
+                            if fld.name == attr_name:
+                                result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
+                                return ParamAttrIR(
+                                    ir_type=result_type,
+                                    param_name=var_name,
+                                    c_param_name=sanitize_name(var_name),
+                                    attr_name=attr_name,
+                                    attr_path=path,
+                                    class_c_name=param_class_ir.c_name,
+                                    result_type=result_type,
+                                    is_trait_type=use_dynamic,
+                                ), []
+                        self._warn_type_tracking_fallback(
+                            "param attribute",
+                            var_name,
+                            attr_name,
+                            f"Attribute '{attr_name}' not found in class '{param_class_ir.name}'",
+                        )
+                        return ParamAttrIR(
+                            ir_type=IRType.OBJ,
+                            param_name=var_name,
+                            c_param_name=sanitize_name(var_name),
+                            attr_name=attr_name,
+                            attr_path=attr_name,
+                            class_c_name=param_class_ir.c_name,
+                            result_type=IRType.OBJ,
+                            is_trait_type=use_dynamic,
+                        ), []
+
+                if isinstance(expr.value, ast.Attribute):
+                    attr_name = expr.attr
+                    base_class_name = self._get_method_attr_class_type(expr.value, class_ir)
+                    if base_class_name and base_class_name in self._known_classes:
+                        base_class_ir = self._known_classes[base_class_name]
+                        base_value, base_prelude = self._build_expr(expr.value, locals_)
+                        for fld in base_class_ir.get_all_fields():
+                            if fld.name == attr_name:
+                                result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
+                                temp_name = self._fresh_temp()
+                                result_temp = TempIR(ir_type=result_type, name=temp_name)
+                                attr_access = AttrAccessIR(
+                                    result=result_temp,
+                                    obj=base_value,
+                                    attr_name=attr_name,
+                                    class_c_name=base_class_ir.c_name,
+                                    result_type=result_type,
+                                )
+                                return result_temp, base_prelude + [attr_access]
+                        self._warn_type_tracking_fallback(
+                            "chained attribute",
+                            f"{ast.unparse(expr.value)}",
+                            attr_name,
+                            f"Attribute '{attr_name}' not found in class '{base_class_ir.name}'",
+                        )
+                    else:
+                        self._warn_type_tracking_fallback(
+                            "chained attribute",
+                            f"{ast.unparse(expr.value)}",
+                            expr.attr,
+                            "Could not resolve class type for base expression",
+                        )
+
+            if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute):
+                if (
+                    isinstance(expr.func.value, ast.Call)
+                    and isinstance(expr.func.value.func, ast.Name)
+                    and expr.func.value.func.id == "super"
+                    and len(expr.func.value.args) == 0
+                    and len(expr.func.value.keywords) == 0
+                ):
+                    method_name = expr.func.attr
+                    parent_class = class_ir.base
+                    while parent_class is not None and method_name not in parent_class.methods:
+                        parent_class = parent_class.base
+                    if parent_class is not None:
+                        parent_method = parent_class.methods[method_name]
+                        args: list[ValueIR] = []
+                        arg_preludes: list[list] = []
+                        for arg in expr.args:
+                            val, prelude = self._build_expr(arg, locals_)
+                            args.append(val)
+                            arg_preludes.append(prelude)
+                        return_type = IRType.from_c_type_str(
+                            parent_method.return_type.to_c_type_str()
+                        )
+                        all_preludes = [p for pl in arg_preludes for p in pl]
+                        return SuperCallIR(
+                            ir_type=return_type,
+                            method_name=method_name,
+                            parent_c_name=parent_class.c_name,
+                            parent_method_c_name=parent_method.c_name,
+                            args=args,
+                            return_type=return_type,
+                            is_init=method_name == "__init__",
+                            arg_preludes=arg_preludes,
+                        ), all_preludes
+
+            if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute):
+                if isinstance(expr.func.value, ast.Name) and expr.func.value.id == "self":
+                    method_name = expr.func.attr
+                    method_ir = class_ir.methods.get(method_name)
+                    c_method_name = f"{class_ir.c_name}_{sanitize_name(method_name)}"
+                    args: list[ValueIR] = []
+                    arg_preludes: list[list] = []
+                    for arg in expr.args:
+                        val, prelude = self._build_expr(arg, locals_)
+                        args.append(val)
+                        arg_preludes.append(prelude)
+                    return_type = IRType.OBJ
+                    if method_ir:
+                        return_type = IRType.from_c_type_str(method_ir.return_type.to_c_type_str())
+                    all_preludes = [p for pl in arg_preludes for p in pl]
+                    param_types: list[IRType] = []
+                    if method_ir:
+                        for _pname, ptype in method_ir.params:
+                            param_types.append(IRType.from_c_type_str(ptype.to_c_type_str()))
+                    return SelfMethodCallIR(
+                        ir_type=return_type,
+                        method_name=method_name,
+                        c_method_name=c_method_name,
+                        args=args,
+                        return_type=return_type,
+                        arg_preludes=arg_preludes,
+                        param_types=param_types,
+                    ), all_preludes
+
         if isinstance(expr, ast.Constant):
             return self._build_constant(expr), []
         elif isinstance(expr, ast.Name):
@@ -1266,8 +1487,6 @@ class IRBuilder:
             return self._build_attribute(expr, locals_)
         elif isinstance(expr, ast.ListComp):
             return self._build_list_comp(expr, locals_)
-        elif isinstance(expr, ast.Lambda):
-            return self._build_lambda(expr, locals_)
         return ConstIR(ir_type=IRType.OBJ, value=None), []
 
     def _build_constant(self, expr: ast.Constant) -> ConstIR:
@@ -1521,6 +1740,31 @@ class IRBuilder:
         if func_name == "isinstance" and len(expr.args) == 2:
             return self._build_isinstance(expr, locals_)
 
+        if func_name in locals_:
+            args: list[ValueIR] = []
+            arg_preludes: list[list] = []
+            for arg in expr.args:
+                val, prelude = self._build_expr(arg, locals_)
+                args.append(val)
+                arg_preludes.append(prelude)
+            kwargs: list[tuple[str, ValueIR]] = []
+            kwarg_preludes: list[list] = []
+            for kw in expr.keywords:
+                if kw.arg is None:
+                    continue
+                val, prelude = self._build_expr(kw.value, locals_)
+                kwargs.append((kw.arg, val))
+                kwarg_preludes.append(prelude)
+            all_preludes = [p for pl in arg_preludes for p in pl]
+            all_preludes.extend(p for pl in kwarg_preludes for p in pl)
+            return DynamicCallIR(
+                ir_type=IRType.OBJ,
+                callable_var=func_name,
+                args=args,
+                kwargs=kwargs,
+                arg_preludes=arg_preludes,
+            ), all_preludes
+
         args: list[ValueIR] = []
         arg_preludes: list[list] = []
         for arg in expr.args:
@@ -1763,7 +2007,8 @@ class IRBuilder:
         method_name = expr.func.attr
 
         # Reject external access to private (__method) members
-        if self._is_private_name(method_name):
+        is_self_call = isinstance(expr.func.value, ast.Name) and expr.func.value.id == "self"
+        if self._is_private_name(method_name) and not (self._ctx.is_method and is_self_call):
             raise TypeError(f"Cannot access private method '{method_name}' from outside its class")
 
         args: list[ValueIR] = []
@@ -1773,21 +2018,23 @@ class IRBuilder:
             all_preludes.extend(prelude)
             args.append(val)
 
-        # Try to get Python type annotation for receiver
-        # This enables type-specific optimizations (e.g., dict.get() optimization)
+        kwargs: list[tuple[str, ValueIR]] = []
+        for kw in expr.keywords:
+            if kw.arg is None:
+                continue
+            val, prelude = self._build_expr(kw.value, locals_)
+            kwargs.append((kw.arg, val))
+            all_preludes.extend(prelude)
+
+        # Determine receiver Python type for optimizations (dict.get, etc.)
         receiver_py_type: str | None = None
-        if isinstance(expr.func.value, ast.Name):
-            var_name = expr.func.value.id
-            # Check mypy type info first (most accurate)
+        if isinstance(receiver, NameIR):
+            var_name = receiver.py_name
+            # Try mypy types first, then fallback to param annotations
             if var_name in self._mypy_local_types:
                 receiver_py_type = self._mypy_local_types[var_name]
-            # Check explicit Python type annotations from function parameters
             elif var_name in self._param_py_types:
                 receiver_py_type = self._param_py_types[var_name]
-            # Fallback to inferred C types (less accurate)
-            elif var_name in self._var_types:
-                c_type = self._var_types[var_name]
-                receiver_py_type = self._c_type_to_py_type(c_type)
 
         temp_name = self._fresh_temp()
         result = TempIR(ir_type=IRType.OBJ, name=temp_name)
@@ -1796,6 +2043,7 @@ class IRBuilder:
             receiver=receiver,
             method=method_name,
             args=args,
+            kwargs=kwargs,
             receiver_py_type=receiver_py_type,
         )
 
@@ -1951,68 +2199,64 @@ class IRBuilder:
             return ConstIR(ir_type=IRType.OBJ, value=[]), []
 
         items: list[ValueIR] = []
-        preludes: list = []
+        all_preludes: list = []
         for elt in expr.elts:
-            val, elt_preludes = self._build_expr(elt, locals_)
-            preludes.extend(elt_preludes)
+            val, prelude = self._build_expr(elt, locals_)
+            all_preludes.extend(prelude)
             items.append(val)
 
         temp_name = self._fresh_temp()
         result = TempIR(ir_type=IRType.OBJ, name=temp_name)
-        preludes.append(ListNewIR(result=result, items=items))
-        return result, preludes
+        return result, all_preludes + [ListNewIR(result=result, items=items)]
 
     def _build_tuple(self, expr: ast.Tuple, locals_: list[str]) -> tuple[ValueIR, list]:
         if not expr.elts:
             return ConstIR(ir_type=IRType.OBJ, value=()), []
 
         items: list[ValueIR] = []
-        preludes: list = []
+        all_preludes: list = []
         for elt in expr.elts:
-            val, elt_preludes = self._build_expr(elt, locals_)
-            preludes.extend(elt_preludes)
+            val, prelude = self._build_expr(elt, locals_)
+            all_preludes.extend(prelude)
             items.append(val)
 
         temp_name = self._fresh_temp()
         result = TempIR(ir_type=IRType.OBJ, name=temp_name)
-        preludes.append(TupleNewIR(result=result, items=items))
-        return result, preludes
+        return result, all_preludes + [TupleNewIR(result=result, items=items)]
 
     def _build_set(self, expr: ast.Set, locals_: list[str]) -> tuple[ValueIR, list]:
         if not expr.elts:
             return ConstIR(ir_type=IRType.OBJ, value=set()), []
 
         items: list[ValueIR] = []
-        preludes: list = []
+        all_preludes: list = []
         for elt in expr.elts:
-            val, elt_preludes = self._build_expr(elt, locals_)
-            preludes.extend(elt_preludes)
+            val, prelude = self._build_expr(elt, locals_)
+            all_preludes.extend(prelude)
             items.append(val)
 
         temp_name = self._fresh_temp()
         result = TempIR(ir_type=IRType.OBJ, name=temp_name)
-        preludes.append(SetNewIR(result=result, items=items))
-        return result, preludes
+        return result, all_preludes + [SetNewIR(result=result, items=items)]
 
     def _build_dict(self, expr: ast.Dict, locals_: list[str]) -> tuple[ValueIR, list]:
         if not expr.keys:
             return ConstIR(ir_type=IRType.OBJ, value={}), []
 
         entries: list[tuple[ValueIR, ValueIR]] = []
-        preludes: list = []
+        all_preludes: list = []
         for key, val in zip(expr.keys, expr.values):
             if key is None:
                 continue
-            key_val, key_preludes = self._build_expr(key, locals_)
-            val_val, val_preludes = self._build_expr(val, locals_)
-            preludes.extend(key_preludes)
-            preludes.extend(val_preludes)
+            key_val, key_prelude = self._build_expr(key, locals_)
+            val_val, val_prelude = self._build_expr(val, locals_)
+            all_preludes.extend(key_prelude)
+            all_preludes.extend(val_prelude)
             entries.append((key_val, val_val))
 
         temp_name = self._fresh_temp()
         result = TempIR(ir_type=IRType.OBJ, name=temp_name)
-        preludes.append(DictNewIR(result=result, entries=entries))
-        return result, preludes
+        return result, all_preludes + [DictNewIR(result=result, entries=entries)]
 
     def _build_subscript(self, expr: ast.Subscript, locals_: list[str]) -> tuple[SubscriptIR, list]:
         value, value_prelude = self._build_expr(expr.value, locals_)
@@ -2135,6 +2379,19 @@ class IRBuilder:
                     result_type=IRType.OBJ,
                     is_trait_type=use_dynamic,
                 ), []
+            elif var_name in locals_:
+                # Handle object-typed params (not a known class)
+                return ParamAttrIR(
+                    ir_type=IRType.OBJ,
+                    param_name=var_name,
+                    c_param_name=sanitize_name(var_name),
+                    attr_name=attr_name,
+                    attr_path=attr_name,
+                    class_c_name="",
+                    result_type=IRType.OBJ,
+                    is_trait_type=True,  # Always use dynamic lookup
+                ), []
+
 
         if isinstance(expr.value, ast.Attribute):
             base_value, base_prelude = self._build_attribute(expr.value, locals_)
@@ -2182,21 +2439,6 @@ class IRBuilder:
                             result_type=result_type,
                         )
                         return result_temp, subscript_prelude + [attr_access]
-
-        if isinstance(expr.value, ast.Name):
-            var_name = expr.value.id
-            if var_name in locals_ or var_name in self._var_types:
-                c_var_name = sanitize_name(var_name)
-                return ParamAttrIR(
-                    ir_type=IRType.OBJ,
-                    param_name=var_name,
-                    c_param_name=c_var_name,
-                    attr_name=attr_name,
-                    attr_path=attr_name,
-                    class_c_name="",
-                    result_type=IRType.OBJ,
-                    is_trait_type=True,
-                ), []
 
         return ConstIR(ir_type=IRType.OBJ, value=None), []
 
@@ -2317,97 +2559,6 @@ class IRBuilder:
         )
 
         return result, [list_comp]
-
-    def _build_lambda(
-        self, expr: ast.Lambda, locals_: list[str]
-    ) -> tuple[LambdaIR | FuncRefIR, list]:
-        """Build IR for lambda expression.
-
-        Simple lambdas without closures are compiled to static functions.
-        Lambdas with captured variables use read-only closures.
-        """
-        lambda_id = self._lambda_counter
-        self._lambda_counter += 1
-        c_name = f"{self.c_name}__lambda_{lambda_id}"
-
-        params: list[tuple[str, CType]] = []
-        lambda_locals: list[str] = []
-
-        for arg in expr.args.args:
-            param_name = arg.arg
-            param_type = CType.MP_OBJ_T
-            if arg.annotation:
-                ann_str = self._annotation_to_str(arg.annotation)
-                param_type = CType.from_python_type(ann_str)
-            params.append((param_name, param_type))
-            lambda_locals.append(param_name)
-            self._var_types[param_name] = param_type.to_c_type_str()
-
-        captured_vars: list[str] = []
-        free_vars = self._find_free_variables(expr.body, lambda_locals)
-        for var in free_vars:
-            if var in locals_ or var in self._var_types:
-                captured_vars.append(var)
-
-        body_value, body_prelude = self._build_expr(expr.body, lambda_locals)
-        return_stmt = ReturnIR(value=body_value, prelude=body_prelude)
-
-        func_ir = FuncIR(
-            name=f"_lambda_{lambda_id}",
-            c_name=c_name,
-            params=params,
-            return_type=CType.MP_OBJ_T,
-            body=[return_stmt],
-            locals_={p: t.to_c_type_str() for p, t in params},
-            max_temp=self._temp_counter,
-        )
-
-        self._lambda_functions.append(func_ir)
-
-        if not captured_vars:
-            return FuncRefIR(
-                ir_type=IRType.OBJ,
-                py_name=f"_lambda_{lambda_id}",
-                c_name=c_name,
-            ), []
-
-        return LambdaIR(
-            ir_type=IRType.OBJ,
-            lambda_id=lambda_id,
-            c_name=c_name,
-            func_ir=func_ir,
-            captured_vars=captured_vars,
-        ), []
-
-    def _find_free_variables(self, expr: ast.expr, bound: list[str]) -> list[str]:
-        """Find variables referenced but not bound in the expression."""
-        free: list[str] = []
-        if isinstance(expr, ast.Name):
-            if expr.id not in bound and expr.id not in BUILTIN_FUNCTIONS:
-                free.append(expr.id)
-        elif isinstance(expr, ast.BinOp):
-            free.extend(self._find_free_variables(expr.left, bound))
-            free.extend(self._find_free_variables(expr.right, bound))
-        elif isinstance(expr, ast.Compare):
-            free.extend(self._find_free_variables(expr.left, bound))
-            for comp in expr.comparators:
-                free.extend(self._find_free_variables(comp, bound))
-        elif isinstance(expr, ast.Attribute):
-            free.extend(self._find_free_variables(expr.value, bound))
-        elif isinstance(expr, ast.Call):
-            free.extend(self._find_free_variables(expr.func, bound))
-            for arg in expr.args:
-                free.extend(self._find_free_variables(arg, bound))
-        elif isinstance(expr, ast.IfExp):
-            free.extend(self._find_free_variables(expr.test, bound))
-            free.extend(self._find_free_variables(expr.body, bound))
-            free.extend(self._find_free_variables(expr.orelse, bound))
-        elif isinstance(expr, ast.UnaryOp):
-            free.extend(self._find_free_variables(expr.operand, bound))
-        elif isinstance(expr, ast.Subscript):
-            free.extend(self._find_free_variables(expr.value, bound))
-            free.extend(self._find_free_variables(expr.slice, bound))
-        return list(dict.fromkeys(free))
 
     def _resolve_class_name_from_type_str(self, type_str: str) -> str | None:
         """Extract a known class name from a type string, handling Optional/union.
@@ -3253,6 +3404,7 @@ class IRBuilder:
         if not method_ir.is_static and not method_ir.is_classmethod:
             local_vars.insert(0, "self")
 
+        self._ctx = BuildContext(locals_=local_vars, class_ir=class_ir, native=native)
         body_ir: list[StmtIR] = []
         for stmt in method_ir.body_ast.body:
             # Skip docstrings
@@ -3262,1128 +3414,12 @@ class IRBuilder:
                 and isinstance(stmt.value.value, str)
             ):
                 continue
-            stmt_ir = self._build_method_statement(stmt, local_vars, class_ir, native)
+            stmt_ir = self._build_statement(stmt, local_vars)
             if stmt_ir is not None:
                 body_ir.append(stmt_ir)
 
         method_ir.max_temp = self._temp_counter
         return body_ir
-
-    def _build_method_statement(
-        self, stmt: ast.stmt, locals_: list[str], class_ir: ClassIR, native: bool
-    ) -> StmtIR | None:
-        """Build statement IR in method context."""
-        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, (ast.Yield, ast.YieldFrom)):
-            raise NotImplementedError(
-                f"generator methods are not supported (line {stmt.value.lineno})"
-            )
-        if isinstance(stmt, ast.Return):
-            return self._build_method_return(stmt, locals_, class_ir, native)
-        elif isinstance(stmt, ast.Assign):
-            return self._build_method_assign(stmt, locals_, class_ir, native)
-        elif isinstance(stmt, ast.AnnAssign):
-            return self._build_method_ann_assign(stmt, locals_, class_ir, native)
-        elif isinstance(stmt, ast.AugAssign):
-            return self._build_method_aug_assign(stmt, locals_, class_ir, native)
-        elif isinstance(stmt, ast.If):
-            return self._build_method_if(stmt, locals_, class_ir, native)
-        elif isinstance(stmt, ast.While):
-            return self._build_method_while(stmt, locals_, class_ir, native)
-        elif isinstance(stmt, ast.For):
-            return self._build_method_for(stmt, locals_, class_ir, native)
-        elif isinstance(stmt, ast.Expr):
-            value, prelude = self._build_method_expr(stmt.value, locals_, class_ir, native)
-            return ExprStmtIR(expr=value, prelude=prelude)
-        elif isinstance(stmt, ast.Break):
-            return BreakIR()
-        elif isinstance(stmt, ast.Continue):
-            return ContinueIR()
-        elif isinstance(stmt, ast.Pass):
-            return PassIR()
-        elif isinstance(stmt, ast.Raise):
-            return self._build_method_raise(stmt, locals_, class_ir, native)
-        elif isinstance(stmt, ast.Try):
-            return self._build_method_try(stmt, locals_, class_ir, native)
-        return None
-
-    def _build_method_return(
-        self, stmt: ast.Return, locals_: list[str], class_ir: ClassIR, native: bool
-    ) -> ReturnIR:
-        """Build return statement in method context."""
-        if stmt.value is None:
-            return ReturnIR(value=None, prelude=[])
-        value, prelude = self._build_method_expr(stmt.value, locals_, class_ir, native)
-        return ReturnIR(value=value, prelude=prelude)
-
-    def _build_method_raise(
-        self, stmt: ast.Raise, locals_: list[str], class_ir: ClassIR, native: bool
-    ) -> RaiseIR:
-        """Build raise statement in method context."""
-        if stmt.exc is None:
-            return RaiseIR(is_reraise=True)
-
-        exc_type: str | None = None
-        exc_msg: ValueIR | None = None
-        prelude: list = []
-
-        if isinstance(stmt.exc, ast.Call):
-            if isinstance(stmt.exc.func, ast.Name):
-                exc_type = stmt.exc.func.id
-            elif isinstance(stmt.exc.func, ast.Attribute):
-                exc_type = stmt.exc.func.attr
-
-            if stmt.exc.args:
-                exc_msg, prelude = self._build_method_expr(
-                    stmt.exc.args[0], locals_, class_ir, native
-                )
-        elif isinstance(stmt.exc, ast.Name):
-            exc_type = stmt.exc.id
-
-        return RaiseIR(exc_type=exc_type, exc_msg=exc_msg, prelude=prelude)
-
-    def _build_method_try(
-        self, stmt: ast.Try, locals_: list[str], class_ir: ClassIR, native: bool
-    ) -> TryIR:
-        body = [self._build_method_statement(s, locals_, class_ir, native) for s in stmt.body]
-        body = [s for s in body if s is not None]
-
-        handlers: list[ExceptHandlerIR] = []
-        for handler in stmt.handlers:
-            exc_type: str | None = None
-            if handler.type is not None:
-                if isinstance(handler.type, ast.Name):
-                    exc_type = handler.type.id
-                elif isinstance(handler.type, ast.Attribute):
-                    exc_type = handler.type.attr
-
-            exc_var = handler.name
-            c_exc_var = sanitize_name(exc_var) if exc_var else None
-
-            if exc_var and exc_var not in locals_:
-                locals_.append(exc_var)
-                self._var_types[exc_var] = "mp_obj_t"
-
-            handler_body = [
-                self._build_method_statement(s, locals_, class_ir, native) for s in handler.body
-            ]
-            handler_body = [s for s in handler_body if s is not None]
-
-            handlers.append(
-                ExceptHandlerIR(
-                    exc_type=exc_type,
-                    exc_var=exc_var,
-                    c_exc_var=c_exc_var,
-                    body=handler_body,
-                )
-            )
-
-        orelse = [self._build_method_statement(s, locals_, class_ir, native) for s in stmt.orelse]
-        orelse = [s for s in orelse if s is not None]
-
-        finalbody = [
-            self._build_method_statement(s, locals_, class_ir, native) for s in stmt.finalbody
-        ]
-        finalbody = [s for s in finalbody if s is not None]
-
-        return TryIR(body=body, handlers=handlers, orelse=orelse, finalbody=finalbody)
-
-    def _build_method_assign(
-        self, stmt: ast.Assign, locals_: list[str], class_ir: ClassIR, native: bool
-    ) -> StmtIR | None:
-        """Build assignment in method context, handling self.attr = value."""
-        if len(stmt.targets) != 1:
-            return None
-
-        target = stmt.targets[0]
-
-        # Handle self.attr = value
-        if (
-            isinstance(target, ast.Attribute)
-            and isinstance(target.value, ast.Name)
-            and target.value.id == "self"
-        ):
-            attr_name = target.attr
-            value, prelude = self._build_method_expr(stmt.value, locals_, class_ir, native)
-
-            # Find field path
-            attr_path = attr_name
-            for fld, path in class_ir.get_all_fields_with_path():
-                if fld.name == attr_name:
-                    attr_path = path
-                    break
-
-            return AttrAssignIR(
-                attr_name=attr_name,
-                attr_path=attr_path,
-                value=value,
-                prelude=prelude,
-            )
-
-        # Handle regular assignment
-        if isinstance(target, ast.Name):
-            var_name = target.id
-            c_var_name = sanitize_name(var_name)
-            value, prelude = self._build_method_expr(stmt.value, locals_, class_ir, native)
-            is_new = var_name not in locals_
-            if is_new:
-                locals_.append(var_name)
-                self._var_types[var_name] = value.ir_type.to_c_type_str()
-
-            # Track class-typed local variables for attribute access
-            # First try mypy local types
-            if var_name in self._mypy_local_types:
-                inferred_class = self._resolve_class_name_from_type_str(
-                    self._mypy_local_types[var_name]
-                )
-                if inferred_class:
-                    self._class_typed_params[var_name] = inferred_class
-            # Then try function return type: var = func_call(...)
-            if var_name not in self._class_typed_params:
-                if isinstance(stmt.value, ast.Call) and isinstance(stmt.value.func, ast.Name):
-                    func_name = stmt.value.func.id
-                    if func_name in self._func_class_returns:
-                        self._class_typed_params[var_name] = self._func_class_returns[func_name]
-
-            return AssignIR(
-                target=var_name,
-                c_target=c_var_name,
-                value=value,
-                value_type=value.ir_type,
-                prelude=prelude,
-                is_new_var=is_new,
-                c_type=value.ir_type.to_c_type_str(),
-            )
-
-        # Handle subscript assignment
-        if isinstance(target, ast.Subscript):
-            container, cont_prelude = self._build_method_expr(
-                target.value, locals_, class_ir, native
-            )
-            key, key_prelude = self._build_method_expr(target.slice, locals_, class_ir, native)
-            value, val_prelude = self._build_method_expr(stmt.value, locals_, class_ir, native)
-            return SubscriptAssignIR(
-                container=container,
-                key=key,
-                value=value,
-                prelude=cont_prelude + key_prelude + val_prelude,
-            )
-
-        return None
-
-    def _build_method_ann_assign(
-        self, stmt: ast.AnnAssign, locals_: list[str], class_ir: ClassIR, native: bool
-    ) -> AnnAssignIR | None:
-        """Build annotated assignment in method context."""
-        if not isinstance(stmt.target, ast.Name):
-            return None
-
-        var_name = stmt.target.id
-        c_var_name = sanitize_name(var_name)
-        c_type = self._annotation_to_c_type(stmt.annotation) if stmt.annotation else "mp_int_t"
-
-        value = None
-        prelude: list = []
-        if stmt.value is not None:
-            value, prelude = self._build_method_expr(stmt.value, locals_, class_ir, native)
-
-        is_new = var_name not in locals_
-        if is_new:
-            locals_.append(var_name)
-        self._var_types[var_name] = c_type
-
-        # Track class-typed local variables for attribute access
-        if stmt.annotation:
-            class_name = self._extract_class_from_annotation(stmt.annotation)
-            if class_name:
-                self._class_typed_params[var_name] = class_name
-                if self._is_optional_class_annotation(stmt.annotation):
-                    self._optional_class_params.add(var_name)
-            else:
-                elem_class = self._extract_container_element_class(stmt.annotation)
-                if elem_class:
-                    self._container_element_types[var_name] = elem_class
-
-        return AnnAssignIR(
-            target=var_name,
-            c_target=c_var_name,
-            c_type=c_type,
-            value=value,
-            prelude=prelude,
-            is_new_var=is_new,
-        )
-
-    def _build_method_aug_assign(
-        self, stmt: ast.AugAssign, locals_: list[str], class_ir: ClassIR, native: bool
-    ) -> AugAssignIR | SelfAugAssignIR | None:
-        """Build augmented assignment in method context."""
-        op_map = {
-            ast.Add: "+=",
-            ast.Sub: "-=",
-            ast.Mult: "*=",
-            ast.Div: "/=",
-            ast.FloorDiv: "//=",
-            ast.Mod: "%=",
-            ast.BitAnd: "&=",
-            ast.BitOr: "|=",
-            ast.BitXor: "^=",
-            ast.LShift: "<<=",
-            ast.RShift: ">>=",
-        }
-        c_op = op_map.get(type(stmt.op), "+=")
-
-        if isinstance(stmt.target, ast.Attribute):
-            if isinstance(stmt.target.value, ast.Name) and stmt.target.value.id == "self":
-                attr_name = stmt.target.attr
-                value, prelude = self._build_method_expr(stmt.value, locals_, class_ir, native)
-                return SelfAugAssignIR(
-                    attr_name=attr_name,
-                    attr_path=attr_name,
-                    op=c_op,
-                    value=value,
-                    prelude=prelude,
-                )
-            return None
-
-        if not isinstance(stmt.target, ast.Name):
-            return None
-
-        var_name = stmt.target.id
-        c_var_name = sanitize_name(var_name)
-        value, prelude = self._build_method_expr(stmt.value, locals_, class_ir, native)
-
-        return AugAssignIR(
-            target=var_name,
-            c_target=c_var_name,
-            op=c_op,
-            value=value,
-            prelude=prelude,
-        )
-
-    def _build_method_if(
-        self, stmt: ast.If, locals_: list[str], class_ir: ClassIR, native: bool
-    ) -> IfIR:
-        """Build if statement in method context."""
-        test, test_prelude = self._build_method_expr(stmt.test, locals_, class_ir, native)
-
-        # Automatic type narrowing: detect isinstance in the test condition
-        narrowing = self._extract_isinstance_narrowing(stmt.test)
-        saved_type: str | None = None
-        narrow_var: str | None = None
-
-        if narrowing:
-            narrow_var, narrow_class, negated = narrowing
-            saved_type = self._class_typed_params.get(narrow_var)
-
-            if not negated:
-                self._class_typed_params[narrow_var] = narrow_class
-
-        # Detect None-check patterns for Optional type narrowing
-        narrowed_var, is_none_check = self._detect_none_check(stmt.test)
-
-        saved_optional = None
-        if narrowed_var and narrowed_var in self._optional_class_params:
-            saved_optional = narrowed_var
-            if is_none_check:
-                # 'if x is None:' -> body: x is None (keep optional), orelse: x narrowed
-                body = [
-                    self._build_method_statement(s, locals_, class_ir, native) for s in stmt.body
-                ]
-                body = [s for s in body if s is not None]
-                self._optional_class_params.discard(narrowed_var)
-                orelse = [
-                    self._build_method_statement(s, locals_, class_ir, native) for s in stmt.orelse
-                ]
-                orelse = [s for s in orelse if s is not None]
-                self._optional_class_params.add(narrowed_var)
-            else:
-                # 'if x is not None:' -> body: x narrowed, orelse: x is None (keep optional)
-                self._optional_class_params.discard(narrowed_var)
-                body = [
-                    self._build_method_statement(s, locals_, class_ir, native) for s in stmt.body
-                ]
-                body = [s for s in body if s is not None]
-                self._optional_class_params.add(narrowed_var)
-                orelse = [
-                    self._build_method_statement(s, locals_, class_ir, native) for s in stmt.orelse
-                ]
-                orelse = [s for s in orelse if s is not None]
-        else:
-            body = [self._build_method_statement(s, locals_, class_ir, native) for s in stmt.body]
-            body = [s for s in body if s is not None]
-
-            # Restore isinstance narrowing after body, apply to orelse if negated
-            if narrowing:
-                narrow_var, narrow_class, negated = narrowing
-                if not negated:
-                    if saved_type is not None:
-                        self._class_typed_params[narrow_var] = saved_type
-                    elif narrow_var in self._class_typed_params:
-                        del self._class_typed_params[narrow_var]
-                else:
-                    self._class_typed_params[narrow_var] = narrow_class
-
-            orelse = [
-                self._build_method_statement(s, locals_, class_ir, native) for s in stmt.orelse
-            ]
-            orelse = [s for s in orelse if s is not None]
-
-            # Restore isinstance narrowing after orelse (for negated case)
-            if narrowing and negated:
-                narrow_var = narrowing[0]
-                if saved_type is not None:
-                    self._class_typed_params[narrow_var] = saved_type
-                elif narrow_var in self._class_typed_params:
-                    del self._class_typed_params[narrow_var]
-
-        # Early-return narrowing: if 'if x is None: return/raise' pattern,
-        # x is not None after the if statement
-        if saved_optional and is_none_check and body and isinstance(body[-1], (ReturnIR, RaiseIR)):
-            self._optional_class_params.discard(saved_optional)
-
-        return IfIR(test=test, body=body, orelse=orelse, test_prelude=test_prelude)
-
-    def _build_method_while(
-        self, stmt: ast.While, locals_: list[str], class_ir: ClassIR, native: bool
-    ) -> WhileIR:
-        """Build while statement in method context."""
-        test, test_prelude = self._build_method_expr(stmt.test, locals_, class_ir, native)
-        self._loop_depth += 1
-        body = [self._build_method_statement(s, locals_, class_ir, native) for s in stmt.body]
-        body = [s for s in body if s is not None]
-        self._loop_depth -= 1
-        return WhileIR(test=test, body=body, test_prelude=test_prelude)
-
-    def _build_method_for(
-        self, stmt: ast.For, locals_: list[str], class_ir: ClassIR, native: bool
-    ) -> ForRangeIR | ForIterIR:
-        """Build for statement in method context."""
-        # Handle tuple unpacking: for k, v in items
-        if isinstance(stmt.target, ast.Tuple):
-            return self._build_method_for_tuple_unpack(stmt, locals_, class_ir, native)
-
-        if not isinstance(stmt.target, ast.Name):
-            raise ValueError("Unsupported for loop target")
-
-        loop_var = stmt.target.id
-        c_loop_var = sanitize_name(loop_var)
-        is_new_var = loop_var not in locals_
-        is_range = (
-            isinstance(stmt.iter, ast.Call)
-            and isinstance(stmt.iter.func, ast.Name)
-            and stmt.iter.func.id == "range"
-        )
-        if is_new_var:
-            locals_.append(loop_var)
-            # range() yields ints; generic iteration yields objects
-            self._var_types[loop_var] = "mp_int_t" if is_range else "mp_obj_t"
-
-        if is_range:
-            return self._build_method_for_range(
-                stmt, loop_var, c_loop_var, is_new_var, locals_, class_ir, native
-            )
-        else:
-            return self._build_method_for_iter(
-                stmt, loop_var, c_loop_var, is_new_var, locals_, class_ir, native
-            )
-
-    def _build_method_for_range(
-        self,
-        stmt: ast.For,
-        loop_var: str,
-        c_loop_var: str,
-        is_new_var: bool,
-        locals_: list[str],
-        class_ir: ClassIR,
-        native: bool,
-    ) -> ForRangeIR:
-        """Build optimized for-range in method context."""
-        assert isinstance(stmt.iter, ast.Call)
-        args = stmt.iter.args
-
-        step_is_constant = False
-        step_value: int | None = None
-        step: ValueIR | None = None
-
-        if len(args) == 1:
-            start = ConstIR(ir_type=IRType.INT, value=0)
-            end, _ = self._build_method_expr(args[0], locals_, class_ir, native)
-            step_is_constant = True
-            step_value = 1
-        elif len(args) == 2:
-            start, _ = self._build_method_expr(args[0], locals_, class_ir, native)
-            end, _ = self._build_method_expr(args[1], locals_, class_ir, native)
-            step_is_constant = True
-            step_value = 1
-        elif len(args) == 3:
-            start, _ = self._build_method_expr(args[0], locals_, class_ir, native)
-            end, _ = self._build_method_expr(args[1], locals_, class_ir, native)
-            if isinstance(args[2], ast.Constant) and isinstance(args[2].value, int):
-                step_is_constant = True
-                step_value = args[2].value
-            elif isinstance(args[2], ast.UnaryOp) and isinstance(args[2].op, ast.USub):
-                if isinstance(args[2].operand, ast.Constant) and isinstance(
-                    args[2].operand.value, int
-                ):
-                    step_is_constant = True
-                    step_value = -args[2].operand.value
-                else:
-                    step, _ = self._build_method_expr(args[2], locals_, class_ir, native)
-            else:
-                step, _ = self._build_method_expr(args[2], locals_, class_ir, native)
-        else:
-            raise ValueError("Unsupported range() call")
-
-        self._loop_depth += 1
-        body = [self._build_method_statement(s, locals_, class_ir, native) for s in stmt.body]
-        body = [s for s in body if s is not None]
-        self._loop_depth -= 1
-
-        return ForRangeIR(
-            loop_var=loop_var,
-            c_loop_var=c_loop_var,
-            start=start,
-            end=end,
-            step=step,
-            step_is_constant=step_is_constant,
-            step_value=step_value,
-            body=body,
-            is_new_var=is_new_var,
-        )
-
-    def _build_method_for_iter(
-        self,
-        stmt: ast.For,
-        loop_var: str,
-        c_loop_var: str,
-        is_new_var: bool,
-        locals_: list[str],
-        class_ir: ClassIR,
-        native: bool,
-    ) -> ForIterIR:
-        """Build generic for-iter in method context."""
-        iterable, iter_prelude = self._build_method_expr(stmt.iter, locals_, class_ir, native)
-        # Propagate container element types to loop variable for attribute access
-        if isinstance(stmt.iter, ast.Name) and stmt.iter.id in self._container_element_types:
-            self._class_typed_params[loop_var] = self._container_element_types[stmt.iter.id]
-        elif isinstance(stmt.iter, ast.Attribute) and isinstance(stmt.iter.value, ast.Name):
-            parent_var = stmt.iter.value.id
-            attr_name = stmt.iter.attr
-            if parent_var == "self":
-                # Check class field element types: e.g., self.children typed as list[Widget]
-                for fld in class_ir.get_all_fields():
-                    if fld.name == attr_name:
-                        elem_type = self._class_field_element_types.get((class_ir.name, attr_name))
-                        if elem_type:
-                            self._class_typed_params[loop_var] = elem_type
-                        break
-            elif parent_var in self._class_typed_params:
-                parent_class = self._class_typed_params[parent_var]
-                elem_type = self._class_field_element_types.get((parent_class, attr_name))
-                if elem_type:
-                    self._class_typed_params[loop_var] = elem_type
-        self._var_types[loop_var] = "mp_obj_t"
-
-        self._loop_depth += 1
-        body = [self._build_method_statement(s, locals_, class_ir, native) for s in stmt.body]
-        body = [s for s in body if s is not None]
-        self._loop_depth -= 1
-
-        return ForIterIR(
-            loop_var=loop_var,
-            c_loop_var=c_loop_var,
-            iterable=iterable,
-            body=body,
-            iter_prelude=iter_prelude,
-            is_new_var=is_new_var,
-        )
-
-    def _build_method_for_tuple_unpack(
-        self, stmt: ast.For, locals_: list[str], class_ir: ClassIR, native: bool
-    ) -> ForIterIR:
-        """Build for loop with tuple unpacking in method context: for k, v in items."""
-        assert isinstance(stmt.target, ast.Tuple)
-
-        # Generate a temp variable to hold each iteration item
-        item_var = f"_item_{self._temp_counter}"
-        self._temp_counter += 1
-        c_item_var = item_var
-
-        # Item var is always new
-        locals_.append(item_var)
-        self._var_types[item_var] = "mp_obj_t"
-
-        # Build tuple unpack targets
-        unpack_targets: list[tuple[str, str, bool, str]] = []
-        for elt in stmt.target.elts:
-            if isinstance(elt, ast.Name):
-                var_name = elt.id
-                c_var_name = sanitize_name(var_name)
-                is_new = var_name not in locals_
-                if is_new:
-                    locals_.append(var_name)
-                    self._var_types[var_name] = "mp_obj_t"
-                unpack_targets.append((var_name, c_var_name, is_new, "mp_obj_t"))
-
-        # Create tuple unpack IR to prepend to body
-        unpack_ir = TupleUnpackIR(
-            targets=unpack_targets,
-            value=NameIR(py_name=item_var, c_name=c_item_var, ir_type=IRType.OBJ),
-            prelude=[],
-        )
-
-        # Build iterable expression using method context
-        iterable, iter_prelude = self._build_method_expr(stmt.iter, locals_, class_ir, native)
-
-        # Build loop body with unpack prepended using method context
-        self._loop_depth += 1
-        body_stmts = [self._build_method_statement(s, locals_, class_ir, native) for s in stmt.body]
-        body_stmts = [s for s in body_stmts if s is not None]
-        self._loop_depth -= 1
-
-        # Prepend tuple unpack to body
-        body = [unpack_ir] + body_stmts
-
-        return ForIterIR(
-            loop_var=item_var,
-            c_loop_var=c_item_var,
-            iterable=iterable,
-            body=body,
-            iter_prelude=iter_prelude,
-            is_new_var=True,
-        )
-
-    def _build_method_expr(
-        self, expr: ast.expr, locals_: list[str], class_ir: ClassIR, native: bool
-    ) -> tuple[ValueIR, list]:
-        """Build expression in method context, handling self.attr and self.method()."""
-        if isinstance(expr, (ast.Yield, ast.YieldFrom)):
-            raise NotImplementedError(f"generator methods are not supported (line {expr.lineno})")
-        # Handle self.attr and param.attr for typed class params
-        if isinstance(expr, ast.Attribute):
-            if isinstance(expr.value, ast.Name):
-                var_name = expr.value.id
-                attr_name = expr.attr
-
-                if var_name == "self":
-                    # First check if it's a field
-                    for fld, path in class_ir.get_all_fields_with_path():
-                        if fld.name == attr_name:
-                            result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
-                            return SelfAttrIR(
-                                ir_type=result_type,
-                                attr_name=attr_name,
-                                attr_path=path,
-                                result_type=result_type,
-                            ), []
-                    # Check if it's a method reference (bound method)
-                    if attr_name in class_ir.methods:
-                        method_ir = class_ir.methods[attr_name]
-                        return SelfMethodRefIR(
-                            ir_type=IRType.OBJ,
-                            method_name=attr_name,
-                            method_c_name=method_ir.c_name,
-                            class_c_name=class_ir.c_name,
-                        ), []
-                    # Fallback to dynamic attribute access
-                    self._warn_type_tracking_fallback(
-                        "self attribute",
-                        "self",
-                        attr_name,
-                        f"Attribute '{attr_name}' not found in class '{class_ir.name}'",
-                    )
-                    return SelfAttrIR(
-                        ir_type=IRType.OBJ,
-                        attr_name=attr_name,
-                        attr_path=attr_name,
-                        result_type=IRType.OBJ,
-                    ), []
-
-                if var_name in self._class_typed_params:
-                    param_class_name = self._class_typed_params[var_name]
-                    param_class_ir = self._known_classes[param_class_name]
-
-                    # Optional params use dynamic dispatch unless narrowed
-                    use_dynamic = param_class_ir.is_trait or var_name in self._optional_class_params
-
-                    for fld, path in param_class_ir.get_all_fields_with_path():
-                        if fld.name == attr_name:
-                            result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
-                            return ParamAttrIR(
-                                ir_type=result_type,
-                                param_name=var_name,
-                                c_param_name=sanitize_name(var_name),
-                                attr_name=attr_name,
-                                attr_path=path,
-                                class_c_name=param_class_ir.c_name,
-                                result_type=result_type,
-                                is_trait_type=use_dynamic,
-                            ), []
-
-                    # Fallback: attribute not found in class fields
-                    self._warn_type_tracking_fallback(
-                        "param attribute",
-                        var_name,
-                        attr_name,
-                        f"Attribute '{attr_name}' not found in class '{param_class_ir.name}'",
-                    )
-                    return ParamAttrIR(
-                        ir_type=IRType.OBJ,
-                        param_name=var_name,
-                        c_param_name=sanitize_name(var_name),
-                        attr_name=attr_name,
-                        attr_path=attr_name,
-                        class_c_name=param_class_ir.c_name,
-                        result_type=IRType.OBJ,
-                        is_trait_type=use_dynamic,
-                    ), []
-
-            # Handle chained attribute access: self.attr1.attr2 or param.attr1.attr2
-            if isinstance(expr.value, ast.Attribute):
-                attr_name = expr.attr
-                base_class_name = self._get_method_attr_class_type(expr.value, class_ir)
-                if base_class_name and base_class_name in self._known_classes:
-                    base_class_ir = self._known_classes[base_class_name]
-                    base_value, base_prelude = self._build_method_expr(
-                        expr.value, locals_, class_ir, native
-                    )
-                    for fld in base_class_ir.get_all_fields():
-                        if fld.name == attr_name:
-                            result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
-                            temp_name = self._fresh_temp()
-                            result_temp = TempIR(ir_type=result_type, name=temp_name)
-                            attr_access = AttrAccessIR(
-                                result=result_temp,
-                                obj=base_value,
-                                attr_name=attr_name,
-                                class_c_name=base_class_ir.c_name,
-                                result_type=result_type,
-                            )
-                            return result_temp, base_prelude + [attr_access]
-                    # Field not found in resolved class - warn about fallback
-                    self._warn_type_tracking_fallback(
-                        "chained attribute",
-                        f"{ast.unparse(expr.value)}",
-                        attr_name,
-                        f"Attribute '{attr_name}' not found in class '{base_class_ir.name}'",
-                    )
-                else:
-                    # Could not resolve base class type - warn
-                    self._warn_type_tracking_fallback(
-                        "chained attribute",
-                        f"{ast.unparse(expr.value)}",
-                        attr_name,
-                        "Could not resolve class type for base expression",
-                    )
-        if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute):
-            if (
-                isinstance(expr.func.value, ast.Call)
-                and isinstance(expr.func.value.func, ast.Name)
-                and expr.func.value.func.id == "super"
-                and len(expr.func.value.args) == 0
-                and len(expr.func.value.keywords) == 0
-            ):
-                method_name = expr.func.attr
-
-                parent_class = class_ir.base
-                while parent_class is not None and method_name not in parent_class.methods:
-                    parent_class = parent_class.base
-
-                if parent_class is not None:
-                    parent_method = parent_class.methods[method_name]
-
-                    args: list[ValueIR] = []
-                    arg_preludes: list[list] = []
-                    for arg in expr.args:
-                        val, prelude = self._build_method_expr(arg, locals_, class_ir, native)
-                        args.append(val)
-                        arg_preludes.append(prelude)
-
-                    return_type = IRType.from_c_type_str(parent_method.return_type.to_c_type_str())
-                    all_preludes = [p for pl in arg_preludes for p in pl]
-                    return SuperCallIR(
-                        ir_type=return_type,
-                        method_name=method_name,
-                        parent_c_name=parent_class.c_name,
-                        parent_method_c_name=parent_method.c_name,
-                        args=args,
-                        return_type=return_type,
-                        is_init=method_name == "__init__",
-                        arg_preludes=arg_preludes,
-                    ), all_preludes
-
-        # Handle self.method()
-        if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute):
-            if isinstance(expr.func.value, ast.Name) and expr.func.value.id == "self":
-                method_name = expr.func.attr
-                method_ir = class_ir.methods.get(method_name)
-                c_method_name = f"{class_ir.c_name}_{sanitize_name(method_name)}"
-
-                args: list[ValueIR] = []
-                arg_preludes: list[list] = []
-                for arg in expr.args:
-                    val, prelude = self._build_method_expr(arg, locals_, class_ir, native)
-                    args.append(val)
-                    arg_preludes.append(prelude)
-
-                return_type = IRType.OBJ
-                if method_ir:
-                    return_type = IRType.from_c_type_str(method_ir.return_type.to_c_type_str())
-
-                all_preludes = [p for pl in arg_preludes for p in pl]
-                param_types: list[IRType] = []
-                if method_ir:
-                    for _pname, ptype in method_ir.params:
-                        param_types.append(IRType.from_c_type_str(ptype.to_c_type_str()))
-                return SelfMethodCallIR(
-                    ir_type=return_type,
-                    method_name=method_name,
-                    c_method_name=c_method_name,
-                    args=args,
-                    return_type=return_type,
-                    arg_preludes=arg_preludes,
-                    param_types=param_types,
-                ), all_preludes
-
-        # Handle BinOp with recursive method context
-        if isinstance(expr, ast.BinOp):
-            left, left_prelude = self._build_method_expr(expr.left, locals_, class_ir, native)
-            right, right_prelude = self._build_method_expr(expr.right, locals_, class_ir, native)
-
-            op_map = {
-                ast.Add: "+",
-                ast.Sub: "-",
-                ast.Mult: "*",
-                ast.Div: "/",
-                ast.FloorDiv: "/",
-                ast.Mod: "%",
-                ast.BitAnd: "&",
-                ast.BitOr: "|",
-                ast.BitXor: "^",
-                ast.LShift: "<<",
-                ast.RShift: ">>",
-            }
-            c_op = op_map.get(type(expr.op), "+")
-            # Determine result type: OBJ if either operand is OBJ (e.g., string concat)
-            if left.ir_type == IRType.OBJ or right.ir_type == IRType.OBJ:
-                # Subscript on OBJ still returns INT (list indexing)
-                left_is_subscript = isinstance(left, SubscriptIR)
-                right_is_subscript = isinstance(right, SubscriptIR)
-                if left_is_subscript or right_is_subscript:
-                    result_type = IRType.INT
-                else:
-                    result_type = IRType.OBJ
-            elif left.ir_type == IRType.FLOAT or right.ir_type == IRType.FLOAT:
-                result_type = IRType.FLOAT
-            else:
-                result_type = IRType.INT
-            return BinOpIR(
-                ir_type=result_type,
-                left=left,
-                op=c_op,
-                right=right,
-                left_prelude=left_prelude,
-                right_prelude=right_prelude,
-            ), left_prelude + right_prelude
-
-        # Handle UnaryOp with recursive method context
-        if isinstance(expr, ast.UnaryOp):
-            operand, prelude = self._build_method_expr(expr.operand, locals_, class_ir, native)
-            op_map = {ast.USub: "-", ast.Not: "!", ast.UAdd: "+", ast.Invert: "~"}
-            c_op = op_map.get(type(expr.op), "-")
-            result_type = IRType.BOOL if c_op == "!" else operand.ir_type
-            return UnaryOpIR(
-                ir_type=result_type,
-                op=c_op,
-                operand=operand,
-                prelude=prelude,
-            ), prelude
-
-        # Handle Compare with recursive method context
-        if isinstance(expr, ast.Compare):
-            left, left_prelude = self._build_method_expr(expr.left, locals_, class_ir, native)
-            op_map = {
-                ast.Eq: "==",
-                ast.NotEq: "!=",
-                ast.Lt: "<",
-                ast.LtE: "<=",
-                ast.Gt: ">",
-                ast.GtE: ">=",
-                ast.In: "in",
-                ast.NotIn: "not in",
-                ast.Is: "is",
-                ast.IsNot: "is not",
-            }
-            ops: list[str] = []
-            comparators: list[ValueIR] = []
-            comparator_preludes: list[list] = []
-            has_contains = False
-
-            for op, comparator in zip(expr.ops, expr.comparators):
-                c_op = op_map.get(type(op), "==")
-                if c_op in ("in", "not in"):
-                    has_contains = True
-                ops.append(c_op)
-                comp_val, comp_prelude = self._build_method_expr(
-                    comparator, locals_, class_ir, native
-                )
-                comparators.append(comp_val)
-                comparator_preludes.append(comp_prelude)
-
-            all_preludes = left_prelude + [p for pl in comparator_preludes for p in pl]
-            return CompareIR(
-                ir_type=IRType.BOOL,
-                left=left,
-                ops=ops,
-                comparators=comparators,
-                has_contains=has_contains,
-                left_prelude=left_prelude,
-                comparator_preludes=comparator_preludes,
-            ), all_preludes
-
-        # Handle IfExp with recursive method context
-        if isinstance(expr, ast.IfExp):
-            test, test_prelude = self._build_method_expr(expr.test, locals_, class_ir, native)
-            body, body_prelude = self._build_method_expr(expr.body, locals_, class_ir, native)
-            orelse, orelse_prelude = self._build_method_expr(expr.orelse, locals_, class_ir, native)
-            return IfExprIR(
-                ir_type=body.ir_type,
-                test=test,
-                body=body,
-                orelse=orelse,
-                test_prelude=test_prelude,
-                body_prelude=body_prelude,
-                orelse_prelude=orelse_prelude,
-            ), test_prelude + body_prelude + orelse_prelude
-
-        # Handle Tuple with recursive method context to capture preludes
-        if isinstance(expr, ast.Tuple):
-            if not expr.elts:
-                return ConstIR(ir_type=IRType.OBJ, value=()), []
-            items: list[ValueIR] = []
-            all_preludes: list = []
-            for elt in expr.elts:
-                val, prelude = self._build_method_expr(elt, locals_, class_ir, native)
-                items.append(val)
-                all_preludes.extend(prelude)
-            temp_name = self._fresh_temp()
-            result = TempIR(ir_type=IRType.OBJ, name=temp_name)
-            return result, all_preludes + [TupleNewIR(result=result, items=items)]
-
-        # Handle List with recursive method context to capture preludes
-        if isinstance(expr, ast.List):
-            items: list[ValueIR] = []
-            all_preludes: list = []
-            for elt in expr.elts:
-                val, prelude = self._build_method_expr(elt, locals_, class_ir, native)
-                items.append(val)
-                all_preludes.extend(prelude)
-            temp_name = self._fresh_temp()
-            result = TempIR(ir_type=IRType.OBJ, name=temp_name)
-            return result, all_preludes + [ListNewIR(result=result, items=items)]
-
-        # Handle Subscript (e.g., self.items[i])
-        if isinstance(expr, ast.Subscript):
-            value, value_prelude = self._build_method_expr(expr.value, locals_, class_ir, native)
-            if isinstance(expr.slice, ast.Slice):
-                slice_ir = self._build_slice(expr.slice, locals_)
-                return SubscriptIR(
-                    ir_type=IRType.OBJ,
-                    value=value,
-                    slice_=slice_ir,
-                    value_prelude=value_prelude,
-                    slice_prelude=[],
-                ), value_prelude
-            slice_val, slice_prelude = self._build_method_expr(
-                expr.slice, locals_, class_ir, native
-            )
-            return SubscriptIR(
-                ir_type=IRType.OBJ,
-                value=value,
-                slice_=slice_val,
-                value_prelude=value_prelude,
-                slice_prelude=slice_prelude,
-            ), value_prelude + slice_prelude
-
-        # Handle Call (non-self)
-        if isinstance(expr, ast.Call):
-            return self._build_method_call_general(expr, locals_, class_ir, native)
-
-        # Handle BoolOp (and/or) with recursive method context
-        if isinstance(expr, ast.BoolOp):
-            c_op = "&&" if isinstance(expr.op, ast.And) else "||"
-            values = expr.values
-            left, left_prelude = self._build_method_expr(values[0], locals_, class_ir, native)
-            all_prelude = left_prelude[:]
-            for i in range(1, len(values)):
-                right, right_prelude = self._build_method_expr(values[i], locals_, class_ir, native)
-                all_prelude.extend(right_prelude)
-                left = BinOpIR(
-                    ir_type=IRType.BOOL,
-                    left=left,
-                    op=c_op,
-                    right=right,
-                    left_prelude=[],
-                    right_prelude=right_prelude,
-                )
-            return left, all_prelude
-
-        # Fall back to regular expression building for simple expressions
-        return self._build_expr(expr, locals_)
-
-    def _build_method_call_general(
-        self, expr: ast.Call, locals_: list[str], class_ir: ClassIR, native: bool
-    ) -> tuple[ValueIR, list]:
-        """Build a general call expression in method context."""
-        if isinstance(expr.func, ast.Attribute):
-            # Check if this is a call on an imported module
-            if isinstance(expr.func.value, ast.Name):
-                var_name = expr.func.value.id
-                if var_name in self._import_aliases:
-                    module_name = self._import_aliases[var_name]
-                    if module_name in self._external_libs:
-                        return self._build_clib_call(expr, var_name, locals_)
-                    return self._build_module_call(expr, var_name, locals_)
-
-            receiver, recv_prelude = self._build_method_expr(
-                expr.func.value, locals_, class_ir, native
-            )
-            method_name = expr.func.attr
-
-            # Allow self.__method() but reject other_obj.__method()
-            is_self_call = isinstance(expr.func.value, ast.Name) and expr.func.value.id == "self"
-            if self._is_private_name(method_name) and not is_self_call:
-                raise TypeError(
-                    f"Cannot access private method '{method_name}' from outside its class"
-                )
-
-            # Process positional arguments
-            args: list[ValueIR] = []
-            arg_preludes_all: list = []
-            for arg in expr.args:
-                val, prelude = self._build_method_expr(arg, locals_, class_ir, native)
-                args.append(val)
-                arg_preludes_all.extend(prelude)
-
-            # Process keyword arguments
-            kwargs: list[tuple[str, ValueIR]] = []
-            for kw in expr.keywords:
-                if kw.arg is None:  # **kwargs - not supported
-                    continue
-                val, prelude = self._build_method_expr(kw.value, locals_, class_ir, native)
-                kwargs.append((kw.arg, val))
-                arg_preludes_all.extend(prelude)
-
-            temp_name = self._fresh_temp()
-            result = TempIR(ir_type=IRType.OBJ, name=temp_name)
-            method_call = MethodCallIR(
-                result=result, receiver=receiver, method=method_name, args=args, kwargs=kwargs
-            )
-            return result, recv_prelude + arg_preludes_all + [method_call]
-
-        if not isinstance(expr.func, ast.Name):
-            return ConstIR(ir_type=IRType.OBJ, value=None), []
-
-        func_name = expr.func.id
-
-        if func_name in self._known_classes:
-            return self._build_class_instantiation(expr, func_name, locals_)
-
-        # isinstance(obj, ClassName) -> IsInstanceIR
-        if func_name == "isinstance" and len(expr.args) == 2:
-            return self._build_isinstance(expr, locals_)
-
-        # Check if func_name is a local variable (parameter or assigned)
-        # If so, it's a dynamic callable invocation, not a static function call
-        if func_name in locals_:
-            args: list[ValueIR] = []
-            arg_preludes: list[list] = []
-            for arg in expr.args:
-                val, prelude = self._build_method_expr(arg, locals_, class_ir, native)
-                args.append(val)
-                arg_preludes.append(prelude)
-
-            kwargs: list[tuple[str, ValueIR]] = []
-            kwarg_preludes: list[list] = []
-            for kw in expr.keywords:
-                if kw.arg is None:
-                    continue
-                val, prelude = self._build_method_expr(kw.value, locals_, class_ir, native)
-                kwargs.append((kw.arg, val))
-                kwarg_preludes.append(prelude)
-
-            all_preludes = [p for pl in arg_preludes for p in pl]
-            all_preludes.extend(p for pl in kwarg_preludes for p in pl)
-
-            return DynamicCallIR(
-                ir_type=IRType.OBJ,
-                callable_var=func_name,
-                args=args,
-                kwargs=kwargs,
-                arg_preludes=arg_preludes,
-            ), all_preludes
-
-        args: list[ValueIR] = []
-        arg_preludes: list[list] = []
-        for arg in expr.args:
-            val, prelude = self._build_method_expr(arg, locals_, class_ir, native)
-            args.append(val)
-            arg_preludes.append(prelude)
-
-        kwargs: list[tuple[str, ValueIR]] = []
-        kwarg_preludes: list[list] = []
-        for kw in expr.keywords:
-            if kw.arg is None:
-                continue
-            val, prelude = self._build_method_expr(kw.value, locals_, class_ir, native)
-            kwargs.append((kw.arg, val))
-            kwarg_preludes.append(prelude)
-
-        all_preludes = [p for pl in arg_preludes for p in pl]
-        all_preludes.extend(p for pl in kwarg_preludes for p in pl)
-
-        if func_name in BUILTIN_FUNCTIONS:
-            ir_type = _builtin_ir_type(func_name)
-            return CallIR(
-                ir_type=ir_type,
-                func_name=func_name,
-                c_func_name=func_name,
-                args=args,
-                kwargs=kwargs,
-                arg_preludes=arg_preludes,
-                is_builtin=True,
-                builtin_kind=func_name,
-            ), all_preludes
-
-        # Check if this function was imported from another module
-        if func_name in self._imported_from:
-            source_module = self._imported_from[func_name]
-            # Check if source module is a sibling module in the same package
-            if source_module in self._sibling_modules:
-                c_prefix = self._sibling_modules[source_module]
-                c_func_name = f"{c_prefix}_{sanitize_name(func_name)}"
-            else:
-                # For external modules, use the full module path as prefix
-                c_prefix = sanitize_name(source_module.replace(".", "_"))
-                c_func_name = f"{c_prefix}_{sanitize_name(func_name)}"
-        else:
-            c_func_name = f"{self.c_name}_{sanitize_name(func_name)}"
-
-        # Look up the return type if this is a known function
-        call_ir_type = IRType.OBJ  # default: unknown functions return mp_obj_t
-        if func_name in self._known_functions:
-            _, return_c_type = self._known_functions[func_name]
-            call_ir_type = IRType.from_c_type_str(return_c_type.to_c_type_str())
-
-        return CallIR(
-            ir_type=call_ir_type,
-            func_name=func_name,
-            c_func_name=c_func_name,
-            args=args,
-            kwargs=kwargs,
-            arg_preludes=arg_preludes,
-            is_builtin=False,
-            builtin_kind=None,
-        ), all_preludes
 
     def _next_yield_state_id(self) -> int:
         self._yield_state_counter += 1

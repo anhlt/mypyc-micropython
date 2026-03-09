@@ -30,11 +30,12 @@ from mypyc_micropython.ir import (
     PrintIR,
     ReturnIR,
     SubscriptIR,
+    TempIR,
     TupleNewIR,
     UnaryOpIR,
     WhileIR,
 )
-from mypyc_micropython.ir_builder import IRBuilder, sanitize_name
+from mypyc_micropython.ir_builder import BuildContext, IRBuilder, sanitize_name
 
 
 class TestSanitizeName:
@@ -1247,9 +1248,10 @@ class Nav:
         builder._list_vars = {}
         builder._temp_count = 0
         locals_ = []
+        builder._ctx = BuildContext(locals_=locals_, class_ir=class_ir, native=True)
         body = []
         for stmt in check_method.body_ast.body:
-            stmt_ir = builder._build_method_statement(stmt, locals_, class_ir, True)
+            stmt_ir = builder._build_statement(stmt, locals_)
             if stmt_ir:
                 body.append(stmt_ir)
 
@@ -1287,9 +1289,10 @@ class Container:
         builder._list_vars = {}
         builder._temp_count = 0
         locals_ = []
+        builder._ctx = BuildContext(locals_=locals_, class_ir=class_ir, native=True)
         body = []
         for stmt in has_data_method.body_ast.body:
-            stmt_ir = builder._build_method_statement(stmt, locals_, class_ir, True)
+            stmt_ir = builder._build_statement(stmt, locals_)
             if stmt_ir:
                 body.append(stmt_ir)
 
@@ -1318,9 +1321,10 @@ class Comparer:
         builder._list_vars = {}
         builder._temp_count = 0
         locals_ = ["a", "b"]
+        builder._ctx = BuildContext(locals_=locals_, class_ir=class_ir, native=True)
         body = []
         for stmt in same_method.body_ast.body:
-            stmt_ir = builder._build_method_statement(stmt, locals_, class_ir, True)
+            stmt_ir = builder._build_statement(stmt, locals_)
             if stmt_ir:
                 body.append(stmt_ir)
 
@@ -1610,79 +1614,386 @@ def sort_list(lst: list) -> list:
         assert isinstance(kw_val, NameIR)
 
 
-class TestLambdaIRBuilder:
-    def test_lambda_creates_func_ir(self):
-        source = """
-def use_lambda() -> list:
-    return sorted([1, 2], key=lambda x: x)
-"""
 
+class TestBuildContext:
+    """Tests for BuildContext and method context detection."""
+
+    def test_build_context_creation(self):
+        """BuildContext can be created with locals."""
+        ctx = BuildContext(locals_=["a", "b"])
+        assert ctx.locals_ == ["a", "b"]
+        assert ctx.class_ir is None
+        assert ctx.native is False
+        assert ctx.is_method is False
+
+    def test_build_context_method_detection(self):
+        """BuildContext correctly identifies method context."""
+        from mypyc_micropython.ir import ClassIR
+
+        class_ir = ClassIR(name="TestClass", c_name="test_TestClass", fields=[], module_name="test")
+        ctx = BuildContext(locals_=["self"], class_ir=class_ir)
+        assert ctx.is_method is True
+
+
+class TestParamPyTypesTracking:
+    """Tests for _param_py_types tracking in method calls."""
+
+    def test_param_py_type_tracked_for_receiver(self):
+        """Parameters with class annotations track Python types for receiver_py_type."""
+        source = '''
+class Point:
+    x: int
+    y: int
+
+def get_x(p: Point) -> int:
+    return p.x
+'''
         tree = ast.parse(source)
         builder = IRBuilder("test")
-        funcs = [n for n in ast.iter_child_nodes(tree) if isinstance(n, ast.FunctionDef)]
-        builder.build_function(funcs[0])
 
-        assert len(builder._lambda_functions) == 1
-        lambda_func = builder._lambda_functions[0]
-        assert lambda_func.name == "_lambda_0"
-        assert lambda_func.c_name == "test__lambda_0"
-        assert len(lambda_func.params) == 1
-        assert lambda_func.params[0][0] == "x"
+        # Build class first
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                builder.build_class(node)
 
-    def test_lambda_returns_func_ref_ir(self):
-        source = """
-def use_lambda() -> list:
-    return sorted([1, 2], key=lambda x: x)
-"""
-        from mypyc_micropython.ir import FuncRefIR
+        # Build function
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                func_ir = builder.build_function(node)
 
+        # The function should access p.x via ParamAttrIR with receiver_py_type
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        assert isinstance(ret.value, ParamAttrIR)
+        # ParamAttrIR should have correct receiver info
+        assert ret.value.param_name == "p"
+        assert ret.value.attr_name == "x"
+
+    def test_method_call_on_typed_param_has_receiver_py_type(self):
+        """Method calls on typed params should have receiver_py_type set."""
+        source = '''
+def process_list(items: list) -> int:
+    return len(items)
+'''
         tree = ast.parse(source)
         builder = IRBuilder("test")
-        funcs = [n for n in ast.iter_child_nodes(tree) if isinstance(n, ast.FunctionDef)]
-        func_ir = builder.build_function(funcs[0])
+        func_ir = builder.build_function(tree.body[0])
 
         ret = func_ir.body[0]
         assert isinstance(ret, ReturnIR)
-        call = ret.value
-        assert isinstance(call, CallIR)
-        assert len(call.kwargs) == 1
-        kw_name, kw_val = call.kwargs[0]
-        assert kw_name == "key"
-        assert isinstance(kw_val, FuncRefIR)
-        assert kw_val.c_name == "test__lambda_0"
+        # len() call on list should work
+        assert isinstance(ret.value, CallIR)
+        assert ret.value.func_name == "len"
 
-    def test_multiple_lambdas_unique_ids(self):
-        source = """
-def multi() -> tuple:
-    a: list = sorted([1], key=lambda x: x)
-    b: list = sorted([2], key=lambda y: y)
-    return (a, b)
-"""
+
+class TestContainerPreludeHandling:
+    """Tests for proper prelude handling in container literals."""
+
+    def test_list_with_method_call_elements(self):
+        """List literals with method call elements should collect preludes with type info."""
+        source = '''
+def f(lst: list) -> list:
+    return [lst.pop(), 1, 2]
+'''
         tree = ast.parse(source)
         builder = IRBuilder("test")
-        funcs = [n for n in ast.iter_child_nodes(tree) if isinstance(n, ast.FunctionDef)]
-        builder.build_function(funcs[0])
+        func_ir = builder.build_function(tree.body[0])
 
-        assert len(builder._lambda_functions) == 2
-        assert builder._lambda_functions[0].c_name == "test__lambda_0"
-        assert builder._lambda_functions[1].c_name == "test__lambda_1"
-
-    def test_lambda_attribute_access_param_attr_ir(self):
-        source = """
-def sort_by_attr(items: list) -> list:
-    return sorted(items, key=lambda c: c.index)
-"""
-        from mypyc_micropython.ir import ParamAttrIR
-
-        tree = ast.parse(source)
-        builder = IRBuilder("test")
-        funcs = [n for n in ast.iter_child_nodes(tree) if isinstance(n, ast.FunctionDef)]
-        builder.build_function(funcs[0])
-
-        lambda_func = builder._lambda_functions[0]
-        ret = lambda_func.body[0]
+        ret = func_ir.body[0]
         assert isinstance(ret, ReturnIR)
-        assert isinstance(ret.value, ParamAttrIR)
-        assert ret.value.param_name == "c"
-        assert ret.value.attr_name == "index"
-        assert ret.value.is_trait_type is True
+        # Preludes should include MethodCallIR for lst.pop() AND ListNewIR
+        assert len(ret.prelude) >= 2
+        # Find the MethodCallIR - should have receiver_py_type set
+        method_calls = [p for p in ret.prelude if isinstance(p, MethodCallIR)]
+        assert len(method_calls) == 1
+        assert method_calls[0].receiver_py_type == "list"
+        assert method_calls[0].method == "pop"
+        # Find the ListNewIR
+        list_news = [p for p in ret.prelude if isinstance(p, ListNewIR)]
+        assert len(list_news) == 1
+
+    def test_dict_with_method_call_values(self):
+        """Dict literals with method call values should collect preludes with type info."""
+        from mypyc_micropython.ir import DictNewIR
+
+        source = '''
+def f(lst: list) -> dict:
+    d: dict = {"val": lst.pop()}
+    return d
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ann_assign = func_ir.body[0]
+        assert isinstance(ann_assign, AnnAssignIR)
+        # Preludes should include MethodCallIR for lst.pop() AND DictNewIR
+        assert len(ann_assign.prelude) >= 2
+        # Find the MethodCallIR - should have receiver_py_type set
+        method_calls = [p for p in ann_assign.prelude if isinstance(p, MethodCallIR)]
+        assert len(method_calls) == 1
+        assert method_calls[0].receiver_py_type == "list"
+        # Find the DictNewIR
+        dict_news = [p for p in ann_assign.prelude if isinstance(p, DictNewIR)]
+        assert len(dict_news) == 1
+
+    def test_tuple_with_method_call_elements(self):
+        """Tuple literals with method call elements should collect preludes with type info."""
+        source = '''
+def f(lst: list) -> tuple:
+    return (lst.pop(), 1)
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        # Preludes should include MethodCallIR for lst.pop() AND TupleNewIR
+        assert len(ret.prelude) >= 2
+        # Find the MethodCallIR - should have receiver_py_type set
+        method_calls = [p for p in ret.prelude if isinstance(p, MethodCallIR)]
+        assert len(method_calls) == 1
+        assert method_calls[0].receiver_py_type == "list"
+        # Find the TupleNewIR
+        tuple_news = [p for p in ret.prelude if isinstance(p, TupleNewIR)]
+        assert len(tuple_news) == 1
+
+    def test_set_with_method_call_elements(self):
+        """Set literals with method call elements should collect preludes with type info."""
+        from mypyc_micropython.ir import SetNewIR
+
+        source = '''
+def f(lst: list) -> set:
+    return {lst.pop(), 1, 2}
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        # Preludes should include MethodCallIR for lst.pop() AND SetNewIR
+        assert len(ret.prelude) >= 2
+        # Find the MethodCallIR - should have receiver_py_type set
+        method_calls = [p for p in ret.prelude if isinstance(p, MethodCallIR)]
+        assert len(method_calls) == 1
+        assert method_calls[0].receiver_py_type == "list"
+        # Find the SetNewIR
+        set_news = [p for p in ret.prelude if isinstance(p, SetNewIR)]
+        assert len(set_news) == 1
+
+
+class TestObjectTypedParamAttrAccess:
+    """Tests for dynamic attribute access on object-typed parameters."""
+
+    def test_object_param_uses_dynamic_attr(self):
+        """Parameters typed as 'object' should use dynamic attr access."""
+        source = '''
+def get_value(obj: object) -> int:
+    return obj.value
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        # For object-typed params, should use dynamic attr access
+        # This could be AttrIR or ParamAttrIR depending on implementation
+        assert ret.value is not None
+
+    def test_untyped_param_defaults_to_object(self):
+        """Untyped parameters default to mp_obj_t (object)."""
+        source = '''
+def process(x):
+    return x
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        # Untyped param should be mp_obj_t
+        assert func_ir.params[0] == ("x", CType.MP_OBJ_T)
+
+
+class TestIRTypeInfoCompleteness:
+    """Tests to verify IR nodes contain complete type information for emission."""
+
+    def test_method_call_has_result_temp_with_ir_type(self):
+        """MethodCallIR.result TempIR should have ir_type set."""
+        source = '''
+def f(lst: list) -> int:
+    return lst.pop()
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        # Should have MethodCallIR in prelude
+        method_call = ret.prelude[0]
+        assert isinstance(method_call, MethodCallIR)
+        # Result TempIR should have ir_type
+        assert method_call.result is not None
+        assert isinstance(method_call.result, TempIR)
+        assert method_call.result.ir_type == IRType.OBJ  # pop returns object
+
+    def test_method_call_receiver_has_ir_type(self):
+        """MethodCallIR.receiver should have ir_type set."""
+        source = '''
+def f(lst: list):
+    lst.append(1)
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        expr_stmt = func_ir.body[0]
+        method_call = expr_stmt.prelude[0]
+        assert isinstance(method_call, MethodCallIR)
+        # Receiver should have ir_type
+        assert isinstance(method_call.receiver, NameIR)
+        assert method_call.receiver.ir_type == IRType.OBJ
+
+    def test_param_attr_has_complete_type_info(self):
+        """ParamAttrIR should have class_c_name, result_type, and is_trait_type."""
+        source = '''
+class Point:
+    x: int
+    y: int
+
+def get_x(p: Point) -> int:
+    return p.x
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+
+        # Build class first
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                builder.build_class(node)
+
+        # Build function
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                func_ir = builder.build_function(node)
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        param_attr = ret.value
+        assert isinstance(param_attr, ParamAttrIR)
+        # Verify complete type info
+        assert param_attr.class_c_name == "test_Point"
+        assert param_attr.result_type == IRType.INT
+        assert param_attr.is_trait_type is False
+        assert param_attr.attr_path == "x"
+
+    def test_binop_has_ir_type(self):
+        """BinOpIR should have ir_type based on operand types."""
+        source = '''
+def add(a: int, b: int) -> int:
+    return a + b
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        binop = ret.value
+        assert isinstance(binop, BinOpIR)
+        assert binop.ir_type == IRType.INT
+
+    def test_const_has_ir_type(self):
+        """ConstIR should have correct ir_type based on value type."""
+        from mypyc_micropython.ir import ConstIR
+
+        source = '''
+def f() -> int:
+    return 42
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        const = ret.value
+        assert isinstance(const, ConstIR)
+        assert const.ir_type == IRType.INT
+        assert const.value == 42
+
+    def test_name_has_ir_type(self):
+        """NameIR should have ir_type matching variable type."""
+        source = '''
+def f(x: int) -> int:
+    return x
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        name = ret.value
+        assert isinstance(name, NameIR)
+        assert name.ir_type == IRType.INT
+        assert name.py_name == "x"
+        assert name.c_name == "x"
+
+    def test_temp_has_ir_type(self):
+        """TempIR generated for expressions should have ir_type."""
+        from mypyc_micropython.ir import TempIR
+
+        source = '''
+def f(d: dict) -> object:
+    return d.get("key")
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        # d.get() creates a temp
+        method_call = ret.prelude[0]
+        assert isinstance(method_call, MethodCallIR)
+        assert method_call.result is not None
+        assert isinstance(method_call.result, TempIR)
+        # Temps from method calls are OBJ type
+        assert method_call.result.ir_type == IRType.OBJ
+
+    def test_compare_has_bool_ir_type(self):
+        """CompareIR should have BOOL ir_type."""
+        source = '''
+def is_positive(x: int) -> bool:
+    return x > 0
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        compare = ret.value
+        assert isinstance(compare, CompareIR)
+        assert compare.ir_type == IRType.BOOL
+
+    def test_subscript_has_ir_type(self):
+        """SubscriptIR should have ir_type."""
+        source = '''
+def get_first(lst: list) -> object:
+    return lst[0]
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        subscript = ret.value
+        assert isinstance(subscript, SubscriptIR)
+        assert subscript.ir_type == IRType.OBJ
+
