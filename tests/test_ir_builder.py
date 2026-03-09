@@ -1997,3 +1997,125 @@ def get_first(lst: list) -> object:
         assert isinstance(subscript, SubscriptIR)
         assert subscript.ir_type == IRType.OBJ
 
+    def test_list_of_int_has_element_type_info(self):
+        """list[int] should track element type for proper emission."""
+        source = '''
+def sum_list(nums: list[int]) -> int:
+    total: int = 0
+    for n in nums:
+        total += n
+    return total
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        # Verify list param is tracked
+        assert func_ir.params[0] == ("nums", CType.MP_OBJ_T)
+        assert "nums" in func_ir.list_vars
+        # For loop should be ForIterIR over the list
+        for_ir = func_ir.body[1]
+        assert isinstance(for_ir, ForIterIR)
+        # Loop var should be set correctly
+        assert for_ir.loop_var == "n"
+
+    def test_list_of_str_has_element_type_info(self):
+        """list[str] should track element type for proper emission."""
+        source = '''
+def join_strings(words: list[str]) -> str:
+    result: str = ""
+    for w in words:
+        result = result + w
+    return result
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        # Verify list param is tracked
+        assert func_ir.params[0] == ("words", CType.MP_OBJ_T)
+        assert "words" in func_ir.list_vars
+        # Return type should be OBJ for string
+        assert func_ir.return_type == CType.MP_OBJ_T
+
+    def test_dict_field_in_class_has_type_info(self):
+        """Dict field in class should have complete type info for attr access."""
+        source = '''
+class Config:
+    settings: dict
+
+    def __init__(self):
+        self.settings = {}
+
+def get_setting(cfg: Config, key: str) -> object:
+    return cfg.settings.get(key)
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+
+        # Build class first
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                builder.build_class(node)
+
+        # Build function
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                func_ir = builder.build_function(node)
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        # Should have prelude with chained attr access
+        assert len(ret.prelude) > 0
+        # Find the MethodCallIR for .get()
+        method_call = None
+        for instr in ret.prelude:
+            if isinstance(instr, MethodCallIR) and instr.method == "get":
+                method_call = instr
+                break
+        assert method_call is not None
+        # Method call should have result temp with ir_type
+        assert method_call.result is not None
+        assert isinstance(method_call.result, TempIR)
+        assert method_call.result.ir_type == IRType.OBJ
+
+    def test_nested_dict_in_class_has_type_info(self):
+        """Nested dict access in class should maintain type info chain."""
+        source = '''
+class Cache:
+    data: dict
+
+    def __init__(self):
+        self.data = {}
+
+def cache_get(c: Cache, key: str) -> object:
+    d: dict = c.data
+    return d[key]
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+
+        # Build class first
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                builder.build_class(node)
+
+        # Build function
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                func_ir = builder.build_function(node)
+
+        # First statement: d = c.data (annotated assignment)
+        ann_assign = func_ir.body[0]
+        assert isinstance(ann_assign, AnnAssignIR)
+        assert ann_assign.target == "d"
+        # d should be tracked in locals with OBJ type
+        assert "d" in func_ir.locals_
+        assert func_ir.locals_["d"] == CType.MP_OBJ_T
+
+        # Return statement with dict subscript
+        ret = func_ir.body[1]
+        assert isinstance(ret, ReturnIR)
+        subscript = ret.value
+        assert isinstance(subscript, SubscriptIR)
+        assert subscript.ir_type == IRType.OBJ
