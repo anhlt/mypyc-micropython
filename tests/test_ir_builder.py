@@ -1616,12 +1616,11 @@ class TestLambdaIRBuilder:
 def use_lambda() -> list:
     return sorted([1, 2], key=lambda x: x)
 """
-        from mypyc_micropython.ir import FuncRefIR
 
         tree = ast.parse(source)
         builder = IRBuilder("test")
         funcs = [n for n in ast.iter_child_nodes(tree) if isinstance(n, ast.FunctionDef)]
-        func_ir = builder.build_function(funcs[0])
+        builder.build_function(funcs[0])
 
         assert len(builder._lambda_functions) == 1
         lambda_func = builder._lambda_functions[0]
@@ -1662,7 +1661,7 @@ def multi() -> tuple:
         tree = ast.parse(source)
         builder = IRBuilder("test")
         funcs = [n for n in ast.iter_child_nodes(tree) if isinstance(n, ast.FunctionDef)]
-        func_ir = builder.build_function(funcs[0])
+        builder.build_function(funcs[0])
 
         assert len(builder._lambda_functions) == 2
         assert builder._lambda_functions[0].c_name == "test__lambda_0"
@@ -1678,7 +1677,7 @@ def sort_by_attr(items: list) -> list:
         tree = ast.parse(source)
         builder = IRBuilder("test")
         funcs = [n for n in ast.iter_child_nodes(tree) if isinstance(n, ast.FunctionDef)]
-        func_ir = builder.build_function(funcs[0])
+        builder.build_function(funcs[0])
 
         lambda_func = builder._lambda_functions[0]
         ret = lambda_func.body[0]
