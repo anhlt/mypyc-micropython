@@ -14,7 +14,7 @@ Covers:
 from __future__ import annotations
 
 import pytest
-from lvgl_mvu.attrs import AttrDef, AttrKey, register_attr
+from lvgl_mvu.attrs import AttrDef, AttrKey, AttrRegistry
 from lvgl_mvu.builders import WidgetBuilder
 from lvgl_mvu.diff import (
     CHANGE_ADDED,
@@ -71,8 +71,9 @@ def reset_mock_id():
 
 
 @pytest.fixture
-def register_mock_attrs():
-    """Register mock attribute definitions for testing."""
+def attr_registry():
+    """Create an AttrRegistry with mock attribute definitions."""
+    registry = AttrRegistry()
 
     def mock_apply_text(obj: object, value: object) -> None:
         if isinstance(obj, MockLvObj):
@@ -86,15 +87,17 @@ def register_mock_attrs():
         if isinstance(obj, MockLvObj):
             obj.attrs[AttrKey.WIDTH] = value
 
-    register_attr(AttrDef(AttrKey.TEXT, "text", "", mock_apply_text))
-    register_attr(AttrDef(AttrKey.BG_COLOR, "bg_color", 0, mock_apply_bg_color))
-    register_attr(AttrDef(AttrKey.WIDTH, "width", 0, mock_apply_width))
+    registry.add(AttrDef(AttrKey.TEXT, "text", "", mock_apply_text))
+    registry.add(AttrDef(AttrKey.BG_COLOR, "bg_color", 0, mock_apply_bg_color))
+    registry.add(AttrDef(AttrKey.WIDTH, "width", 0, mock_apply_width))
+
+    return registry
 
 
 @pytest.fixture
-def reconciler():
+def reconciler(attr_registry):
     """Create a Reconciler with mock factories."""
-    rec = Reconciler()
+    rec = Reconciler(attr_registry)
 
     def create_screen(parent: object | None) -> MockLvObj:
         return MockLvObj(parent if isinstance(parent, MockLvObj) else None)
@@ -158,10 +161,10 @@ def _screen(*children: Widget) -> Widget:
 class TestViewNodeCreation:
     """ViewNode instantiation and basic properties."""
 
-    def test_create_viewnode(self):
+    def test_create_viewnode(self, attr_registry):
         lv_obj = MockLvObj()
         widget = _label("test")
-        node = ViewNode(lv_obj, widget)
+        node = ViewNode(lv_obj, widget, attr_registry)
 
         assert node.lv_obj is lv_obj
         assert node.widget is widget
@@ -169,10 +172,10 @@ class TestViewNodeCreation:
         assert node.handlers == {}
         assert not node.is_disposed()
 
-    def test_viewnode_stores_widget(self):
+    def test_viewnode_stores_widget(self, attr_registry):
         lv_obj = MockLvObj()
         widget = _label("hello")
-        node = ViewNode(lv_obj, widget)
+        node = ViewNode(lv_obj, widget, attr_registry)
 
         assert node.widget.key == WidgetKey.LABEL
 
@@ -180,10 +183,10 @@ class TestViewNodeCreation:
 class TestViewNodeApplyDiff:
     """ViewNode.apply_diff for scalar changes."""
 
-    def test_apply_added_attr(self, register_mock_attrs):
+    def test_apply_added_attr(self, attr_registry):
         lv_obj = MockLvObj()
         widget = _label()
-        node = ViewNode(lv_obj, widget)
+        node = ViewNode(lv_obj, widget, attr_registry)
 
         diff = WidgetDiff(
             scalar_changes=[AttrChange(CHANGE_ADDED, AttrKey.TEXT, None, "hello")],
@@ -193,11 +196,11 @@ class TestViewNodeApplyDiff:
 
         assert lv_obj.attrs.get(AttrKey.TEXT) == "hello"
 
-    def test_apply_updated_attr(self, register_mock_attrs):
+    def test_apply_updated_attr(self, attr_registry):
         lv_obj = MockLvObj()
         lv_obj.attrs[AttrKey.TEXT] = "old"
         widget = _label("old")
-        node = ViewNode(lv_obj, widget)
+        node = ViewNode(lv_obj, widget, attr_registry)
 
         diff = WidgetDiff(
             scalar_changes=[AttrChange(CHANGE_UPDATED, AttrKey.TEXT, "old", "new")],
@@ -207,11 +210,11 @@ class TestViewNodeApplyDiff:
 
         assert lv_obj.attrs.get(AttrKey.TEXT) == "new"
 
-    def test_apply_removed_attr(self, register_mock_attrs):
+    def test_apply_removed_attr(self, attr_registry):
         lv_obj = MockLvObj()
         lv_obj.attrs[AttrKey.TEXT] = "hello"
         widget = _label("hello")
-        node = ViewNode(lv_obj, widget)
+        node = ViewNode(lv_obj, widget, attr_registry)
 
         diff = WidgetDiff(
             scalar_changes=[AttrChange(CHANGE_REMOVED, AttrKey.TEXT, "hello", None)],
@@ -222,10 +225,10 @@ class TestViewNodeApplyDiff:
         # Should reset to default (empty string)
         assert lv_obj.attrs.get(AttrKey.TEXT) == ""
 
-    def test_apply_multiple_changes(self, register_mock_attrs):
+    def test_apply_multiple_changes(self, attr_registry):
         lv_obj = MockLvObj()
         widget = _label()
-        node = ViewNode(lv_obj, widget)
+        node = ViewNode(lv_obj, widget, attr_registry)
 
         diff = WidgetDiff(
             scalar_changes=[
@@ -239,10 +242,10 @@ class TestViewNodeApplyDiff:
         assert lv_obj.attrs.get(AttrKey.TEXT) == "hello"
         assert lv_obj.attrs.get(AttrKey.BG_COLOR) == 0xFF0000
 
-    def test_apply_diff_skips_unregistered_attrs(self):
+    def test_apply_diff_skips_unregistered_attrs(self, attr_registry):
         lv_obj = MockLvObj()
         widget = _label()
-        node = ViewNode(lv_obj, widget)
+        node = ViewNode(lv_obj, widget, attr_registry)
 
         # Use an attr key that's not registered
         diff = WidgetDiff(
@@ -256,20 +259,20 @@ class TestViewNodeApplyDiff:
 class TestViewNodeChildren:
     """ViewNode child management."""
 
-    def test_add_child(self):
-        parent = ViewNode(MockLvObj(), _container())
-        child = ViewNode(MockLvObj(), _label())
+    def test_add_child(self, attr_registry):
+        parent = ViewNode(MockLvObj(), _container(), attr_registry)
+        child = ViewNode(MockLvObj(), _label(), attr_registry)
 
         parent.add_child(child)
 
         assert parent.child_count() == 1
         assert parent.get_child(0) is child
 
-    def test_add_multiple_children(self):
-        parent = ViewNode(MockLvObj(), _container())
-        c1 = ViewNode(MockLvObj(), _label("a"))
-        c2 = ViewNode(MockLvObj(), _label("b"))
-        c3 = ViewNode(MockLvObj(), _label("c"))
+    def test_add_multiple_children(self, attr_registry):
+        parent = ViewNode(MockLvObj(), _container(), attr_registry)
+        c1 = ViewNode(MockLvObj(), _label("a"), attr_registry)
+        c2 = ViewNode(MockLvObj(), _label("b"), attr_registry)
+        c3 = ViewNode(MockLvObj(), _label("c"), attr_registry)
 
         parent.add_child(c1)
         parent.add_child(c2)
@@ -280,11 +283,11 @@ class TestViewNodeChildren:
         assert parent.get_child(1) is c2
         assert parent.get_child(2) is c3
 
-    def test_add_child_at_index(self):
-        parent = ViewNode(MockLvObj(), _container())
-        c1 = ViewNode(MockLvObj(), _label("a"))
-        c2 = ViewNode(MockLvObj(), _label("b"))
-        c3 = ViewNode(MockLvObj(), _label("c"))
+    def test_add_child_at_index(self, attr_registry):
+        parent = ViewNode(MockLvObj(), _container(), attr_registry)
+        c1 = ViewNode(MockLvObj(), _label("a"), attr_registry)
+        c2 = ViewNode(MockLvObj(), _label("b"), attr_registry)
+        c3 = ViewNode(MockLvObj(), _label("c"), attr_registry)
 
         parent.add_child(c1)
         parent.add_child(c3)
@@ -294,9 +297,9 @@ class TestViewNodeChildren:
         assert parent.get_child(1) is c2
         assert parent.get_child(2) is c3
 
-    def test_remove_child(self):
-        parent = ViewNode(MockLvObj(), _container())
-        child = ViewNode(MockLvObj(), _label())
+    def test_remove_child(self, attr_registry):
+        parent = ViewNode(MockLvObj(), _container(), attr_registry)
+        child = ViewNode(MockLvObj(), _label(), attr_registry)
         parent.add_child(child)
 
         removed = parent.remove_child(0)
@@ -304,11 +307,11 @@ class TestViewNodeChildren:
         assert removed is child
         assert parent.child_count() == 0
 
-    def test_remove_child_from_middle(self):
-        parent = ViewNode(MockLvObj(), _container())
-        c1 = ViewNode(MockLvObj(), _label("a"))
-        c2 = ViewNode(MockLvObj(), _label("b"))
-        c3 = ViewNode(MockLvObj(), _label("c"))
+    def test_remove_child_from_middle(self, attr_registry):
+        parent = ViewNode(MockLvObj(), _container(), attr_registry)
+        c1 = ViewNode(MockLvObj(), _label("a"), attr_registry)
+        c2 = ViewNode(MockLvObj(), _label("b"), attr_registry)
+        c3 = ViewNode(MockLvObj(), _label("c"), attr_registry)
         parent.add_child(c1)
         parent.add_child(c2)
         parent.add_child(c3)
@@ -320,13 +323,13 @@ class TestViewNodeChildren:
         assert parent.get_child(0) is c1
         assert parent.get_child(1) is c3
 
-    def test_remove_child_invalid_index(self):
-        parent = ViewNode(MockLvObj(), _container())
+    def test_remove_child_invalid_index(self, attr_registry):
+        parent = ViewNode(MockLvObj(), _container(), attr_registry)
         assert parent.remove_child(0) is None
         assert parent.remove_child(-1) is None
 
-    def test_get_child_invalid_index(self):
-        parent = ViewNode(MockLvObj(), _container())
+    def test_get_child_invalid_index(self, attr_registry):
+        parent = ViewNode(MockLvObj(), _container(), attr_registry)
         assert parent.get_child(0) is None
         assert parent.get_child(-1) is None
 
@@ -334,16 +337,16 @@ class TestViewNodeChildren:
 class TestViewNodeHandlers:
     """ViewNode event handler management."""
 
-    def test_register_handler(self):
-        node = ViewNode(MockLvObj(), _button())
+    def test_register_handler(self, attr_registry):
+        node = ViewNode(MockLvObj(), _button(), attr_registry)
         handler = object()
 
         node.register_handler(1, handler)
 
         assert node.handlers.get(1) is handler
 
-    def test_unregister_handler(self):
-        node = ViewNode(MockLvObj(), _button())
+    def test_unregister_handler(self, attr_registry):
+        node = ViewNode(MockLvObj(), _button(), attr_registry)
         handler = object()
         node.register_handler(1, handler)
 
@@ -352,12 +355,12 @@ class TestViewNodeHandlers:
         assert removed is handler
         assert 1 not in node.handlers
 
-    def test_unregister_nonexistent_handler(self):
-        node = ViewNode(MockLvObj(), _button())
+    def test_unregister_nonexistent_handler(self, attr_registry):
+        node = ViewNode(MockLvObj(), _button(), attr_registry)
         assert node.unregister_handler(999) is None
 
-    def test_clear_handlers(self):
-        node = ViewNode(MockLvObj(), _button())
+    def test_clear_handlers(self, attr_registry):
+        node = ViewNode(MockLvObj(), _button(), attr_registry)
         h1, h2 = object(), object()
         node.register_handler(1, h1)
         node.register_handler(2, h2)
@@ -371,30 +374,30 @@ class TestViewNodeHandlers:
 class TestViewNodeDispose:
     """ViewNode disposal and cleanup."""
 
-    def test_dispose_marks_disposed(self):
+    def test_dispose_marks_disposed(self, attr_registry):
         lv_obj = MockLvObj()
-        node = ViewNode(lv_obj, _label())
+        node = ViewNode(lv_obj, _label(), attr_registry)
 
         node.dispose()
 
         assert node.is_disposed()
 
-    def test_dispose_calls_delete_fn(self):
+    def test_dispose_calls_delete_fn(self, attr_registry):
         lv_obj = MockLvObj()
-        node = ViewNode(lv_obj, _label())
+        node = ViewNode(lv_obj, _label(), attr_registry)
 
         node.dispose(mock_delete)
 
         assert lv_obj.deleted
 
-    def test_dispose_children_recursively(self):
+    def test_dispose_children_recursively(self, attr_registry):
         parent_obj = MockLvObj()
         child1_obj = MockLvObj(parent_obj)
         child2_obj = MockLvObj(parent_obj)
 
-        parent = ViewNode(parent_obj, _container())
-        child1 = ViewNode(child1_obj, _label("a"))
-        child2 = ViewNode(child2_obj, _label("b"))
+        parent = ViewNode(parent_obj, _container(), attr_registry)
+        child1 = ViewNode(child1_obj, _label("a"), attr_registry)
+        child2 = ViewNode(child2_obj, _label("b"), attr_registry)
         parent.add_child(child1)
         parent.add_child(child2)
 
@@ -407,26 +410,26 @@ class TestViewNodeDispose:
         assert child1_obj.deleted
         assert child2_obj.deleted
 
-    def test_dispose_clears_handlers(self):
-        node = ViewNode(MockLvObj(), _button())
+    def test_dispose_clears_handlers(self, attr_registry):
+        node = ViewNode(MockLvObj(), _button(), attr_registry)
         node.register_handler(1, object())
 
         node.dispose()
 
         assert node.handlers == {}
 
-    def test_dispose_idempotent(self):
+    def test_dispose_idempotent(self, attr_registry):
         lv_obj = MockLvObj()
-        node = ViewNode(lv_obj, _label())
+        node = ViewNode(lv_obj, _label(), attr_registry)
 
         node.dispose(mock_delete)
         node.dispose(mock_delete)  # Should not raise
 
         assert node.is_disposed()
 
-    def test_disposed_node_ignores_apply_diff(self, register_mock_attrs):
+    def test_disposed_node_ignores_apply_diff(self, attr_registry):
         lv_obj = MockLvObj()
-        node = ViewNode(lv_obj, _label())
+        node = ViewNode(lv_obj, _label(), attr_registry)
         node.dispose()
 
         diff = WidgetDiff(
@@ -447,8 +450,8 @@ class TestViewNodeDispose:
 class TestReconcilerFactories:
     """Reconciler factory registration."""
 
-    def test_register_factory(self):
-        rec = Reconciler()
+    def test_register_factory(self, attr_registry):
+        rec = Reconciler(attr_registry)
 
         def factory(parent: object | None) -> MockLvObj:
             return MockLvObj()
@@ -456,8 +459,8 @@ class TestReconcilerFactories:
         rec.register_factory(WidgetKey.LABEL, factory)
         # No assertion - just verify no error
 
-    def test_reconcile_without_factory_raises(self):
-        rec = Reconciler()
+    def test_reconcile_without_factory_raises(self, attr_registry):
+        rec = Reconciler(attr_registry)
         widget = _label("test")
 
         with pytest.raises(ValueError, match="No factory"):
@@ -467,7 +470,7 @@ class TestReconcilerFactories:
 class TestReconcilerCreateNode:
     """Reconciler creating new nodes."""
 
-    def test_create_leaf_node(self, reconciler, register_mock_attrs):
+    def test_create_leaf_node(self, reconciler):
         widget = _label("hello")
 
         node = reconciler.reconcile(None, widget, None)
@@ -477,7 +480,7 @@ class TestReconcilerCreateNode:
         assert node.widget is widget
         assert node.lv_obj.attrs.get(AttrKey.TEXT) == "hello"
 
-    def test_create_node_with_parent(self, reconciler, register_mock_attrs):
+    def test_create_node_with_parent(self, reconciler):
         parent_obj = MockLvObj()
         widget = _label("child")
 
@@ -485,7 +488,7 @@ class TestReconcilerCreateNode:
 
         assert node.lv_obj.parent is parent_obj
 
-    def test_create_node_with_children(self, reconciler, register_mock_attrs):
+    def test_create_node_with_children(self, reconciler):
         widget = _container(_label("a"), _label("b"))
 
         node = reconciler.reconcile(None, widget, None)
@@ -494,7 +497,7 @@ class TestReconcilerCreateNode:
         assert node.get_child(0) is not None
         assert node.get_child(1) is not None
 
-    def test_create_nested_tree(self, reconciler, register_mock_attrs):
+    def test_create_nested_tree(self, reconciler):
         widget = _screen(_container(_label("deep")))
 
         node = reconciler.reconcile(None, widget, None)
@@ -511,7 +514,7 @@ class TestReconcilerCreateNode:
 class TestReconcilerUpdateNode:
     """Reconciler updating existing nodes."""
 
-    def test_update_scalar_attr(self, reconciler, register_mock_attrs):
+    def test_update_scalar_attr(self, reconciler):
         widget1 = _label("old")
         node = reconciler.reconcile(None, widget1, None)
 
@@ -520,7 +523,7 @@ class TestReconcilerUpdateNode:
 
         assert node.lv_obj.attrs.get(AttrKey.TEXT) == "new"
 
-    def test_update_preserves_lv_obj(self, reconciler, register_mock_attrs):
+    def test_update_preserves_lv_obj(self, reconciler):
         widget1 = _label("old")
         node = reconciler.reconcile(None, widget1, None)
         original_obj = node.lv_obj
@@ -530,7 +533,7 @@ class TestReconcilerUpdateNode:
 
         assert node.lv_obj is original_obj
 
-    def test_update_widget_reference(self, reconciler, register_mock_attrs):
+    def test_update_widget_reference(self, reconciler):
         widget1 = _label("old")
         node = reconciler.reconcile(None, widget1, None)
 
@@ -543,7 +546,7 @@ class TestReconcilerUpdateNode:
 class TestReconcilerChildReconciliation:
     """Reconciler child add/remove/update operations."""
 
-    def test_add_child(self, reconciler, register_mock_attrs):
+    def test_add_child(self, reconciler):
         widget1 = _container(_label("a"))
         node = reconciler.reconcile(None, widget1, None)
         assert node.child_count() == 1
@@ -553,7 +556,7 @@ class TestReconcilerChildReconciliation:
 
         assert node.child_count() == 2
 
-    def test_remove_child(self, reconciler, register_mock_attrs):
+    def test_remove_child(self, reconciler):
         widget1 = _container(_label("a"), _label("b"))
         node = reconciler.reconcile(None, widget1, None)
         child_b_obj = node.get_child(1).lv_obj
@@ -564,7 +567,7 @@ class TestReconcilerChildReconciliation:
         assert node.child_count() == 1
         assert child_b_obj.deleted
 
-    def test_update_child(self, reconciler, register_mock_attrs):
+    def test_update_child(self, reconciler):
         widget1 = _container(_label("old"))
         node = reconciler.reconcile(None, widget1, None)
         child_obj = node.get_child(0).lv_obj
@@ -576,7 +579,7 @@ class TestReconcilerChildReconciliation:
         assert node.get_child(0).lv_obj is child_obj  # Same object reused
         assert child_obj.attrs.get(AttrKey.TEXT) == "new"
 
-    def test_replace_child_different_type(self, reconciler, register_mock_attrs):
+    def test_replace_child_different_type(self, reconciler):
         widget1 = _container(_label("text"))
         node = reconciler.reconcile(None, widget1, None)
         old_child_obj = node.get_child(0).lv_obj
@@ -590,7 +593,7 @@ class TestReconcilerChildReconciliation:
         assert new_child.lv_obj is not old_child_obj
         assert old_child_obj.deleted
 
-    def test_replace_child_different_user_key(self, reconciler, register_mock_attrs):
+    def test_replace_child_different_user_key(self, reconciler):
         widget1 = _container(_label("a", user_key="key1"))
         node = reconciler.reconcile(None, widget1, None)
         old_child_obj = node.get_child(0).lv_obj
@@ -605,7 +608,7 @@ class TestReconcilerChildReconciliation:
 class TestReconcilerReplaceRoot:
     """Reconciler replacing root node on type change."""
 
-    def test_replace_root_different_type(self, reconciler, register_mock_attrs):
+    def test_replace_root_different_type(self, reconciler):
         widget1 = _label("label")
         node = reconciler.reconcile(None, widget1, None)
         old_obj = node.lv_obj
@@ -617,7 +620,7 @@ class TestReconcilerReplaceRoot:
         assert node.widget.key == WidgetKey.BUTTON
         assert old_obj.deleted
 
-    def test_replace_root_different_user_key(self, reconciler, register_mock_attrs):
+    def test_replace_root_different_user_key(self, reconciler):
         widget1 = _label("a", user_key="k1")
         node = reconciler.reconcile(None, widget1, None)
         old_obj = node.lv_obj
@@ -632,7 +635,7 @@ class TestReconcilerReplaceRoot:
 class TestReconcilerDisposeTree:
     """Reconciler.dispose_tree for cleanup."""
 
-    def test_dispose_tree(self, reconciler, register_mock_attrs):
+    def test_dispose_tree(self, reconciler):
         widget = _container(_label("a"), _label("b"))
         node = reconciler.reconcile(None, widget, None)
 
@@ -645,7 +648,7 @@ class TestReconcilerDisposeTree:
 class TestReconcilerIntegration:
     """Full reconciliation scenarios."""
 
-    def test_counter_app_update(self, reconciler, register_mock_attrs):
+    def test_counter_app_update(self, reconciler):
         """Simulate counter app: update label text."""
 
         def view(count: int) -> Widget:
@@ -660,7 +663,7 @@ class TestReconcilerIntegration:
         node = reconciler.reconcile(node, view(1), None)
         assert node.get_child(0).lv_obj.attrs.get(AttrKey.TEXT) == "Count: 1"
 
-    def test_list_grow_shrink(self, reconciler, register_mock_attrs):
+    def test_list_grow_shrink(self, reconciler):
         """Simulate list that grows and shrinks."""
 
         def view(items: list[str]) -> Widget:
@@ -682,7 +685,7 @@ class TestReconcilerIntegration:
         node = reconciler.reconcile(node, view(["a"]), None)
         assert node.child_count() == 1
 
-    def test_complex_nested_update(self, reconciler, register_mock_attrs):
+    def test_complex_nested_update(self, reconciler):
         """Complex nested structure with multiple changes."""
         widget1 = _screen(
             _container(_label("header")),

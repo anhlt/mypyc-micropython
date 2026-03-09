@@ -603,6 +603,7 @@ class NameIR(ValueIR):
     py_name: str
     c_name: str
 
+
 @dataclass
 class FuncRefIR(ValueIR):
     """A reference to a module-level function used as a first-class value.
@@ -615,8 +616,36 @@ class FuncRefIR(ValueIR):
         MP_OBJ_FROM_PTR(&module_my_func_obj)
     """
 
-    py_name: str   # Python function name (e.g., '_attr_sort_key')
-    c_name: str    # C function name (e.g., 'builders__attr_sort_key')
+    py_name: str  # Python function name (e.g., '_attr_sort_key')
+    c_name: str  # C function name (e.g., 'builders__attr_sort_key')
+
+
+@dataclass
+class LambdaIR(ValueIR):
+    """A lambda expression compiled as a static function.
+
+    Lambdas are compiled to module-level C functions with unique names.
+    For read-only closures, captured variables are stored in a closure
+    tuple passed at runtime.
+
+    Example:
+        lambda x: x + 1
+    Generates:
+        static mp_obj_t module__lambda_0(mp_obj_t x_obj) {
+            mp_int_t x = mp_obj_get_int(x_obj);
+            return mp_obj_new_int((x + 1));
+        }
+        static MP_DEFINE_CONST_FUN_OBJ_1(module__lambda_0_obj, module__lambda_0);
+
+    For closures (lambda x: x + captured_var):
+        Uses mp_obj_new_closure() to create a closure object.
+    """
+
+    lambda_id: int  # Unique ID for this lambda (e.g., 0, 1, 2)
+    c_name: str  # C function name (e.g., 'module__lambda_0')
+    func_ir: "FuncIR"  # The generated FuncIR for this lambda
+    captured_vars: list[str]  # Names of captured variables (read-only closure)
+
 
 # ---------------------------------------------------------------------------
 # Expression-level IR instructions
@@ -682,7 +711,12 @@ class SetItemIR(InstrIR):
 
 @dataclass
 class MethodCallIR(InstrIR):
-    """receiver.method(args, **kwargs)  ->  optional result."""
+    """receiver.method(args, **kwargs)  ->  optional result.
+
+    Attributes:
+        receiver_py_type: Optional Python type annotation of the receiver (e.g., "dict", "list").
+            Used by emitter to apply type-specific optimizations only when safe.
+    """
 
     result: TempIR | None
     receiver: ValueIR
@@ -690,7 +724,9 @@ class MethodCallIR(InstrIR):
     args: list[ValueIR]
     # Keyword arguments: list of (name, value) pairs
     kwargs: list[tuple[str, ValueIR]] = field(default_factory=list)
-
+    # Python type annotation of receiver (e.g., "dict", "list", "AttrRegistry")
+    # Used to apply optimizations only for known container types
+    receiver_py_type: str | None = None
 
 @dataclass
 class BoxIR(InstrIR):
@@ -1147,6 +1183,7 @@ class DynamicCallIR(ExprIR):
     args: list[ValueIR]
     kwargs: list[tuple[str, ValueIR]] = field(default_factory=list)
     arg_preludes: list[list[InstrIR]] = field(default_factory=list)
+
 
 @dataclass
 class SubscriptIR(ExprIR):

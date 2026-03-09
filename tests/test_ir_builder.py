@@ -34,7 +34,7 @@ from mypyc_micropython.ir import (
     UnaryOpIR,
     WhileIR,
 )
-from mypyc_micropython.ir_builder import BuildContext, IRBuilder, sanitize_name
+from mypyc_micropython.ir_builder import IRBuilder, sanitize_name
 
 
 class TestSanitizeName:
@@ -1247,10 +1247,9 @@ class Nav:
         builder._list_vars = {}
         builder._temp_count = 0
         locals_ = []
-        builder._ctx = BuildContext(locals_=locals_, class_ir=class_ir, native=True)
         body = []
         for stmt in check_method.body_ast.body:
-            stmt_ir = builder._build_statement(stmt, locals_)
+            stmt_ir = builder._build_method_statement(stmt, locals_, class_ir, True)
             if stmt_ir:
                 body.append(stmt_ir)
 
@@ -1288,10 +1287,9 @@ class Container:
         builder._list_vars = {}
         builder._temp_count = 0
         locals_ = []
-        builder._ctx = BuildContext(locals_=locals_, class_ir=class_ir, native=True)
         body = []
         for stmt in has_data_method.body_ast.body:
-            stmt_ir = builder._build_statement(stmt, locals_)
+            stmt_ir = builder._build_method_statement(stmt, locals_, class_ir, True)
             if stmt_ir:
                 body.append(stmt_ir)
 
@@ -1320,10 +1318,9 @@ class Comparer:
         builder._list_vars = {}
         builder._temp_count = 0
         locals_ = ["a", "b"]
-        builder._ctx = BuildContext(locals_=locals_, class_ir=class_ir, native=True)
         body = []
         for stmt in same_method.body_ast.body:
-            stmt_ir = builder._build_statement(stmt, locals_)
+            stmt_ir = builder._build_method_statement(stmt, locals_, class_ir, True)
             if stmt_ir:
                 body.append(stmt_ir)
 
@@ -1613,43 +1610,80 @@ def sort_list(lst: list) -> list:
         assert isinstance(kw_val, NameIR)
 
 
-class TestObjectAttributeAccess:
-    def test_object_param_attr_access_in_function(self):
+class TestLambdaIRBuilder:
+    def test_lambda_creates_func_ir(self):
         source = """
-def process(item: object) -> object:
-    return item.key
+def use_lambda() -> list:
+    return sorted([1, 2], key=lambda x: x)
 """
+        from mypyc_micropython.ir import FuncRefIR
+
         tree = ast.parse(source)
         builder = IRBuilder("test")
-        func_ir = builder.build_function(tree.body[0])
+        funcs = [n for n in ast.iter_child_nodes(tree) if isinstance(n, ast.FunctionDef)]
+        func_ir = builder.build_function(funcs[0])
+
+        assert len(builder._lambda_functions) == 1
+        lambda_func = builder._lambda_functions[0]
+        assert lambda_func.name == "_lambda_0"
+        assert lambda_func.c_name == "test__lambda_0"
+        assert len(lambda_func.params) == 1
+        assert lambda_func.params[0][0] == "x"
+
+    def test_lambda_returns_func_ref_ir(self):
+        source = """
+def use_lambda() -> list:
+    return sorted([1, 2], key=lambda x: x)
+"""
+        from mypyc_micropython.ir import FuncRefIR
+
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        funcs = [n for n in ast.iter_child_nodes(tree) if isinstance(n, ast.FunctionDef)]
+        func_ir = builder.build_function(funcs[0])
 
         ret = func_ir.body[0]
         assert isinstance(ret, ReturnIR)
-        assert isinstance(ret.value, ParamAttrIR)
-        assert ret.value.param_name == "item"
-        assert ret.value.attr_name == "key"
-        assert ret.value.is_trait_type is True
+        call = ret.value
+        assert isinstance(call, CallIR)
+        assert len(call.kwargs) == 1
+        kw_name, kw_val = call.kwargs[0]
+        assert kw_name == "key"
+        assert isinstance(kw_val, FuncRefIR)
+        assert kw_val.c_name == "test__lambda_0"
 
-    def test_object_param_attr_in_try_except_loop(self):
-        from mypyc_micropython.ir import TryIR
-
+    def test_multiple_lambdas_unique_ids(self):
         source = """
-def process(items: object) -> None:
-    for item in items:
-        try:
-            x = item.key
-        except KeyError:
-            pass
+def multi() -> tuple:
+    a: list = sorted([1], key=lambda x: x)
+    b: list = sorted([2], key=lambda y: y)
+    return (a, b)
 """
         tree = ast.parse(source)
         builder = IRBuilder("test")
-        func_ir = builder.build_function(tree.body[0])
+        funcs = [n for n in ast.iter_child_nodes(tree) if isinstance(n, ast.FunctionDef)]
+        func_ir = builder.build_function(funcs[0])
 
-        for_stmt = func_ir.body[0]
-        assert isinstance(for_stmt, ForIterIR)
-        try_stmt = for_stmt.body[0]
-        assert isinstance(try_stmt, TryIR)
-        assign = try_stmt.body[0]
-        assert isinstance(assign, AssignIR)
-        assert isinstance(assign.value, ParamAttrIR)
-        assert assign.value.is_trait_type is True
+        assert len(builder._lambda_functions) == 2
+        assert builder._lambda_functions[0].c_name == "test__lambda_0"
+        assert builder._lambda_functions[1].c_name == "test__lambda_1"
+
+    def test_lambda_attribute_access_param_attr_ir(self):
+        source = """
+def sort_by_attr(items: list) -> list:
+    return sorted(items, key=lambda c: c.index)
+"""
+        from mypyc_micropython.ir import ParamAttrIR
+
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        funcs = [n for n in ast.iter_child_nodes(tree) if isinstance(n, ast.FunctionDef)]
+        func_ir = builder.build_function(funcs[0])
+
+        lambda_func = builder._lambda_functions[0]
+        ret = lambda_func.body[0]
+        assert isinstance(ret, ReturnIR)
+        assert isinstance(ret.value, ParamAttrIR)
+        assert ret.value.param_name == "c"
+        assert ret.value.attr_name == "index"
+        assert ret.value.is_trait_type is True

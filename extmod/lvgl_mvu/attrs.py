@@ -98,33 +98,69 @@ class AttrDef:
 
 
 # ---------------------------------------------------------------------------
-# Global registry
+# AttrRegistry class - instance-based registry to avoid module-level globals
 # ---------------------------------------------------------------------------
 
-_ATTR_REGISTRY: dict[int, AttrDef] = {}
 
+class AttrRegistry:
+    """Registry for attribute definitions.
 
-def register_attr(attr_def: AttrDef) -> AttrDef:
-    """Register an attribute definition in the global registry."""
-    _ATTR_REGISTRY[attr_def.key] = attr_def
-    return attr_def
+    Stores AttrDef instances keyed by their integer key. This class replaces
+    the module-level global dict to avoid GC issues in compiled C modules.
+    """
 
+    _attrs: dict[int, AttrDef]
 
-def get_attr_def(key: int) -> AttrDef:
-    """Look up an attribute definition by key."""
-    return _ATTR_REGISTRY[key]
+    def __init__(self) -> None:
+        """Create an empty attribute registry."""
+        self._attrs = {}
 
+    def add(self, attr_def: AttrDef) -> AttrDef:
+        """Add an attribute definition to the registry.
 
-def registered_attrs() -> dict[int, AttrDef]:
-    """Return a snapshot of all registered attribute definitions."""
-    result: dict[int, AttrDef] = {}
-    for k in _ATTR_REGISTRY:
-        result[k] = _ATTR_REGISTRY[k]
-    return result
+        Args:
+            attr_def: The attribute definition to add.
 
+        Returns:
+            The same attr_def (for chaining).
+        """
+        self._attrs[attr_def.key] = attr_def
+        return attr_def
 
-def get_attr_def_safe(key: int) -> AttrDef | None:
-    """Look up an attribute definition by key, returning None if not found."""
-    if key in _ATTR_REGISTRY:
-        return _ATTR_REGISTRY[key]
-    return None
+    def get(self, key: int) -> AttrDef | None:
+        """Look up an attribute definition by key.
+
+        Args:
+            key: The attribute key (from AttrKey enum).
+
+        Returns:
+            The AttrDef if found, None otherwise.
+        """
+        if key in self._attrs:
+            return self._attrs[key]
+        return None
+
+    def get_or_raise(self, key: int) -> AttrDef:
+        """Look up an attribute definition by key, raising if not found.
+
+        Args:
+            key: The attribute key (from AttrKey enum).
+
+        Returns:
+            The AttrDef.
+
+        Raises:
+            KeyError: If the key is not registered.
+        """
+        return self._attrs[key]
+
+    def all_attrs(self) -> dict[int, AttrDef]:
+        """Return a copy of all registered attributes.
+
+        Returns:
+            A new dict mapping key -> AttrDef.
+        """
+        result: dict[int, AttrDef] = {}
+        for k in self._attrs:
+            result[k] = self._attrs[k]
+        return result

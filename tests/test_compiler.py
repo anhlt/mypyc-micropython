@@ -7059,6 +7059,31 @@ def get_max() -> int:
         assert "static mp_obj_t test_MAX_SIZE" not in result
         assert "module_init" not in result
 
+    def test_module_var_gc_root_registered(self):
+        """Module-level mutable variables should be registered as GC roots."""
+        source = """
+_CACHE: dict = {}
+
+def get(k: int) -> object:
+    return _CACHE[k]
+"""
+        result = compile_source(source, "test", type_check=False)
+        # Static declaration should exist
+        assert "static mp_obj_t test__CACHE;" in result
+        # GC root registration should be emitted to prevent collection
+        assert "MP_REGISTER_ROOT_POINTER(mp_obj_t test__CACHE);" in result
+
+    def test_module_var_gc_root_for_list(self):
+        """Module-level list variables should also be registered as GC roots."""
+        source = """
+_ITEMS: list = []
+
+def add(x: int) -> None:
+    _ITEMS.append(x)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "static mp_obj_t test__ITEMS;" in result
+        assert "MP_REGISTER_ROOT_POINTER(mp_obj_t test__ITEMS);" in result
 
 class TestSortedBuiltinExtended:
     def test_sorted_with_reverse_kwarg(self):
@@ -7180,35 +7205,65 @@ def sort_key(x: int) -> int:
         assert "mp_obj_new_int(sort_key)" not in result
 
 
-class TestObjectAttributeAccess:
-    def test_object_param_attr_uses_mp_load_attr(self):
+class TestLambdaIR:
+    def test_simple_lambda_identity(self):
         source = """
-def process(item: object) -> object:
-    return item.key
+def use_lambda() -> list:
+    items: list = [3, 1, 2]
+    return sorted(items, key=lambda x: x)
 """
         result = compile_source(source, "test", type_check=False)
-        assert "mp_load_attr(item, MP_QSTR_key)" in result
+        assert "test__lambda_0" in result
+        assert "MP_OBJ_FROM_PTR(&test__lambda_0_obj)" in result
+        assert "static mp_obj_t test__lambda_0(mp_obj_t x_obj)" in result
 
-    def test_object_param_attr_in_class_method(self):
+    def test_lambda_attribute_access(self):
         source = """
-class Foo:
-    def process(self, item: object) -> object:
-        return item.key
+def sort_by_index(items: list) -> list:
+    return sorted(items, key=lambda c: c.index)
 """
         result = compile_source(source, "test", type_check=False)
-        assert "mp_load_attr(item, MP_QSTR_key)" in result
+        assert "mp_load_attr(c, MP_QSTR_index)" in result
+        assert "static mp_obj_t test__lambda_0(mp_obj_t c_obj)" in result
 
-    def test_object_param_attr_in_try_except_inside_for_loop(self):
+    def test_lambda_with_reverse_kwarg(self):
         source = """
-class Reconciler:
-    def apply_attrs(self, widget: object) -> None:
-        for attr in widget.attrs:
-            try:
-                x = attr.key
-            except KeyError:
-                pass
+def sort_desc(items: list) -> list:
+    return sorted(items, key=lambda c: c.index, reverse=True)
 """
         result = compile_source(source, "test", type_check=False)
-        assert "mp_load_attr" in result
-        assert "nlr_push" in result
-        assert "while ((attr = mp_iternext(" in result
+        assert "MP_OBJ_FROM_PTR(&test__lambda_0_obj)" in result
+        assert "MP_OBJ_NEW_QSTR(MP_QSTR_reverse)" in result
+        assert "mp_obj_new_bool(true)" in result
+
+    def test_multiple_lambdas(self):
+        source = """
+def process(removes: list, inserts: list) -> tuple:
+    r: list = sorted(removes, key=lambda c: c.index, reverse=True)
+    i: list = sorted(inserts, key=lambda c: c.index)
+    return (r, i)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "test__lambda_0" in result
+        assert "test__lambda_1" in result
+
+    def test_lambda_arithmetic(self):
+        source = """
+def use_lambda() -> list:
+    items: list = [1, 2, 3]
+    return sorted(items, key=lambda x: x + 1)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "test__lambda_0" in result
+        assert "+" in result or "mp_binary_op" in result
+
+    def test_lambda_in_class_method(self):
+        source = """
+class Processor:
+    def process(self, items: list) -> list:
+        return sorted(items, key=lambda c: c.index)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "test__lambda_0" in result
+        assert "static mp_obj_t test__lambda_0" in result
+        assert "mp_load_attr(c, MP_QSTR_index)" in result

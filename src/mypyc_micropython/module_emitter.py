@@ -268,7 +268,12 @@ class ModuleEmitter:
     def _emit_module_var_declarations(self, entries: list[tuple[str, str, str]]) -> list[str]:
         lines: list[str] = []
         for module_c_name, var_name, _ in entries:
-            lines.append(f"static mp_obj_t {module_c_name}_{sanitize_name(var_name)};")
+            c_var_name = f"{module_c_name}_{sanitize_name(var_name)}"
+            lines.append(f"static mp_obj_t {c_var_name};")
+        # Register each module variable as a GC root to prevent collection
+        for module_c_name, var_name, _ in entries:
+            c_var_name = f"{module_c_name}_{sanitize_name(var_name)}"
+            lines.append(f"MP_REGISTER_ROOT_POINTER(mp_obj_t {c_var_name});")
         return lines
 
     def _emit_module_var_init_helper(

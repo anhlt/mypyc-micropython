@@ -39,7 +39,6 @@ from mypyc_micropython.ir import (
     MethodCallIR,
     MethodIR,
     NameIR,
-    ParamAttrIR,
     PassIR,
     ReturnIR,
     SelfMethodCallIR,
@@ -125,7 +124,7 @@ def make_method_ir(
     dummy_args = ast.arguments(
         posonlyargs=[],
         args=[ast.arg(arg="self", annotation=None)]
-        + [ast.arg(arg=p[0], annotation=None) for p in (params or [])],
+             + [ast.arg(arg=p[0], annotation=None) for p in (params or [])],
         kwonlyargs=[],
         kw_defaults=[],
         defaults=[],
@@ -149,7 +148,6 @@ def make_method_ir(
         body_ast=dummy_body_ast,
         max_temp=max_temp,
     )
-
 
 def make_temp(name: str, ir_type: IRType = IRType.OBJ) -> TempIR:
     """Create a temporary variable."""
@@ -1300,6 +1298,7 @@ class TestEmitMethodCall:
         assert "MP_QSTR_value" in c_code
 
 
+
 # ============================================================================
 # Test: Edge Cases
 # ============================================================================
@@ -1778,11 +1777,12 @@ class TestSelfMethodCallArgumentTypes:
         c_code = emitter.emit_native(body_ir)
 
         # Should pass int directly and obj directly (no mp_obj_get_int on obj)
-        assert "mp_obj_get_int(obj)" not in c_code, "Object argument should not be unboxed"
+        assert "mp_obj_get_int(obj)" not in c_code, (
+            "Object argument should not be unboxed"
+        )
         assert "test_Widget_update_native(self, 0, obj)" in c_code, (
             "Should pass int constant and object variable correctly"
         )
-
 
 class TestCompareIdentityEmitter:
     """Tests for identity comparison emission (is, is not).
@@ -1810,9 +1810,13 @@ class TestCompareIdentityEmitter:
         c_code = FunctionEmitter(func_ir).emit()[0]
 
         # Should use direct pointer comparison
-        assert "x == mp_const_none" in c_code, "'is None' should compile to pointer comparison"
+        assert "x == mp_const_none" in c_code, (
+            "'is None' should compile to pointer comparison"
+        )
         # Should NOT use mp_obj_get_int
-        assert "mp_obj_get_int" not in c_code, "'is None' should not call mp_obj_get_int"
+        assert "mp_obj_get_int" not in c_code, (
+            "'is None' should not call mp_obj_get_int"
+        )
 
     def test_emit_is_not_none_comparison(self):
         """'is not None' should emit pointer comparison with !=."""
@@ -1833,7 +1837,9 @@ class TestCompareIdentityEmitter:
         c_code = FunctionEmitter(func_ir).emit()[0]
 
         # Should use != for 'is not'
-        assert "x != mp_const_none" in c_code, "'is not None' should compile to != comparison"
+        assert "x != mp_const_none" in c_code, (
+            "'is not None' should compile to != comparison"
+        )
         assert "mp_obj_get_int" not in c_code
 
     def test_emit_is_comparison_between_objects(self):
@@ -1854,58 +1860,7 @@ class TestCompareIdentityEmitter:
         )
         c_code = FunctionEmitter(func_ir).emit()[0]
 
-        assert "a == b" in c_code, "'a is b' should compile to pointer comparison"
+        assert "a == b" in c_code, (
+            "'a is b' should compile to pointer comparison"
+        )
         assert "mp_obj_get_int" not in c_code
-
-
-class TestParamAttrDynamicAccess:
-    def test_emit_param_attr_with_trait_type(self):
-        func_ir = make_func(
-            params=[("item", CType.MP_OBJ_T)],
-            return_type=CType.MP_OBJ_T,
-            body=[
-                ReturnIR(
-                    value=ParamAttrIR(
-                        ir_type=IRType.OBJ,
-                        param_name="item",
-                        c_param_name="item",
-                        attr_name="key",
-                        attr_path="key",
-                        class_c_name="",
-                        result_type=IRType.OBJ,
-                        is_trait_type=True,
-                    )
-                )
-            ],
-        )
-        c_code = FunctionEmitter(func_ir).emit()[0]
-
-        assert "mp_load_attr(item, MP_QSTR_key)" in c_code
-
-    def test_emit_param_attr_in_assignment(self):
-        func_ir = make_func(
-            params=[("item", CType.MP_OBJ_T)],
-            return_type=CType.MP_OBJ_T,
-            body=[
-                AssignIR(
-                    target="x",
-                    c_target="x",
-                    value=ParamAttrIR(
-                        ir_type=IRType.OBJ,
-                        param_name="item",
-                        c_param_name="item",
-                        attr_name="key",
-                        attr_path="key",
-                        class_c_name="",
-                        result_type=IRType.OBJ,
-                        is_trait_type=True,
-                    ),
-                    value_type=IRType.OBJ,
-                    is_new_var=True,
-                ),
-                ReturnIR(value=NameIR(py_name="x", c_name="x", ir_type=IRType.OBJ)),
-            ],
-        )
-        c_code = FunctionEmitter(func_ir).emit()[0]
-
-        assert "mp_obj_t x = mp_load_attr(item, MP_QSTR_key)" in c_code

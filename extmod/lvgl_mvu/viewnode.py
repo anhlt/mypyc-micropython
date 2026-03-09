@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from lvgl_mvu.attrs import AttrDef, get_attr_def_safe
+from lvgl_mvu.attrs import AttrDef, AttrRegistry
 from lvgl_mvu.diff import (
     AttrChange,
     CHANGE_ADDED,
@@ -40,19 +40,22 @@ class ViewNode:
     children: list[ViewNode]
     handlers: dict[int, object]
     _disposed: bool
+    _attr_registry: AttrRegistry
 
-    def __init__(self, lv_obj: object, widget: Widget) -> None:
+    def __init__(self, lv_obj: object, widget: Widget, attr_registry: AttrRegistry) -> None:
         """Create a ViewNode wrapping an LVGL object.
 
         Args:
             lv_obj: The LVGL object to wrap.
             widget: The Widget that describes this node's state.
+            attr_registry: The attribute registry for looking up AttrDefs.
         """
         self.lv_obj = lv_obj
         self.widget = widget
         self.children = []
         self.handlers = {}
         self._disposed = False
+        self._attr_registry = attr_registry
 
     def apply_scalar_change(self, change: AttrChange) -> None:
         """Apply a single scalar attribute change to the LVGL object.
@@ -66,8 +69,8 @@ class ViewNode:
         if self._disposed:
             return
 
-        # Use safe lookup to avoid try/except
-        attr_def: AttrDef | None = get_attr_def_safe(change.key)
+        # Use registry to look up attr definition
+        attr_def: AttrDef | None = self._attr_registry.get(change.key)
         if attr_def is None:
             # Attribute not registered - skip silently
             return
@@ -188,14 +191,14 @@ class ViewNode:
         if self._disposed:
             return
 
-        # Dispose children first (depth-first) - use index iteration to avoid temp var conflict
+        # Dispose children first (depth-first)
+        # Use index-based iteration for consistency with reconciler pattern
         child_count: int = len(self.children)
         idx: int = 0
         while idx < child_count:
             child_node: ViewNode = self.children[idx]
             child_node.dispose(delete_fn)
             idx += 1
-
         # Clear collections using assignment instead of .clear()
         self.children = []
         self.handlers = {}
