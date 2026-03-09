@@ -1064,6 +1064,7 @@ suite("lvgl_mvu_viewnode")
 # ViewNode tests - testing without actual LVGL (mocked lv_obj)
 
 ViewNode = lvgl_mvu.viewnode.ViewNode
+AttrRegistry = lvgl_mvu.attrs.AttrRegistry
 AttrChange = lvgl_mvu.diff.AttrChange
 WidgetDiff = lvgl_mvu.diff.WidgetDiff
 CHANGE_ADDED = lvgl_mvu.diff.CHANGE_ADDED
@@ -1076,10 +1077,12 @@ class MockLvObj:
         self.name = name
         self.attrs = {}
 
+# Create an empty registry for testing
+test_registry = AttrRegistry()
 # Test ViewNode creation
 mock_lv = MockLvObj("test_label")
 w = Widget(LABEL, "", (ScalarAttr(1, "hello"),), (), ())
-node = ViewNode(mock_lv, w)
+node = ViewNode(mock_lv, w, test_registry)
 t("viewnode lv_obj", node.lv_obj.name, "test_label")
 t("viewnode widget", node.widget.key, str(LABEL))
 t("viewnode children", len(node.children), "0")
@@ -1089,22 +1092,22 @@ t("viewnode not disposed", node.is_disposed(), "False")
 # Test add_child / get_child
 child_lv = MockLvObj("child_button")
 child_w = Widget(BUTTON, "", (), (), ())
-child_node = ViewNode(child_lv, child_w)
+child_node = ViewNode(child_lv, child_w, test_registry)
 node.add_child(child_node)
 t("viewnode add_child", len(node.children), "1")
 t("viewnode get_child", node.get_child(0).lv_obj.name, "child_button")
 t("viewnode get_child_none", node.get_child(5), "None")
 
 # Test remove_child
-node2 = ViewNode(MockLvObj("p"), w)
-child_node2 = ViewNode(MockLvObj("c"), child_w)
+node2 = ViewNode(MockLvObj("p"), w, test_registry)
+child_node2 = ViewNode(MockLvObj("c"), child_w, test_registry)
 node2.add_child(child_node2)
 removed = node2.remove_child(0)
 t("viewnode remove_child", removed.lv_obj.name, "c")
 t("viewnode after remove", len(node2.children), "0")
 
 # Test handler registration
-node3 = ViewNode(MockLvObj("btn"), Widget(BUTTON, "", (), (), ()))
+node3 = ViewNode(MockLvObj("btn"), Widget(BUTTON, "", (), (), ()), test_registry)
 node3.register_handler(1, "handler_fn")
 t("viewnode register_handler", node3.handlers[1], "handler_fn")
 h = node3.unregister_handler(1)
@@ -1112,7 +1115,7 @@ t("viewnode unregister", h, "handler_fn")
 t("viewnode after unreg", len(node3.handlers), "0")
 
 # Test clear_handlers
-node4 = ViewNode(MockLvObj("btn2"), Widget(BUTTON, "", (), (), ()))
+node4 = ViewNode(MockLvObj("btn2"), Widget(BUTTON, "", (), (), ()), test_registry)
 node4.register_handler(1, "h1")
 node4.register_handler(2, "h2")
 old = node4.clear_handlers()
@@ -1120,7 +1123,7 @@ t("viewnode clear len", len(old), "2")
 t("viewnode after clear", len(node4.handlers), "0")
 
 # Test update_widget
-node5 = ViewNode(MockLvObj("lbl"), Widget(LABEL, "", (ScalarAttr(1, "old"),), (), ()))
+node5 = ViewNode(MockLvObj("lbl"), Widget(LABEL, "", (ScalarAttr(1, "old"),), (), ()), test_registry)
 new_w = Widget(LABEL, "", (ScalarAttr(1, "new"),), (), ())
 node5.update_widget(new_w)
 t("viewnode update_widget", node5.widget.scalar_attrs[0].value, "new")
@@ -1130,9 +1133,9 @@ disposed_list = []
 def track_delete(obj):
     disposed_list.append(obj.name)
 
-root = ViewNode(MockLvObj("root"), Widget(CONTAINER, "", (), (), ()))
-c1 = ViewNode(MockLvObj("c1"), Widget(LABEL, "", (), (), ()))
-c2 = ViewNode(MockLvObj("c2"), Widget(BUTTON, "", (), (), ()))
+root = ViewNode(MockLvObj("root"), Widget(CONTAINER, "", (), (), ()), test_registry)
+c1 = ViewNode(MockLvObj("c1"), Widget(LABEL, "", (), (), ()), test_registry)
+c2 = ViewNode(MockLvObj("c2"), Widget(BUTTON, "", (), (), ()), test_registry)
 root.add_child(c1)
 root.add_child(c2)
 root.dispose(track_delete)
@@ -1172,7 +1175,7 @@ def delete_obj(obj):
     deleted_objs.append(obj.name)
 
 # Test Reconciler creation and factory registration
-rec = Reconciler()
+rec = Reconciler(test_registry)
 rec.register_factory(LABEL, make_label)
 rec.register_factory(BUTTON, make_button)
 rec.register_factory(CONTAINER, make_container)
@@ -1196,7 +1199,7 @@ t("reconcile widget updated", n2.widget.scalar_attrs[0].value, "updated")
 # Test reconcile: replace node (different type)
 created_objs.clear()
 deleted_objs.clear()
-old_node = ViewNode(MockLvObj("old_label"), Widget(LABEL, "", (), (), ()))
+old_node = ViewNode(MockLvObj("old_label"), Widget(LABEL, "", (), (), ()), test_registry)
 w3 = Widget(BUTTON, "", (), (), ())
 n3 = rec.reconcile(old_node, w3, None)
 t("reconcile replace", "button" in n3.lv_obj.name, "True")

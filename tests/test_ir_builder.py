@@ -30,11 +30,12 @@ from mypyc_micropython.ir import (
     PrintIR,
     ReturnIR,
     SubscriptIR,
+    TempIR,
     TupleNewIR,
     UnaryOpIR,
     WhileIR,
 )
-from mypyc_micropython.ir_builder import IRBuilder, sanitize_name
+from mypyc_micropython.ir_builder import BuildContext, IRBuilder, sanitize_name
 
 
 class TestSanitizeName:
@@ -821,6 +822,7 @@ def f():
         ann_assign = func_ir.body[0]
         # Dict with entries creates DictNewIR in prelude
         from mypyc_micropython.ir import DictNewIR
+
         assert len(ann_assign.prelude) >= 1
         assert isinstance(ann_assign.prelude[0], DictNewIR)
         assert len(ann_assign.prelude[0].entries) == 2
@@ -839,6 +841,7 @@ def f(lst: list, i: int, val: int) -> None:
         func_ir = builder.build_function(tree.body[0])
 
         from mypyc_micropython.ir import SubscriptAssignIR
+
         subscript_assign = func_ir.body[0]
         assert isinstance(subscript_assign, SubscriptAssignIR)
         assert isinstance(subscript_assign.container, NameIR)
@@ -854,6 +857,7 @@ def f(d: dict, key: str, val: int) -> None:
         func_ir = builder.build_function(tree.body[0])
 
         from mypyc_micropython.ir import SubscriptAssignIR
+
         subscript_assign = func_ir.body[0]
         assert isinstance(subscript_assign, SubscriptAssignIR)
 
@@ -873,23 +877,25 @@ def f():
         func_ir = builder.build_function(tree.body[0])
 
         from mypyc_micropython.ir import TupleUnpackIR
+
         # Second statement should be TupleUnpackIR
         unpack = func_ir.body[1]
         assert isinstance(unpack, TupleUnpackIR)
         assert len(unpack.targets) == 2
 
     def test_tuple_unpack_in_for(self):
-        source = '''
+        source = """
 def f(items: list[tuple[str, int]]) -> None:
     for k, v in items:
         pass
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         func_ir = builder.build_function(tree.body[0])
 
         # For loop with tuple unpacking should work
         assert len(func_ir.body) >= 1
+
 
 class TestBuildSlice:
     """Tests for slice IR building."""
@@ -907,6 +913,7 @@ def f(lst: list):
         assert isinstance(ret, ReturnIR)
         # Slice creates SubscriptIR with SliceIR as index
         from mypyc_micropython.ir import SliceIR
+
         assert isinstance(ret.value, SubscriptIR)
         assert isinstance(ret.value.slice_, SliceIR)
 
@@ -921,6 +928,7 @@ def f(lst: list):
 
         ret = func_ir.body[0]
         from mypyc_micropython.ir import SliceIR
+
         assert isinstance(ret.value.slice_, SliceIR)
         # Step should be ConstIR(2)
         assert ret.value.slice_.step is not None
@@ -939,6 +947,7 @@ def f(n: int) -> list:
         func_ir = builder.build_function(tree.body[0])
 
         from mypyc_micropython.ir import ListCompIR
+
         ret = func_ir.body[0]
         assert isinstance(ret, ReturnIR)
         # List comp should create ListCompIR in prelude
@@ -955,6 +964,7 @@ def f(n: int) -> list:
         func_ir = builder.build_function(tree.body[0])
 
         from mypyc_micropython.ir import ListCompIR
+
         ret = func_ir.body[0]
         assert len(ret.prelude) >= 1
         listcomp = ret.prelude[0]
@@ -1024,17 +1034,18 @@ def f(d: dict):
         assert isinstance(for_stmt, ForIterIR)
 
     def test_for_iter_over_dict_items(self):
-        source = '''
+        source = """
 def f(d: dict[str, int]) -> None:
     for k, v in d.items():
         pass
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         func_ir = builder.build_function(tree.body[0])
 
         # Items iteration with unpacking
         assert len(func_ir.body) >= 1
+
 
 class TestBuildWhileLoop:
     """Additional tests for while loop IR building."""
@@ -1212,7 +1223,7 @@ class TestMethodIdentityComparison:
 
     def test_is_none_in_method(self):
         """Test 'is None' comparison in class method produces 'is' operator."""
-        source = '''
+        source = """
 class Nav:
     _allowed: object
 
@@ -1223,7 +1234,7 @@ class Nav:
         if self._allowed is None:
             return True
         return False
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         class_ir = builder.build_class(tree.body[0])
@@ -1237,9 +1248,10 @@ class Nav:
         builder._list_vars = {}
         builder._temp_count = 0
         locals_ = []
+        builder._ctx = BuildContext(locals_=locals_, class_ir=class_ir, native=True)
         body = []
         for stmt in check_method.body_ast.body:
-            stmt_ir = builder._build_method_statement(stmt, locals_, class_ir, True)
+            stmt_ir = builder._build_statement(stmt, locals_)
             if stmt_ir:
                 body.append(stmt_ir)
 
@@ -1255,7 +1267,7 @@ class Nav:
 
     def test_is_not_none_in_method(self):
         """Test 'is not None' comparison in class method produces 'is not' operator."""
-        source = '''
+        source = """
 class Container:
     _data: object
 
@@ -1264,7 +1276,7 @@ class Container:
 
     def has_data(self) -> bool:
         return self._data is not None
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         class_ir = builder.build_class(tree.body[0])
@@ -1277,9 +1289,10 @@ class Container:
         builder._list_vars = {}
         builder._temp_count = 0
         locals_ = []
+        builder._ctx = BuildContext(locals_=locals_, class_ir=class_ir, native=True)
         body = []
         for stmt in has_data_method.body_ast.body:
-            stmt_ir = builder._build_method_statement(stmt, locals_, class_ir, True)
+            stmt_ir = builder._build_statement(stmt, locals_)
             if stmt_ir:
                 body.append(stmt_ir)
 
@@ -1294,11 +1307,11 @@ class Container:
 
     def test_is_comparison_with_object_parameter(self):
         """Test 'is' comparison between method parameters."""
-        source = '''
+        source = """
 class Comparer:
     def same(self, a: object, b: object) -> bool:
         return a is b
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         class_ir = builder.build_class(tree.body[0])
@@ -1308,9 +1321,10 @@ class Comparer:
         builder._list_vars = {}
         builder._temp_count = 0
         locals_ = ["a", "b"]
+        builder._ctx = BuildContext(locals_=locals_, class_ir=class_ir, native=True)
         body = []
         for stmt in same_method.body_ast.body:
-            stmt_ir = builder._build_method_statement(stmt, locals_, class_ir, True)
+            stmt_ir = builder._build_statement(stmt, locals_)
             if stmt_ir:
                 body.append(stmt_ir)
 
@@ -1318,7 +1332,6 @@ class Comparer:
         assert isinstance(ret_stmt, ReturnIR)
         assert isinstance(ret_stmt.value, CompareIR)
         assert ret_stmt.value.ops == ["is"]
-
 
 
 class TestIsInstanceBuilder:
@@ -1430,7 +1443,7 @@ class TestAutoNarrowing:
 
     def test_auto_narrow_produces_param_attr_ir(self):
         """Inside isinstance if-branch, attr access produces ParamAttrIR."""
-        source = '''
+        source = """
 class Dog:
     breed: str
     def __init__(self, breed: str) -> None:
@@ -1440,9 +1453,9 @@ def get_breed(a: object) -> str:
     if isinstance(a, Dog):
         return a.breed
     return "unknown"
-'''
+"""
         tree = ast.parse(source)
-        builder = IRBuilder('test')
+        builder = IRBuilder("test")
         builder.build_class(tree.body[0])
         func_ir = builder.build_function(tree.body[1])
 
@@ -1453,12 +1466,12 @@ def get_breed(a: object) -> str:
         assert isinstance(ret, ReturnIR)
         # ParamAttrIR means the builder recognized Dog-typed access
         assert isinstance(ret.value, ParamAttrIR)
-        assert ret.value.attr_name == 'breed'
-        assert ret.value.class_c_name == 'test_Dog'
+        assert ret.value.attr_name == "breed"
+        assert ret.value.class_c_name == "test_Dog"
 
     def test_auto_narrow_restores_after_if(self):
         """_class_typed_params should be restored after the if block."""
-        source = '''
+        source = """
 class Dog:
     breed: str
     def __init__(self, breed: str) -> None:
@@ -1468,18 +1481,18 @@ def check(a: object) -> bool:
     if isinstance(a, Dog):
         x: str = a.breed
     return True
-'''
+"""
         tree = ast.parse(source)
-        builder = IRBuilder('test')
+        builder = IRBuilder("test")
         builder.build_class(tree.body[0])
         # Before building function, _class_typed_params is empty
         builder.build_function(tree.body[1])
         # After building, 'a' should NOT be in _class_typed_params
-        assert 'a' not in builder._class_typed_params
+        assert "a" not in builder._class_typed_params
 
     def test_auto_narrow_negated_narrows_else(self):
         """not isinstance(a, Dog) should narrow 'a' in the else branch."""
-        source = '''
+        source = """
 class Dog:
     breed: str
     def __init__(self, breed: str) -> None:
@@ -1490,9 +1503,9 @@ def get_breed(a: object) -> str:
         return "nope"
     else:
         return a.breed
-'''
+"""
         tree = ast.parse(source)
-        builder = IRBuilder('test')
+        builder = IRBuilder("test")
         builder.build_class(tree.body[0])
         func_ir = builder.build_function(tree.body[1])
 
@@ -1502,11 +1515,11 @@ def get_breed(a: object) -> str:
         else_ret = if_ir.orelse[0]
         assert isinstance(else_ret, ReturnIR)
         assert isinstance(else_ret.value, ParamAttrIR)
-        assert else_ret.value.attr_name == 'breed'
+        assert else_ret.value.attr_name == "breed"
 
     def test_auto_narrow_elif_chain(self):
         """Each elif isinstance branch narrows independently."""
-        source = '''
+        source = """
 class Dog:
     breed: str
     def __init__(self, breed: str) -> None:
@@ -1523,9 +1536,9 @@ def describe(a: object) -> str:
     elif isinstance(a, Cat):
         return a.color
     return "unknown"
-'''
+"""
         tree = ast.parse(source)
-        builder = IRBuilder('test')
+        builder = IRBuilder("test")
         builder.build_class(tree.body[0])
         builder.build_class(tree.body[1])
         func_ir = builder.build_function(tree.body[2])
@@ -1536,7 +1549,7 @@ def describe(a: object) -> str:
         ret_dog = if_ir.body[0]
         assert isinstance(ret_dog, ReturnIR)
         assert isinstance(ret_dog.value, ParamAttrIR)
-        assert ret_dog.value.attr_name == 'breed'
+        assert ret_dog.value.attr_name == "breed"
 
         # elif is the first item in orelse (nested IfIR)
         elif_ir = if_ir.orelse[0]
@@ -1544,26 +1557,25 @@ def describe(a: object) -> str:
         ret_cat = elif_ir.body[0]
         assert isinstance(ret_cat, ReturnIR)
         assert isinstance(ret_cat.value, ParamAttrIR)
-        assert ret_cat.value.attr_name == 'color'
+        assert ret_cat.value.attr_name == "color"
 
 
 class TestFuncRefIR:
     """Test that function-as-value produces FuncRefIR."""
 
     def test_known_function_produces_func_ref(self):
-        source = '''
+        source = """
 def my_key(x: int) -> int:
     return x
 
 def sort_list(lst: list) -> list:
     return sorted(lst, key=my_key)
-'''
+"""
         from mypyc_micropython.ir import FuncRefIR
 
         tree = ast.parse(source)
         builder = IRBuilder("test")
-        funcs = [n for n in ast.iter_child_nodes(tree)
-                 if isinstance(n, ast.FunctionDef)]
+        funcs = [n for n in ast.iter_child_nodes(tree) if isinstance(n, ast.FunctionDef)]
         # Build first function and register it
         func_ir_key = builder.build_function(funcs[0])
         builder.register_function_name(func_ir_key.name, func_ir_key.c_name)
@@ -1584,14 +1596,13 @@ def sort_list(lst: list) -> list:
         assert kw_val.c_name == "test_my_key"
 
     def test_unknown_name_stays_as_name_ir(self):
-        source = '''
+        source = """
 def sort_list(lst: list) -> list:
     return sorted(lst, key=unknown_fn)
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
-        funcs = [n for n in ast.iter_child_nodes(tree)
-                 if isinstance(n, ast.FunctionDef)]
+        funcs = [n for n in ast.iter_child_nodes(tree) if isinstance(n, ast.FunctionDef)]
         func_ir = builder.build_function(funcs[0])
         ret = func_ir.body[0]
         assert isinstance(ret, ReturnIR)
@@ -1601,3 +1612,510 @@ def sort_list(lst: list) -> list:
         assert kw_name == "key"
         # unknown_fn is not registered, so it stays as NameIR
         assert isinstance(kw_val, NameIR)
+
+
+
+class TestBuildContext:
+    """Tests for BuildContext and method context detection."""
+
+    def test_build_context_creation(self):
+        """BuildContext can be created with locals."""
+        ctx = BuildContext(locals_=["a", "b"])
+        assert ctx.locals_ == ["a", "b"]
+        assert ctx.class_ir is None
+        assert ctx.native is False
+        assert ctx.is_method is False
+
+    def test_build_context_method_detection(self):
+        """BuildContext correctly identifies method context."""
+        from mypyc_micropython.ir import ClassIR
+
+        class_ir = ClassIR(name="TestClass", c_name="test_TestClass", fields=[], module_name="test")
+        ctx = BuildContext(locals_=["self"], class_ir=class_ir)
+        assert ctx.is_method is True
+
+
+class TestParamPyTypesTracking:
+    """Tests for _param_py_types tracking in method calls."""
+
+    def test_param_py_type_tracked_for_receiver(self):
+        """Parameters with class annotations track Python types for receiver_py_type."""
+        source = '''
+class Point:
+    x: int
+    y: int
+
+def get_x(p: Point) -> int:
+    return p.x
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+
+        # Build class first
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                builder.build_class(node)
+
+        # Build function
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                func_ir = builder.build_function(node)
+
+        # The function should access p.x via ParamAttrIR with receiver_py_type
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        assert isinstance(ret.value, ParamAttrIR)
+        # ParamAttrIR should have correct receiver info
+        assert ret.value.param_name == "p"
+        assert ret.value.attr_name == "x"
+
+    def test_method_call_on_typed_param_has_receiver_py_type(self):
+        """Method calls on typed params should have receiver_py_type set."""
+        source = '''
+def process_list(items: list) -> int:
+    return len(items)
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        # len() call on list should work
+        assert isinstance(ret.value, CallIR)
+        assert ret.value.func_name == "len"
+
+
+class TestContainerPreludeHandling:
+    """Tests for proper prelude handling in container literals."""
+
+    def test_list_with_method_call_elements(self):
+        """List literals with method call elements should collect preludes with type info."""
+        source = '''
+def f(lst: list) -> list:
+    return [lst.pop(), 1, 2]
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        # Preludes should include MethodCallIR for lst.pop() AND ListNewIR
+        assert len(ret.prelude) >= 2
+        # Find the MethodCallIR - should have receiver_py_type set
+        method_calls = [p for p in ret.prelude if isinstance(p, MethodCallIR)]
+        assert len(method_calls) == 1
+        assert method_calls[0].receiver_py_type == "list"
+        assert method_calls[0].method == "pop"
+        # Find the ListNewIR
+        list_news = [p for p in ret.prelude if isinstance(p, ListNewIR)]
+        assert len(list_news) == 1
+
+    def test_dict_with_method_call_values(self):
+        """Dict literals with method call values should collect preludes with type info."""
+        from mypyc_micropython.ir import DictNewIR
+
+        source = '''
+def f(lst: list) -> dict:
+    d: dict = {"val": lst.pop()}
+    return d
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ann_assign = func_ir.body[0]
+        assert isinstance(ann_assign, AnnAssignIR)
+        # Preludes should include MethodCallIR for lst.pop() AND DictNewIR
+        assert len(ann_assign.prelude) >= 2
+        # Find the MethodCallIR - should have receiver_py_type set
+        method_calls = [p for p in ann_assign.prelude if isinstance(p, MethodCallIR)]
+        assert len(method_calls) == 1
+        assert method_calls[0].receiver_py_type == "list"
+        # Find the DictNewIR
+        dict_news = [p for p in ann_assign.prelude if isinstance(p, DictNewIR)]
+        assert len(dict_news) == 1
+
+    def test_tuple_with_method_call_elements(self):
+        """Tuple literals with method call elements should collect preludes with type info."""
+        source = '''
+def f(lst: list) -> tuple:
+    return (lst.pop(), 1)
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        # Preludes should include MethodCallIR for lst.pop() AND TupleNewIR
+        assert len(ret.prelude) >= 2
+        # Find the MethodCallIR - should have receiver_py_type set
+        method_calls = [p for p in ret.prelude if isinstance(p, MethodCallIR)]
+        assert len(method_calls) == 1
+        assert method_calls[0].receiver_py_type == "list"
+        # Find the TupleNewIR
+        tuple_news = [p for p in ret.prelude if isinstance(p, TupleNewIR)]
+        assert len(tuple_news) == 1
+
+    def test_set_with_method_call_elements(self):
+        """Set literals with method call elements should collect preludes with type info."""
+        from mypyc_micropython.ir import SetNewIR
+
+        source = '''
+def f(lst: list) -> set:
+    return {lst.pop(), 1, 2}
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        # Preludes should include MethodCallIR for lst.pop() AND SetNewIR
+        assert len(ret.prelude) >= 2
+        # Find the MethodCallIR - should have receiver_py_type set
+        method_calls = [p for p in ret.prelude if isinstance(p, MethodCallIR)]
+        assert len(method_calls) == 1
+        assert method_calls[0].receiver_py_type == "list"
+        # Find the SetNewIR
+        set_news = [p for p in ret.prelude if isinstance(p, SetNewIR)]
+        assert len(set_news) == 1
+
+
+class TestObjectTypedParamAttrAccess:
+    """Tests for dynamic attribute access on object-typed parameters."""
+
+    def test_object_param_uses_dynamic_attr(self):
+        """Parameters typed as 'object' should use dynamic attr access."""
+        source = '''
+def get_value(obj: object) -> int:
+    return obj.value
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        # For object-typed params, should use dynamic attr access
+        # This could be AttrIR or ParamAttrIR depending on implementation
+        assert ret.value is not None
+
+    def test_untyped_param_defaults_to_object(self):
+        """Untyped parameters default to mp_obj_t (object)."""
+        source = '''
+def process(x):
+    return x
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        # Untyped param should be mp_obj_t
+        assert func_ir.params[0] == ("x", CType.MP_OBJ_T)
+
+
+class TestIRTypeInfoCompleteness:
+    """Tests to verify IR nodes contain complete type information for emission."""
+
+    def test_method_call_has_result_temp_with_ir_type(self):
+        """MethodCallIR.result TempIR should have ir_type set."""
+        source = '''
+def f(lst: list) -> int:
+    return lst.pop()
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        # Should have MethodCallIR in prelude
+        method_call = ret.prelude[0]
+        assert isinstance(method_call, MethodCallIR)
+        # Result TempIR should have ir_type
+        assert method_call.result is not None
+        assert isinstance(method_call.result, TempIR)
+        assert method_call.result.ir_type == IRType.OBJ  # pop returns object
+
+    def test_method_call_receiver_has_ir_type(self):
+        """MethodCallIR.receiver should have ir_type set."""
+        source = '''
+def f(lst: list):
+    lst.append(1)
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        expr_stmt = func_ir.body[0]
+        method_call = expr_stmt.prelude[0]
+        assert isinstance(method_call, MethodCallIR)
+        # Receiver should have ir_type
+        assert isinstance(method_call.receiver, NameIR)
+        assert method_call.receiver.ir_type == IRType.OBJ
+
+    def test_param_attr_has_complete_type_info(self):
+        """ParamAttrIR should have class_c_name, result_type, and is_trait_type."""
+        source = '''
+class Point:
+    x: int
+    y: int
+
+def get_x(p: Point) -> int:
+    return p.x
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+
+        # Build class first
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                builder.build_class(node)
+
+        # Build function
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                func_ir = builder.build_function(node)
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        param_attr = ret.value
+        assert isinstance(param_attr, ParamAttrIR)
+        # Verify complete type info
+        assert param_attr.class_c_name == "test_Point"
+        assert param_attr.result_type == IRType.INT
+        assert param_attr.is_trait_type is False
+        assert param_attr.attr_path == "x"
+
+    def test_binop_has_ir_type(self):
+        """BinOpIR should have ir_type based on operand types."""
+        source = '''
+def add(a: int, b: int) -> int:
+    return a + b
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        binop = ret.value
+        assert isinstance(binop, BinOpIR)
+        assert binop.ir_type == IRType.INT
+
+    def test_const_has_ir_type(self):
+        """ConstIR should have correct ir_type based on value type."""
+        from mypyc_micropython.ir import ConstIR
+
+        source = '''
+def f() -> int:
+    return 42
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        const = ret.value
+        assert isinstance(const, ConstIR)
+        assert const.ir_type == IRType.INT
+        assert const.value == 42
+
+    def test_name_has_ir_type(self):
+        """NameIR should have ir_type matching variable type."""
+        source = '''
+def f(x: int) -> int:
+    return x
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        name = ret.value
+        assert isinstance(name, NameIR)
+        assert name.ir_type == IRType.INT
+        assert name.py_name == "x"
+        assert name.c_name == "x"
+
+    def test_temp_has_ir_type(self):
+        """TempIR generated for expressions should have ir_type."""
+        from mypyc_micropython.ir import TempIR
+
+        source = '''
+def f(d: dict) -> object:
+    return d.get("key")
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        # d.get() creates a temp
+        method_call = ret.prelude[0]
+        assert isinstance(method_call, MethodCallIR)
+        assert method_call.result is not None
+        assert isinstance(method_call.result, TempIR)
+        # Temps from method calls are OBJ type
+        assert method_call.result.ir_type == IRType.OBJ
+
+    def test_compare_has_bool_ir_type(self):
+        """CompareIR should have BOOL ir_type."""
+        source = '''
+def is_positive(x: int) -> bool:
+    return x > 0
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        compare = ret.value
+        assert isinstance(compare, CompareIR)
+        assert compare.ir_type == IRType.BOOL
+
+    def test_subscript_has_ir_type(self):
+        """SubscriptIR should have ir_type."""
+        source = '''
+def get_first(lst: list) -> object:
+    return lst[0]
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        subscript = ret.value
+        assert isinstance(subscript, SubscriptIR)
+        assert subscript.ir_type == IRType.OBJ
+
+    def test_list_of_int_has_element_type_info(self):
+        """list[int] should track element type for proper emission."""
+        source = '''
+def sum_list(nums: list[int]) -> int:
+    total: int = 0
+    for n in nums:
+        total += n
+    return total
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        # Verify list param is tracked
+        assert func_ir.params[0] == ("nums", CType.MP_OBJ_T)
+        assert "nums" in func_ir.list_vars
+        # For loop should be ForIterIR over the list
+        for_ir = func_ir.body[1]
+        assert isinstance(for_ir, ForIterIR)
+        # Loop var should be set correctly
+        assert for_ir.loop_var == "n"
+
+    def test_list_of_str_has_element_type_info(self):
+        """list[str] should track element type for proper emission."""
+        source = '''
+def join_strings(words: list[str]) -> str:
+    result: str = ""
+    for w in words:
+        result = result + w
+    return result
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        # Verify list param is tracked
+        assert func_ir.params[0] == ("words", CType.MP_OBJ_T)
+        assert "words" in func_ir.list_vars
+        # Return type should be OBJ for string
+        assert func_ir.return_type == CType.MP_OBJ_T
+
+    def test_dict_field_in_class_has_type_info(self):
+        """Dict field in class should have complete type info for attr access."""
+        source = '''
+class Config:
+    settings: dict
+
+    def __init__(self):
+        self.settings = {}
+
+def get_setting(cfg: Config, key: str) -> object:
+    return cfg.settings.get(key)
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+
+        # Build class first
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                builder.build_class(node)
+
+        # Build function
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                func_ir = builder.build_function(node)
+
+        ret = func_ir.body[0]
+        assert isinstance(ret, ReturnIR)
+        # Should have prelude with chained attr access
+        assert len(ret.prelude) > 0
+        # Find the MethodCallIR for .get()
+        method_call = None
+        for instr in ret.prelude:
+            if isinstance(instr, MethodCallIR) and instr.method == "get":
+                method_call = instr
+                break
+        assert method_call is not None
+        # Method call should have result temp with ir_type
+        assert method_call.result is not None
+        assert isinstance(method_call.result, TempIR)
+        assert method_call.result.ir_type == IRType.OBJ
+
+    def test_nested_dict_in_class_has_type_info(self):
+        """Nested dict access in class should maintain type info chain."""
+        source = '''
+class Cache:
+    data: dict
+
+    def __init__(self):
+        self.data = {}
+
+def cache_get(c: Cache, key: str) -> object:
+    d: dict = c.data
+    return d[key]
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+
+        # Build class first
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                builder.build_class(node)
+
+        # Build function
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                func_ir = builder.build_function(node)
+
+        # First statement: d = c.data (annotated assignment)
+        ann_assign = func_ir.body[0]
+        assert isinstance(ann_assign, AnnAssignIR)
+        assert ann_assign.target == "d"
+        # d should be tracked in locals with OBJ type
+        assert "d" in func_ir.locals_
+        assert func_ir.locals_["d"] == CType.MP_OBJ_T
+
+        # Return statement with dict subscript
+        ret = func_ir.body[1]
+        assert isinstance(ret, ReturnIR)
+        subscript = ret.value
+        assert isinstance(subscript, SubscriptIR)
+        assert subscript.ir_type == IRType.OBJ

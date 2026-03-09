@@ -568,11 +568,13 @@ static mp_obj_t safe_operation(mp_obj_t arg) {
         return result;
     } else {
         // EXCEPT block
-        mp_obj_t exc = MP_OBJ_FROM_PTR(nlr.ret_val);
+        // IMPORTANT: nlr.ret_val is already a pointer to the exception object.
+        // Cast directly to mp_obj_base_t*, do NOT use MP_OBJ_FROM_PTR()!
+        mp_obj_base_t *exc = (mp_obj_base_t *)nlr.ret_val;
         
-        // Check exception type
+        // Check exception type via the type field
         if (mp_obj_is_subclass_fast(
-                MP_OBJ_FROM_PTR(mp_obj_get_type(exc)),
+                MP_OBJ_FROM_PTR(exc->type),
                 MP_OBJ_FROM_PTR(&mp_type_ValueError))) {
             // Handle ValueError
             return mp_const_none;
@@ -583,6 +585,8 @@ static mp_obj_t safe_operation(mp_obj_t arg) {
     }
 }
 ```
+
+**Common Mistake**: Do NOT write `mp_obj_t exc = MP_OBJ_FROM_PTR(nlr.ret_val)` - this corrupts the pointer and causes crashes on some architectures.
 
 ### Finally Pattern
 

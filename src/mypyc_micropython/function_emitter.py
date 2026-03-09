@@ -36,6 +36,7 @@ from .ir import (
     InstrIR,
     IRType,
     IsInstanceIR,
+    LambdaIR,
     MethodIR,
     ModuleAttrIR,
     ModuleCallIR,
@@ -320,7 +321,9 @@ class BaseEmitter:
 
         if has_handlers:
             exc_var = self._fresh_temp()
-            lines.append(f"        mp_obj_t {exc_var} = MP_OBJ_FROM_PTR({nlr_buf}.ret_val);")
+            # nlr.ret_val is a void* pointing to the exception object
+            # Access the type field directly via cast, matching MicroPython's pattern
+            lines.append(f"        mp_obj_base_t *{exc_var} = (mp_obj_base_t *){nlr_buf}.ret_val;")
 
             for i, handler in enumerate(stmt.handlers):
                 if handler.exc_type is None:
@@ -332,7 +335,7 @@ class BaseEmitter:
                     mp_type = self._get_mp_exception_type(handler.exc_type)
                     cond = (
                         f"mp_obj_is_subclass_fast("
-                        f"MP_OBJ_FROM_PTR(mp_obj_get_type({exc_var})), "
+                        f"MP_OBJ_FROM_PTR({exc_var}->type), "
                         f"MP_OBJ_FROM_PTR({mp_type}))"
                     )
                     if i == 0:
@@ -341,7 +344,8 @@ class BaseEmitter:
                         lines.append(f"        }} else if ({cond}) {{")
 
                 if handler.exc_var and handler.c_exc_var:
-                    lines.append(f"            mp_obj_t {handler.c_exc_var} = {exc_var};")
+                    # Convert base pointer back to mp_obj_t for user access
+                    lines.append(f"            mp_obj_t {handler.c_exc_var} = MP_OBJ_FROM_PTR({exc_var});")
 
                 for s in handler.body:
                     for line in self._emit_statement(s, native):
@@ -544,6 +548,18 @@ class BaseEmitter:
             return value.c_name, value.ir_type.to_c_type_str()
         elif isinstance(value, FuncRefIR):
             return f"MP_OBJ_FROM_PTR(&{value.c_name}_obj)", "mp_obj_t"
+        elif isinstance(value, LambdaIR):
+            if value.captured_vars:
+                captured_parts = [f"MP_OBJ_FROM_PTR(&{value.c_name}_obj)"]
+                for var in value.captured_vars:
+                    captured_parts.append(var)
+                n_closed = len(value.captured_vars)
+                closed_arr = ", ".join(captured_parts[1:])
+                return (
+                    f"mp_obj_new_closure(MP_OBJ_FROM_PTR(&{value.c_name}_obj), "
+                    f"{n_closed}, (mp_obj_t[]){{ {closed_arr} }})"
+                ), "mp_obj_t"
+            return f"MP_OBJ_FROM_PTR(&{value.c_name}_obj)", "mp_obj_t"
         elif isinstance(value, TempIR):
             return value.name, value.ir_type.to_c_type_str()
         elif isinstance(value, BinOpIR):
@@ -724,11 +740,7 @@ class BaseEmitter:
                                 f"mp_obj_is_true(mp_binary_op({mp_op}, {boxed_prev}, {boxed_right}))"
                             )
                     else:
-                        target = (
-                            right_type
-                            if right_type != "mp_obj_t"
-                            else prev_type
-                        )
+                        target = right_type if right_type != "mp_obj_t" else prev_type
                         prev = self._unbox_if_needed(prev, prev_type, target)
                         right = self._unbox_if_needed(right, right_type, target)
                         parts.append(f"({prev} {c_op} {right})")
@@ -791,7 +803,7 @@ class BaseEmitter:
             return (
                 f"mp_call_function_n_kw({callable_var}, {n_args}, 0, "
                 f"(const mp_obj_t[]){{{args_str}}})",
-                "mp_obj_t"
+                "mp_obj_t",
             )
 
     def _emit_clib_call(self, call: CLibCallIR, native: bool = False) -> tuple[str, str]:
@@ -1368,8 +1380,12 @@ class FunctionEmitter(BaseEmitter):
 
     def emit_forward_declaration(self) -> str:
         """Emit a forward declaration for this function."""
-        c_sig, _ = self._emit_signature()
-        return c_sig + ";"
+        c_sig, obj_def = self._emit_signature()
+        lines = [c_sig + ";"]
+        if "_lambda_" in self.func_ir.c_name:
+            extern_decl = f"extern const mp_obj_fun_builtin_fixed_t {self.func_ir.c_name}_obj;"
+            lines.append(extern_decl)
+        return "\n".join(lines)
 
     def _emit_signature(self) -> tuple[str, str]:
         num_args = len(self.func_ir.params)

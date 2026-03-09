@@ -11,7 +11,7 @@ It uses the diff module to compute changes and applies them efficiently.
 
 from typing import Callable
 
-from lvgl_mvu.attrs import get_attr_def
+from lvgl_mvu.attrs import AttrRegistry
 from lvgl_mvu.diff import (
     CHILD_INSERT,
     CHILD_REMOVE,
@@ -52,12 +52,18 @@ class Reconciler:
     _factories: dict[int, WidgetFactory]
     _delete_fn: DeleteFn | None
     _event_binder: object | None
+    _attr_registry: AttrRegistry
 
-    def __init__(self) -> None:
-        """Create a new Reconciler."""
+    def __init__(self, attr_registry: AttrRegistry) -> None:
+        """Create a new Reconciler.
+
+        Args:
+            attr_registry: The attribute registry for looking up AttrDefs.
+        """
         self._factories = {}
         self._delete_fn = None
         self._event_binder = None
+        self._attr_registry = attr_registry
 
     def register_factory(self, widget_key: int, factory: WidgetFactory) -> None:
         """Register a factory function for a widget type.
@@ -151,22 +157,28 @@ class Reconciler:
         lv_obj = factory(parent_lv_obj)
 
         # Create ViewNode
-        node = ViewNode(lv_obj, widget)
+        node = ViewNode(lv_obj, widget, self._attr_registry)
 
         # Apply all initial attributes
-        for attr in widget.scalar_attrs:
-            try:
-                attr_def = get_attr_def(attr.key)
+        # WORKAROUND: Use index-based while loop instead of for loop.
+        # for attr in widget.scalar_attrs: crashes on ESP32-P4 due to
+        # struct-cast optimization issue in compiled C code. See docs/known-issues.md
+        scalar_attrs = widget.scalar_attrs
+        i: int = 0
+        while i < len(scalar_attrs):
+            attr = scalar_attrs[i]
+            attr_def = self._attr_registry.get(attr.key)
+            if attr_def is not None:
                 attr_def.apply_fn(lv_obj, attr.value)
-            except KeyError:
-                # Attribute not registered - skip
-                pass
-
-        # Create child nodes
-        for child_widget in widget.children:
+            i += 1
+        # Create child nodes - use while loop to avoid for-loop crash
+        children = widget.children
+        j: int = 0
+        while j < len(children):
+            child_widget = children[j]
             child_node = self._create_node(child_widget, lv_obj)
             node.add_child(child_node)
-
+            j += 1
         # Register event handlers
         self._register_handlers(node, widget)
 
@@ -254,10 +266,17 @@ class Reconciler:
         if self._event_binder is None:
             return
 
-        for event_type, msg in widget.event_handlers:
+        # Use while loop to iterate event handlers - avoid for-loop crash
+        event_handlers = widget.event_handlers
+        eh_idx: int = 0
+        while eh_idx < len(event_handlers):
+            event_type_msg = event_handlers[eh_idx]
+            event_type: int = event_type_msg[0]
+            msg: object = event_type_msg[1]
             # Use event binder to register
             handler = self._event_binder.bind(node.lv_obj, event_type, msg)  # type: ignore[attr-defined]
             node.register_handler(event_type, handler)
+            eh_idx += 1
 
     def _reconcile_handlers(self, node: ViewNode, widget: Widget) -> None:
         """Update event handlers on a ViewNode.

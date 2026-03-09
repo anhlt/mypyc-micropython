@@ -47,6 +47,7 @@ from .ir import (
     IfIR,
     InstrIR,
     IsInstanceIR,
+    LambdaIR,
     ListCompIR,
     ListNewIR,
     MethodCallIR,
@@ -147,7 +148,6 @@ class IRPrinter:
             lines.append(f"{self._i()}{member_name} = {member_value}")
         self._indent_dec()
         return "\n".join(lines)
-
 
     def print_class(self, cls: ClassIR) -> str:
         lines = [f"{self._i()}Class: {cls.name} (c_name: {cls.c_name})"]
@@ -625,9 +625,7 @@ class IRPrinter:
             kwargs_str = ", ".join(f"{k}={self.print_value(v)}" for k, v in instr.kwargs)
             all_args = args + (", " + kwargs_str if args and kwargs_str else kwargs_str)
             result_str = f"{instr.result.name} = " if instr.result else ""
-            return (
-                f"{self._i()}{result_str}{self.print_value(instr.receiver)}.{instr.method}({all_args})"
-            )
+            return f"{self._i()}{result_str}{self.print_value(instr.receiver)}.{instr.method}({all_args})"
         elif isinstance(instr, GetItemIR):
             return f"{self._i()}{instr.result.name} = {self.print_value(instr.container)}[{self.print_value(instr.key)}]"
         elif isinstance(instr, SetItemIR):
@@ -661,6 +659,11 @@ class IRPrinter:
             return value.py_name
         elif isinstance(value, FuncRefIR):
             return f"<func:{value.py_name}>"
+        elif isinstance(value, LambdaIR):
+            captured = (
+                f", captures=[{', '.join(value.captured_vars)}]" if value.captured_vars else ""
+            )
+            return f"<lambda_{value.lambda_id}{captured}>"
         elif isinstance(value, BinOpIR):
             left = self.print_value(value.left)
             right = self.print_value(value.right)

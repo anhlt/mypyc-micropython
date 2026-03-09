@@ -121,6 +121,7 @@ All for-loop forms are implemented:
 | `break` | ✅ | Inline C `break` |
 | `continue` | ✅ | Inline C `continue` |
 | `for...else` | ❌ TODO | |
+| Range/slice prelude handling | ❌ TODO | Complex expressions with side effects as `range()`/slice arguments may be silently discarded. See [known-issues.md](known-issues.md#rangeslice-arguments-with-side-effects-may-be-silently-discarded) |
 
 ### 1.2 List Operations
 

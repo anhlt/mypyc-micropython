@@ -365,23 +365,46 @@ class ContainerEmitter:
         return [f"    mp_obj_t {result_name} = ({{ {block}}});"]
 
     def _emit_get(self, instr: MethodCallIR, receiver: str) -> list[str]:
+        """Emit .get(key) or .get(key, default) call.
+
+        For dict-typed receivers, uses native mp_map_lookup for performance.
+        For other types (custom classes with get() method), uses generic method call.
+        """
         result_name = instr.result.name if instr.result else "__get_discard"
+
+        # Check if receiver is typed as dict - only then use the mp_map_lookup optimization
+        is_dict = instr.receiver_py_type is not None and instr.receiver_py_type.startswith("dict")
+
         if len(instr.args) >= 2:
-            # dict.get(key, default) - use native mp_map_lookup for performance
             key_c = self._box_value_ir(instr.args[0])
             default_c = self._box_value_ir(instr.args[1])
-            return [
-                f"    mp_map_elem_t *__elem_{result_name} = mp_map_lookup(&((mp_obj_dict_t *)MP_OBJ_TO_PTR({receiver}))->map, {key_c}, MP_MAP_LOOKUP);",
-                f"    mp_obj_t {result_name} = __elem_{result_name} ? __elem_{result_name}->value : {default_c};"
-            ]
+            if is_dict:
+                # dict.get(key, default) - use native mp_map_lookup for performance
+                return [
+                    f"    mp_map_elem_t *__elem_{result_name} = mp_map_lookup(&((mp_obj_dict_t *)MP_OBJ_TO_PTR({receiver}))->map, {key_c}, MP_MAP_LOOKUP);",
+                    f"    mp_obj_t {result_name} = __elem_{result_name} ? __elem_{result_name}->value : {default_c};",
+                ]
+            else:
+                # Generic method call for non-dict types
+                return [
+                    f"    mp_obj_t {result_name} = mp_call_function_n_kw("
+                    f"mp_load_attr({receiver}, MP_QSTR_get), 2, 0, "
+                    f"(mp_obj_t[]){{{key_c}, {default_c}}});"
+                ]
         elif len(instr.args) == 1:
-            # dict.get(key) with no default returns None if key not found
-            # Use native mp_map_lookup for performance instead of method call
             key_c = self._box_value_ir(instr.args[0])
-            return [
-                f"    mp_map_elem_t *__elem_{result_name} = mp_map_lookup(&((mp_obj_dict_t *)MP_OBJ_TO_PTR({receiver}))->map, {key_c}, MP_MAP_LOOKUP);",
-                f"    mp_obj_t {result_name} = __elem_{result_name} ? __elem_{result_name}->value : mp_const_none;"
-            ]
+            if is_dict:
+                # dict.get(key) - use native mp_map_lookup for performance
+                return [
+                    f"    mp_map_elem_t *__elem_{result_name} = mp_map_lookup(&((mp_obj_dict_t *)MP_OBJ_TO_PTR({receiver}))->map, {key_c}, MP_MAP_LOOKUP);",
+                    f"    mp_obj_t {result_name} = __elem_{result_name} ? __elem_{result_name}->value : mp_const_none;",
+                ]
+            else:
+                # Generic method call for non-dict types
+                return [
+                    f"    mp_obj_t {result_name} = mp_call_function_1("
+                    f"mp_load_attr({receiver}, MP_QSTR_get), {key_c});"
+                ]
         return ["    /* get() requires at least 1 arg */"]
 
     def _emit_zero_arg_method(self, instr: MethodCallIR, receiver: str) -> list[str]:
@@ -583,9 +606,7 @@ class ContainerEmitter:
             left = self._value_to_c(value.left)
             left_is_obj = value.left.ir_type == IRType.OBJ
             # Check if any operand is mp_obj_t
-            any_obj = left_is_obj or any(
-                comp.ir_type == IRType.OBJ for comp in value.comparators
-            )
+            any_obj = left_is_obj or any(comp.ir_type == IRType.OBJ for comp in value.comparators)
             if any_obj and len(value.ops) == 1:
                 # Use mp_binary_op for mp_obj_t comparisons
                 comp_c = self._value_to_c(value.comparators[0])
@@ -632,6 +653,8 @@ class ContainerEmitter:
             args_str = ", ".join(args)
             return f"{value.c_method_name}_native({args_str})"
         elif isinstance(value, ParamAttrIR):
+            if value.is_trait_type:
+                return f"mp_load_attr({value.c_param_name}, MP_QSTR_{value.attr_name})"
             return (
                 f"(({value.class_c_name}_obj_t *)MP_OBJ_TO_PTR({value.c_param_name}))"
                 f"->{value.attr_path}"
@@ -663,10 +686,7 @@ class ContainerEmitter:
             boxed_args = [self._box_value_ir(a) for a in value.args]
             args_str = ", ".join(boxed_args)
             n = len(boxed_args)
-            return (
-                f"{c_name}_make_new(&{c_name}_type, "
-                f"{n}, 0, (const mp_obj_t[]){{{args_str}}})"
-            )
+            return f"{c_name}_make_new(&{c_name}_type, {n}, 0, (const mp_obj_t[]){{{args_str}}})"
         return "/* unknown value */"
 
     def _const_to_c(self, const: ConstIR) -> str:

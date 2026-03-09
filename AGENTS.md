@@ -394,37 +394,39 @@ For building firmware and flashing to ESP32, see platform-specific guides:
 
 ### Device Testing Workflow
 
-**IMPORTANT**: Always detect the connected board type before building firmware.
+**CRITICAL**: ALWAYS detect the connected board type BEFORE building firmware. Building for the wrong chip wastes time and will fail to flash.
 
 ```bash
 # 1. Check connected device
 ls /dev/cu.usb*                                  # macOS - find USB serial port
 
-# 2. Detect board type via esptool (run BEFORE building)
+# 2. Detect board type via esptool (MANDATORY before building)
 source ~/esp/esp-idf/export.sh
-esptool.py --port /dev/cu.usbmodem2101 chip_id  # Shows chip type (ESP32-C6, C3, S3, etc.)
+esptool.py --port /dev/cu.usbmodem2101 chip_id  # Shows chip type (ESP32-P4, C6, C3, S3, etc.)
 
-# 3. Build with correct board type
-make build BOARD=ESP32_GENERIC_C6               # Match detected chip!
-make flash BOARD=ESP32_GENERIC_C6 PORT=/dev/cu.usbmodem2101
+# 3. Build with CORRECT board type (must match detected chip!)
+make build BOARD=ESP32_GENERIC_P4               # For ESP32-P4
+make build BOARD=ESP32_GENERIC_C6               # For ESP32-C6
+make flash BOARD=ESP32_GENERIC_P4 PORT=/dev/cu.usbmodem2101
 ```
 
-### Current Development Hardware
+### Board Type Detection Quick Reference
 
-| Item | Value |
-|------|-------|
-| Board | ESP32-C6 DevKit |
-| Port (macOS) | `/dev/cu.usbmodem2101` |
-| Board variable | `ESP32_GENERIC_C6` |
+| esptool Output | BOARD Variable |
+|----------------|----------------|
+| `ESP32-P4` | `ESP32_GENERIC_P4` |
+| `ESP32-C6` | `ESP32_GENERIC_C6` |
+| `ESP32-C3` | `ESP32_GENERIC_C3` |
+| `ESP32-S3` | `ESP32_GENERIC_S3` |
 
 ### Build Commands
 
-Key commands: `make build BOARD=ESP32_GENERIC_C6`, `make flash`, `make deploy`.
+Key commands: `make build BOARD=<board>`, `make flash`, `make deploy`.
 Always run `source ~/esp/esp-idf/export.sh` before firmware builds.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BOARD` | `ESP32_GENERIC` | Target board (`ESP32_GENERIC_C3`, `ESP32_GENERIC_C6`, `ESP32_GENERIC_S3`) |
+| `BOARD` | (required) | Target board - MUST match detected chip type |
 | `PORT` | `/dev/ttyACM0` | Serial port (macOS: `/dev/cu.usbmodem2101`) |
 | `ESP_IDF_DIR` | `~/esp/esp-idf` | ESP-IDF installation path |
 | `BAUD` | `460800` | Serial baud rate for flashing |
@@ -571,19 +573,23 @@ Explain every C concept before using it.
 # 1. Detect connected device
 ls /dev/cu.usb*
 
-# 2. Compile all examples including new ones
-make compile-all
+# 2. Detect board type via esptool (MANDATORY before building)
+source ~/esp/esp-idf/export.sh
+esptool.py --port /dev/cu.usbmodem2101 chip_id  # Shows chip type (ESP32-P4, C6, C3, S3, etc.)
 
-# 3. Build firmware with new modules
-make build BOARD=ESP32_GENERIC_C6
+# 3. Compile all examples including new ones
+make compile-all BOARD=ESP32_GENERIC_P4         # Use detected board type
 
-# 4. Flash to device
-make flash BOARD=ESP32_GENERIC_C6 PORT=/dev/cu.usbmodem2101
+# 4. Build firmware with new modules
+make build BOARD=ESP32_GENERIC_P4               # Must match detected chip!
 
-# 5. Run device tests (REQUIRED after implementing feature AND before PR)
+# 5. Flash to device
+make flash BOARD=ESP32_GENERIC_P4 PORT=/dev/cu.usbmodem2101
+
+# 6. Run device tests (REQUIRED after implementing feature AND before PR)
 make run-device-tests PORT=/dev/cu.usbmodem2101
 
-# 6. Run benchmarks (optional but recommended)
+# 7. Run benchmarks (optional but recommended)
 make benchmark PORT=/dev/cu.usbmodem2101
 ```
 
