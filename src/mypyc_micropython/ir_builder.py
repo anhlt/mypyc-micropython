@@ -28,6 +28,7 @@ from .ir import (
     AwaitIR,
     AwaitModuleCallIR,
     BinOpIR,
+    BoxIR,
     BreakIR,
     CallIR,
     ClassInstantiationIR,
@@ -60,6 +61,7 @@ from .ir import (
     ModuleCallIR,
     ModuleRefIR,
     NameIR,
+    ObjAttrAssignIR,
     ParamAttrIR,
     ParamIR,
     PassIR,
@@ -1091,6 +1093,31 @@ class IRBuilder:
         if isinstance(target, ast.Tuple):
             return self._build_tuple_unpack(target, stmt.value, locals_)
 
+
+        # Handle local_var.attr = value (not self.attr which is handled above)
+        if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
+            obj_name = target.value.id
+            attr_name = target.attr
+            if obj_name != "self" and obj_name in locals_:
+                value, prelude = self._build_expr(stmt.value, locals_)
+                obj_class_name: str | None = self._class_typed_params.get(obj_name)
+                obj_class_c_name: str | None = None
+                attr_path = attr_name
+                if obj_class_name and obj_class_name in self._known_classes:
+                    class_ir = self._known_classes[obj_class_name]
+                    obj_class_c_name = class_ir.c_name
+                    for fld, path in class_ir.get_all_fields_with_path():
+                        if fld.name == attr_name:
+                            attr_path = path
+                            break
+                return ObjAttrAssignIR(
+                    obj_name=sanitize_name(obj_name),
+                    obj_class=obj_class_c_name,
+                    attr_name=attr_name,
+                    attr_path=attr_path,
+                    value=value,
+                    prelude=prelude,
+                )
         if not isinstance(target, ast.Name):
             return None
 
@@ -1441,13 +1468,49 @@ class IRBuilder:
                 if isinstance(expr.func.value, ast.Name) and expr.func.value.id == "self":
                     method_name = expr.func.attr
                     method_ir = class_ir.methods.get(method_name)
-                    c_method_name = f"{class_ir.c_name}_{sanitize_name(method_name)}"
                     args: list[ValueIR] = []
                     arg_preludes: list[list] = []
                     for arg in expr.args:
                         val, prelude = self._build_expr(arg, locals_)
                         args.append(val)
                         arg_preludes.append(prelude)
+
+                    # self.field(...) must not be lowered as a direct native method call
+                    # when the attribute is a data field (often typed as object).
+                    # Load self->field into a temp and call it dynamically.
+                    if method_ir is None:
+                        field_with_path = next(
+                            (
+                                (fld, path)
+                                for fld, path in class_ir.get_all_fields_with_path()
+                                if fld.name == method_name
+                            ),
+                            None,
+                        )
+                        if field_with_path is not None:
+                            field_ir, field_path = field_with_path
+                            field_type = IRType.from_c_type_str(field_ir.c_type.to_c_type_str())
+                            callable_temp = TempIR(ir_type=IRType.OBJ, name=self._fresh_temp())
+                            callable_load = BoxIR(
+                                result=callable_temp,
+                                value=SelfAttrIR(
+                                    ir_type=field_type,
+                                    attr_name=method_name,
+                                    attr_path=field_path,
+                                    result_type=field_type,
+                                ),
+                            )
+                            all_preludes = [callable_load]
+                            all_preludes.extend(p for pl in arg_preludes for p in pl)
+                            return DynamicCallIR(
+                                ir_type=IRType.OBJ,
+                                callable_var=callable_temp.name,
+                                args=args,
+                                kwargs=[],
+                                arg_preludes=arg_preludes,
+                            ), all_preludes
+
+                    c_method_name = f"{class_ir.c_name}_{sanitize_name(method_name)}"
                     return_type = IRType.OBJ
                     if method_ir:
                         return_type = IRType.from_c_type_str(method_ir.return_type.to_c_type_str())
@@ -2401,7 +2464,6 @@ class IRBuilder:
                     is_trait_type=True,  # Always use dynamic lookup
                 ), []
 
-
         if isinstance(expr.value, ast.Attribute):
             base_value, base_prelude = self._build_attribute(expr.value, locals_)
             base_class_name = self._get_class_type_of_attr(expr.value)
@@ -3328,7 +3390,18 @@ class IRBuilder:
                     inner_annotation = None  # type inferred from value
 
                 if field_name in mypy_field_types:
-                    py_type = self._mypy_type_to_py_type(mypy_field_types[field_name])
+                    mypy_py = self._mypy_type_to_py_type(mypy_field_types[field_name])
+                    # When mypy reports 'Any' (unresolved import), fall back to
+                    # the annotation which may name a known cross-module class.
+                    if mypy_py in ("Any", "object") and inner_annotation is not None:
+                        ann_py = self._annotation_to_py_type(inner_annotation)
+                        # Only prefer annotation if it resolves to a known class
+                        if ann_py in self._known_classes:
+                            py_type = ann_py
+                        else:
+                            py_type = mypy_py
+                    else:
+                        py_type = mypy_py
                     c_type = CType.from_python_type(py_type)
                 elif inner_annotation is not None:
                     py_type = self._annotation_to_py_type(inner_annotation)
@@ -3416,8 +3489,19 @@ class IRBuilder:
         method_args = node.args.args if (is_static or is_classmethod) else node.args.args[1:]
         for arg in method_args:
             if arg.arg in mypy_param_types:
-                py_type = self._mypy_type_to_py_type(mypy_param_types[arg.arg])
-                c_type = CType.from_python_type(py_type)
+                mypy_py = self._mypy_type_to_py_type(mypy_param_types[arg.arg])
+                # Fall back to annotation when mypy says 'Any' (unresolved import)
+                if mypy_py in ("Any", "object") and arg.annotation is not None:
+                    ann_py = self._annotation_to_py_type(arg.annotation)
+                    if ann_py in self._known_classes:
+                        py_type = ann_py
+                        c_type = CType.MP_OBJ_T  # Known class -> boxed object
+                    else:
+                        py_type = mypy_py
+                        c_type = CType.from_python_type(py_type)
+                else:
+                    py_type = mypy_py
+                    c_type = CType.from_python_type(py_type)
             else:
                 py_type = (
                     self._annotation_to_py_type(arg.annotation) if arg.annotation else "object"

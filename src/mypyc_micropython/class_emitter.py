@@ -111,13 +111,34 @@ class ClassEmitter:
         before the method is defined. For example:
             callback = self._build_home  # needs &ClassName_method_obj
 
-        NOTE: Currently disabled because forward declarations conflict with
-        MP_DEFINE_CONST_FUN_OBJ_X macros which create definitions.
-        Instead, we reorder method emission so non-__init__ methods come first.
+        This is required when bound method references (self.method) are used in
+        methods emitted before the referenced method object definition.
         """
-        # Disabled - see note above
-        return []
+        lines = []
+        for method_ir in self.class_ir.methods.values():
+            # Bound method references use instance-method *_obj symbols.
+            # Skip static/classmethod (no self binding) and private methods
+            # (native-only, no MP wrapper / _obj generated).
+            if method_ir.is_static or method_ir.is_classmethod or method_ir.is_private:
+                continue
 
+            num_args = len(method_ir.params) + 1  # +1 for self in MP wrapper
+            obj_type = (
+                "mp_obj_fun_builtin_var_t"
+                if (method_ir.has_defaults or num_args > 3)
+                else "mp_obj_fun_builtin_fixed_t"
+            )
+            # Mock runtime headers define MP_DEFINE_CONST_FUN_OBJ_* as const int.
+            # Keep forward declarations compatible in both real and mock builds.
+            lines.append("#ifdef MYPYC_MICROPYTHON_FUNCTIONAL_RUNTIME_H")
+            lines.append(f"extern const int {method_ir.c_name}_obj;")
+            lines.append("#else")
+            lines.append(f"extern const {obj_type} {method_ir.c_name}_obj;")
+            lines.append("#endif")
+
+        if lines:
+            lines.append("")
+        return lines
 
     def emit_struct(self) -> list[str]:
         lines = []
@@ -149,7 +170,9 @@ class ClassEmitter:
             for fld in trait.fields:
                 # Only emit if not already present in own fields or base
                 if not any(f.name == fld.name for f in self.class_ir.fields):
-                    lines.append(f"    {fld.get_c_type_str()} {fld.name};  // from trait {trait.name}")
+                    lines.append(
+                        f"    {fld.get_c_type_str()} {fld.name};  // from trait {trait.name}"
+                    )
 
         # Emit this class's own fields
         for fld in self.class_ir.fields:
@@ -504,9 +527,7 @@ class ClassEmitter:
 
         return []
 
-    def _emit_user_print_handler(
-        self, has_str: bool, has_repr: bool
-    ) -> list[str]:
+    def _emit_user_print_handler(self, has_str: bool, has_repr: bool) -> list[str]:
         """Emit print handler that dispatches to user __str__/__repr__ methods."""
         lines: list[str] = []
         repr_c_name = self.class_ir.methods.get("__repr__")
@@ -532,22 +553,16 @@ class ClassEmitter:
             # __repr__ only: Python semantics -- str() falls back to repr()
             assert repr_c_name is not None
             lines.append("    (void)kind;")
-            lines.append(
-                f"    mp_obj_t result = {repr_c_name.c_name}_mp(self_in);"
-            )
+            lines.append(f"    mp_obj_t result = {repr_c_name.c_name}_mp(self_in);")
             lines.append("    mp_obj_print_helper(print, result, PRINT_STR);")
         else:
             # __str__ only: use for PRINT_STR, default for PRINT_REPR
             assert str_c_name is not None
             lines.append("    if (kind == PRINT_STR) {")
-            lines.append(
-                f"        mp_obj_t result = {str_c_name.c_name}_mp(self_in);"
-            )
+            lines.append(f"        mp_obj_t result = {str_c_name.c_name}_mp(self_in);")
             lines.append("        mp_obj_print_helper(print, result, PRINT_STR);")
             lines.append("    } else {")
-            lines.append(
-                f'        mp_printf(print, "<{self.class_ir.name} object>");'
-            )
+            lines.append(f'        mp_printf(print, "<{self.class_ir.name} object>");')
             lines.append("    }")
 
         lines.append("}")
@@ -726,9 +741,7 @@ class ClassEmitter:
         # Emit iternext handler for __next__
         if self.class_ir.has_next and "__next__" in self.class_ir.methods:
             method_ir = self.class_ir.methods["__next__"]
-            lines.append(
-                f"static mp_obj_t {self.c_name}_iternext(mp_obj_t self_in) {{"
-            )
+            lines.append(f"static mp_obj_t {self.c_name}_iternext(mp_obj_t self_in) {{")
             # Call the user's __next__ method, which should raise StopIteration
             # when done. We need to catch that and return MP_OBJ_STOP_ITERATION.
             lines.append("    nlr_buf_t nlr;")
@@ -739,7 +752,9 @@ class ClassEmitter:
             lines.append("    } else {")
             lines.append("        // Check if StopIteration was raised")
             lines.append("        mp_obj_base_t *exc = (mp_obj_base_t *)nlr.ret_val;")
-            lines.append("        if (mp_obj_is_subclass_fast(MP_OBJ_FROM_PTR(exc->type), MP_OBJ_FROM_PTR(&mp_type_StopIteration))) {")
+            lines.append(
+                "        if (mp_obj_is_subclass_fast(MP_OBJ_FROM_PTR(exc->type), MP_OBJ_FROM_PTR(&mp_type_StopIteration))) {"
+            )
             lines.append("            return MP_OBJ_STOP_ITERATION;")
             lines.append("        }")
             lines.append("        // Re-raise other exceptions")
@@ -859,6 +874,7 @@ class ClassEmitter:
 
                 # Check AST for simple pattern: return self.field
                 import ast
+
                 body = trait_method.body_ast.body
                 if len(body) == 1 and isinstance(body[0], ast.Return):
                     ret_val = body[0].value
@@ -873,15 +889,21 @@ class ClassEmitter:
                             lines.append(f"    {self.c_name}_obj_t *self = MP_OBJ_TO_PTR(self_in);")
                             lines.append(f"    return {wrapper_name}_native(self);")
                             lines.append("}")
-                            lines.append(f"MP_DEFINE_CONST_FUN_OBJ_1({wrapper_name}_obj, {wrapper_name}_mp);")
+                            lines.append(
+                                f"MP_DEFINE_CONST_FUN_OBJ_1({wrapper_name}_obj, {wrapper_name}_mp);"
+                            )
                             lines.append("")
                             continue
 
                 # Fallback: call the original trait method with a cast (unsafe but may work)
                 # This is a fallback for complex method bodies
                 # We need to cast - this works if the field layout is compatible
-                lines.append("    // WARNING: casting to trait struct - field layout must be compatible")
-                lines.append(f"    return {trait_method.c_name}_native(({trait.c_name}_obj_t *)self);")
+                lines.append(
+                    "    // WARNING: casting to trait struct - field layout must be compatible"
+                )
+                lines.append(
+                    f"    return {trait_method.c_name}_native(({trait.c_name}_obj_t *)self);"
+                )
                 lines.append("}")
                 lines.append("")
                 # Also generate MP wrapper for the fallback
@@ -956,7 +978,6 @@ class ClassEmitter:
 
         return lines
 
-
     def emit_locals_dict(self) -> list[str]:
         # Get all methods including inherited ones
         all_methods = self.class_ir.get_all_methods()
@@ -986,7 +1007,9 @@ class ClassEmitter:
                     lines.append(
                         f"static const mp_rom_obj_static_class_method_t {method.c_name}_obj = {{"
                     )
-                    method_type = "mp_type_staticmethod" if method.is_static else "mp_type_classmethod"
+                    method_type = (
+                        "mp_type_staticmethod" if method.is_static else "mp_type_classmethod"
+                    )
                     lines.append(f"    {{&{method_type}}}, MP_ROM_PTR(&{method.c_name}_fun_obj)")
                     lines.append("};")
         if any(
@@ -1054,10 +1077,7 @@ class ClassEmitter:
             slots.append(f"    print, {self.c_name}_print")
 
         # Add binary_op slot for comparison methods
-        has_binary_op = (
-            self._has_user_comparison_methods()
-            or self._has_dataclass_eq()
-        )
+        has_binary_op = self._has_user_comparison_methods() or self._has_dataclass_eq()
         if has_binary_op:
             slots.append(f"    binary_op, {self.c_name}_binary_op")
 

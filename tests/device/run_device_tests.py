@@ -898,9 +898,9 @@ t("full test", on.test_optional_narrowing(), "10,42,20,-1,10,20,no point,100,30,
 
 gc.collect()
 
-# NOTE: LVGL test suites (lvgl_mvu_diff, lvgl_mvu_viewnode, lvgl_mvu_reconciler)
-# are in tests/device/run_lvgl_tests.py — run separately with:
-#   mpremote connect PORT run tests/device/run_lvgl_tests.py
+# NOTE: LVGL tests (diff, viewnode, reconciler, program, app) are in
+# tests/device/run_lvgl_tests.py - run with:
+#   make run-device-lvgl-tests PORT=/dev/cu.usbmodem2101
 
 # ---- typed_funcs ----
 suite("typed_funcs")

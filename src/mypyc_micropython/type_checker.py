@@ -70,6 +70,7 @@ class ClassTypeInfo:
     traits: list[str] = field(default_factory=list)  # Trait base classes
     is_trait: bool = False  # True if this is a trait
 
+
 @dataclass
 class TypeCheckResult:
     """Result of type checking a Python source file.
@@ -212,6 +213,118 @@ def type_check_file(
     module_name = file_path.stem
     return _run_type_check(str(file_path), module_name, python_version, strict, check_untyped)
 
+
+def type_check_package(
+    package_dir: str | Path,
+    package_name: str | None = None,
+    *,
+    python_version: tuple[int, int] = (3, 10),
+    strict: bool = False,
+    check_untyped: bool = False,
+) -> dict[str, TypeCheckResult]:
+    """Type check an entire Python package using mypy.
+
+    Runs mypy on all .py files in the package simultaneously so that
+    cross-module imports are resolved correctly (not reported as Any).
+
+    Args:
+        package_dir: Path to the package directory (must contain __init__.py)
+        package_name: Override package name (default: directory name)
+        python_version: Target Python version tuple
+        strict: Enable strict type checking mode
+        check_untyped: Require type annotations
+
+    Returns:
+        Dict mapping submodule stem (e.g., 'app', 'program') to TypeCheckResult.
+        The key '__init__' holds the result for __init__.py.
+    """
+    package_path = Path(package_dir)
+    if not package_path.is_dir():
+        return {"__init__": TypeCheckResult(
+            success=False, errors=[f"Not a directory: {package_path}"]
+        )}
+
+    init_file = package_path / "__init__.py"
+    if not init_file.exists():
+        return {"__init__": TypeCheckResult(
+            success=False, errors=[f"Missing __init__.py in {package_path}"]
+        )}
+
+    pkg_name = package_name or package_path.name
+
+    # Configure mypy to follow intra-package imports
+    options = create_mypy_options(
+        python_version=python_version,
+        strict=strict,
+        check_untyped=check_untyped,
+    )
+    # Override: follow imports within the package so cross-module types resolve
+    options.follow_imports = "normal"
+    options.namespace_packages = True
+    # Add the parent dir so mypy can find the package by its name
+    options.mypy_path = [str(package_path.parent)]
+
+    # Build a BuildSource for every .py in the package
+    sources: list[mypy_build.BuildSource] = []
+    submodule_names: dict[str, str] = {}  # stem -> qualified module name
+
+    for py_file in sorted(package_path.glob("*.py")):
+        stem = py_file.stem
+        if stem == "__init__":
+            qualified = pkg_name
+        else:
+            qualified = f"{pkg_name}.{stem}"
+        sources.append(mypy_build.BuildSource(str(py_file), qualified, None))
+        submodule_names[stem] = qualified
+
+    # Run mypy on the whole package at once
+    try:
+        build_result = mypy_build.build(sources=sources, options=options)
+    except CompileError as e:
+        err_msgs = list(e.messages) if hasattr(e, "messages") else [str(e)]
+        return {
+            stem: TypeCheckResult(success=False, errors=err_msgs)
+            for stem in submodule_names
+        }
+
+    # Partition errors by file
+    errors_by_stem: dict[str, list[str]] = {stem: [] for stem in submodule_names}
+    for msg in build_result.errors:
+        if ": note:" in msg:
+            continue  # skip notes
+        # Match error to submodule by filename
+        assigned = False
+        for stem, qualified in submodule_names.items():
+            fname = f"{stem}.py" if stem != "__init__" else "__init__.py"
+            if fname in msg:
+                errors_by_stem[stem].append(msg)
+                assigned = True
+                break
+        if not assigned:
+            # Attribute to __init__ as fallback
+            errors_by_stem.setdefault("__init__", []).append(msg)
+
+    # Extract per-file type information
+    results: dict[str, TypeCheckResult] = {}
+    for stem, qualified in submodule_names.items():
+        functions: dict[str, FunctionTypeInfo] = {}
+        classes: dict[str, ClassTypeInfo] = {}
+        module_types: dict[str, str] = {}
+
+        mypy_file = build_result.files.get(qualified)
+        if mypy_file:
+            _extract_type_info(mypy_file, functions, classes, module_types)
+
+        stem_errors = errors_by_stem.get(stem, [])
+        results[stem] = TypeCheckResult(
+            success=len(stem_errors) == 0,
+            errors=stem_errors,
+            functions=functions,
+            classes=classes,
+            module_types=module_types,
+        )
+
+    return results
 
 def _run_type_check(
     file_path: str,
@@ -452,6 +565,7 @@ def _extract_class_info_from_typeinfo(type_info: MypyTypeInfo) -> ClassTypeInfo:
         is_trait=is_trait,
     )
 
+
 def _extract_class_info_from_classdef(class_def: ClassDef) -> ClassTypeInfo:
     """Extract type information from a ClassDef node (fallback)."""
     name = class_def.name
@@ -512,6 +626,7 @@ def _extract_class_info_from_classdef(class_def: ClassDef) -> ClassTypeInfo:
         traits=traits,
         is_trait=is_trait,
     )
+
 
 def format_type_errors(result: TypeCheckResult) -> str:
     """Format type check errors for display.

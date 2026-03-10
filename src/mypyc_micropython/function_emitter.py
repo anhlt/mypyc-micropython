@@ -41,6 +41,7 @@ from .ir import (
     ModuleAttrIR,
     ModuleCallIR,
     NameIR,
+    ObjAttrAssignIR,
     ParamAttrIR,
     PassIR,
     PrintIR,
@@ -168,6 +169,8 @@ class BaseEmitter:
             return self._emit_tuple_unpack(stmt, native)
         elif isinstance(stmt, AttrAssignIR):
             return self._emit_attr_assign(stmt, native)
+        elif isinstance(stmt, ObjAttrAssignIR):
+            return self._emit_obj_attr_assign(stmt, native)
         elif isinstance(stmt, ExprStmtIR):
             return self._emit_expr_stmt(stmt, native)
         elif isinstance(stmt, PrintIR):
@@ -513,6 +516,31 @@ class BaseEmitter:
         lines = self._emit_prelude(stmt.prelude)
         value_expr, _ = self._emit_expr(stmt.value, native)
         lines.append(f"    self->{stmt.attr_path} = {value_expr};")
+        return lines
+
+    def _emit_obj_attr_assign(self, stmt: ObjAttrAssignIR, native: bool = False) -> list[str]:
+        """Emit attribute assignment on a local variable: obj.attr = value.
+
+        For native classes with known struct layout, use direct struct field
+        access with raw (unboxed) values -- matching ``_emit_attr_assign``.
+        Otherwise use mp_store_attr with boxed values.
+        """
+        lines = self._emit_prelude(stmt.prelude)
+        value_expr, value_type = self._emit_expr(stmt.value, native)
+        if stmt.obj_class is not None:
+            # Known native class -- cast and access struct field directly.
+            # Use raw value_expr (not boxed) because struct fields store
+            # native C types (mp_int_t, mp_obj_t, etc.).
+            lines.append(
+                f"    (({stmt.obj_class}_obj_t *)MP_OBJ_TO_PTR({stmt.obj_name}))"
+                f"->{stmt.attr_path} = {value_expr};"
+            )
+        else:
+            # Generic object -- use mp_store_attr (needs boxed mp_obj_t)
+            boxed_value = self._box_value(value_expr, value_type)
+            lines.append(
+                f"    mp_store_attr({stmt.obj_name}, MP_QSTR_{stmt.attr_name}, {boxed_value});"
+            )
         return lines
 
     def _emit_expr_stmt(self, stmt: ExprStmtIR, native: bool = False) -> list[str]:
@@ -1332,6 +1360,10 @@ class BaseEmitter:
             )
 
     def _box_value(self, expr: str, expr_type: str) -> str:
+        # 'self' in method context is a struct pointer, not an integer.
+        # Convert back to mp_obj_t using MP_OBJ_FROM_PTR.
+        if expr == "self" and expr_type == "mp_int_t":
+            return "MP_OBJ_FROM_PTR(self)"
         if expr_type == "mp_int_t":
             return f"mp_obj_new_int({expr})"
         elif expr_type == "mp_float_t":

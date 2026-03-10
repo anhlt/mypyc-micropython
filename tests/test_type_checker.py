@@ -7,6 +7,7 @@ import pytest
 from mypyc_micropython.type_checker import (
     TypeCheckResult,
     format_type_errors,
+    type_check_package,
     type_check_source,
 )
 
@@ -322,3 +323,121 @@ def process(items: list[int]) -> int:
         c_code = compile_source(source, "test", type_check=True)
         assert "test_process" in c_code
         assert "mp_int_t" in c_code
+
+
+class TestTypeCheckPackage:
+    """Tests for type_check_package() — package-level type checking."""
+
+    def _make_package(self, tmp_path, files: dict[str, str]) -> None:
+        """Create a package directory with the given files."""
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+
+    def test_basic_package(self, tmp_path):
+        """Two-file package where both files have classes."""
+        self._make_package(tmp_path, {
+            "__init__.py": "",
+            "models.py": '''
+class Point:
+    x: int
+    y: int
+
+    def __init__(self, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+''',
+            "utils.py": '''
+def add(a: int, b: int) -> int:
+    return a + b
+''',
+        })
+        results = type_check_package(tmp_path)
+        assert "models" in results
+        assert "utils" in results
+        assert results["models"].success
+        assert results["utils"].success
+        assert "Point" in results["models"].classes
+        assert "add" in results["utils"].functions
+
+    def test_cross_module_import_resolves_types(self, tmp_path):
+        """Cross-module import should resolve to real types, not Any."""
+        self._make_package(tmp_path, {
+            "__init__.py": "",
+            "types.py": '''
+class Config:
+    name: str
+    value: int
+
+    def __init__(self, name: str, value: int) -> None:
+        self.name = name
+        self.value = value
+''',
+            "app.py": '''
+from {pkg}.types import Config
+
+class App:
+    config: Config
+
+    def __init__(self, config: Config) -> None:
+        self.config = config
+
+    def get_name(self) -> str:
+        return self.config.name
+'''.replace("{pkg}", tmp_path.name),
+        })
+        results = type_check_package(tmp_path)
+        assert results["app"].success
+        # The key test: Config should resolve to real type, not Any
+        app_class = results["app"].classes.get("App")
+        assert app_class is not None
+        field_types = dict(app_class.fields)
+        # With package-level checking, config field should resolve to Config, not Any
+        assert field_types.get("config") != "Any", (
+            f"Expected Config type but got: {field_types.get('config')}"
+        )
+
+    def test_missing_init_returns_error(self, tmp_path):
+        """Package dir without __init__.py should return error."""
+        (tmp_path / "mod.py").write_text("x: int = 1")
+        results = type_check_package(tmp_path)
+        assert "__init__" in results
+        assert not results["__init__"].success
+
+    def test_not_a_directory(self, tmp_path):
+        """Non-directory path should return error."""
+        fake = tmp_path / "not_a_dir.py"
+        fake.write_text("x = 1")
+        results = type_check_package(fake)
+        assert "__init__" in results
+        assert not results["__init__"].success
+
+    def test_type_errors_partitioned_by_file(self, tmp_path):
+        """Type errors should be attributed to the correct submodule."""
+        self._make_package(tmp_path, {
+            "__init__.py": "",
+            "good.py": '''
+def add(a: int, b: int) -> int:
+    return a + b
+''',
+            "bad.py": '''
+def broken(a: int, b: str) -> int:
+    return a + b
+''',
+        })
+        results = type_check_package(tmp_path)
+        assert results["good"].success
+        assert not results["bad"].success
+        assert any("Unsupported operand" in e for e in results["bad"].errors)
+
+    def test_package_name_override(self, tmp_path):
+        """Custom package name should be used for module qualification."""
+        self._make_package(tmp_path, {
+            "__init__.py": "",
+            "mod.py": '''
+def f(x: int) -> int:
+    return x
+''',
+        })
+        results = type_check_package(tmp_path, package_name="custom_pkg")
+        assert "mod" in results
+        assert results["mod"].success
