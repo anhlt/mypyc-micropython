@@ -567,6 +567,227 @@ t("dispose_tree root", n_tree.is_disposed(), "True")
 t("dispose_tree count", len(deleted_objs), "2")  # container + label
 
 gc.collect()
+# ---- lvgl_mvu_program ----
+suite("lvgl_mvu_program")
+
+Effect = lvgl_mvu.program.Effect
+Cmd = lvgl_mvu.program.Cmd
+SubDef = lvgl_mvu.program.SubDef
+Sub = lvgl_mvu.program.Sub
+Program = lvgl_mvu.program.Program
+EFFECT_MSG = lvgl_mvu.program.EFFECT_MSG
+EFFECT_FN = lvgl_mvu.program.EFFECT_FN
+SUB_TIMER = lvgl_mvu.program.SUB_TIMER
+
+# -- Effect --
+eff = Effect(EFFECT_MSG, 42)
+t("effect kind", eff.kind, str(EFFECT_MSG))
+t("effect data", eff.data, "42")
+
+eff_fn = Effect(EFFECT_FN, "my_fn")
+t("effect fn kind", eff_fn.kind, str(EFFECT_FN))
+t("effect fn data", eff_fn.data, "my_fn")
+
+# -- Cmd.none --
+cmd_none = Cmd.none()
+t("cmd none effects", len(cmd_none.effects), "0")
+
+# -- Cmd.of_msg --
+cmd_msg = Cmd.of_msg("hello")
+t("cmd of_msg len", len(cmd_msg.effects), "1")
+t("cmd of_msg kind", cmd_msg.effects[0].kind, str(EFFECT_MSG))
+t("cmd of_msg data", cmd_msg.effects[0].data, "hello")
+
+# -- Cmd.batch --
+cmd_a = Cmd.of_msg("a")
+cmd_b = Cmd.of_msg("b")
+cmd_batch = Cmd.batch([cmd_a, cmd_b])
+t("cmd batch len", len(cmd_batch.effects), "2")
+t("cmd batch first", cmd_batch.effects[0].data, "a")
+t("cmd batch second", cmd_batch.effects[1].data, "b")
+
+# -- Cmd.batch empty --
+cmd_empty_batch = Cmd.batch([])
+t("cmd batch empty", len(cmd_empty_batch.effects), "0")
+
+# -- Cmd.of_effect --
+cmd_eff = Cmd.of_effect("fn_placeholder")
+t("cmd of_effect len", len(cmd_eff.effects), "1")
+t("cmd of_effect kind", cmd_eff.effects[0].kind, str(EFFECT_FN))
+
+# -- SubDef --
+sd = SubDef(SUB_TIMER, "timer_100", (100, "tick"))
+t("subdef kind", sd.kind, str(SUB_TIMER))
+t("subdef key", sd.key, "timer_100")
+t("subdef data", sd.data[0], "100")
+
+# -- Sub.none --
+sub_none = Sub.none()
+t("sub none defs", len(sub_none.defs), "0")
+
+# -- Sub.timer --
+sub_timer = Sub.timer(500, "tick_msg")
+t("sub timer len", len(sub_timer.defs), "1")
+t("sub timer kind", sub_timer.defs[0].kind, str(SUB_TIMER))
+t("sub timer key", sub_timer.defs[0].key, "timer_500")
+t("sub timer interval", sub_timer.defs[0].data[0], "500")
+t("sub timer msg", sub_timer.defs[0].data[1], "tick_msg")
+
+# -- Sub.batch --
+sub_a = Sub.timer(100, "a")
+sub_b = Sub.timer(200, "b")
+sub_batch = Sub.batch([sub_a, sub_b])
+t("sub batch len", len(sub_batch.defs), "2")
+t("sub batch first key", sub_batch.defs[0].key, "timer_100")
+t("sub batch second key", sub_batch.defs[1].key, "timer_200")
+
+# -- Sub.batch empty --
+sub_empty_batch = Sub.batch([])
+t("sub batch empty", len(sub_empty_batch.defs), "0")
+
+# -- Program --
+def _test_init():
+    return (0, Cmd.none())
+
+def _test_update(msg, model):
+    return (model + 1, Cmd.none())
+
+def _test_view(model):
+    return Widget(LABEL, "", (ScalarAttr(1, str(model)),), (), ())
+
+prog = Program(_test_init, _test_update, _test_view)
+t("program init_fn", prog.init_fn is not None, "True")
+t("program update_fn", prog.update_fn is not None, "True")
+t("program view_fn", prog.view_fn is not None, "True")
+t("program subscribe_fn", prog.subscribe_fn, "None")
+
+# -- Program with subscribe --
+def _test_subscribe(model):
+    return Sub.none()
+
+prog_sub = Program(_test_init, _test_update, _test_view, _test_subscribe)
+t("program with sub", prog_sub.subscribe_fn is not None, "True")
+
+gc.collect()
+
+# ---- lvgl_mvu_app ----
+suite("lvgl_mvu_app")
+
+App = lvgl_mvu.app.App
+
+# -- Helper functions for testing --
+def counter_init():
+    return (0, Cmd.none())
+
+def counter_update(msg, model):
+    if msg == "inc":
+        return (model + 1, Cmd.none())
+    if msg == "dec":
+        return (model - 1, Cmd.none())
+    if msg == "set10":
+        return (10, Cmd.none())
+    return (model, Cmd.none())
+
+def counter_view(model):
+    return Widget(LABEL, "", (ScalarAttr(1, str(model)),), (), ())
+
+counter_prog = Program(counter_init, counter_update, counter_view)
+
+# -- App creation --
+app = App(counter_prog, rec)
+t("app model init", app.model, "0")
+t("app not disposed", app.is_disposed(), "False")
+t("app queue empty", app.queue_length(), "0")
+
+# -- App tick (first render) --
+changed = app.tick()
+t("app first tick", app.root_node is not None, "True")
+
+# -- App dispatch + tick --
+app.dispatch("inc")
+t("app queue after dispatch", app.queue_length(), "1")
+changed = app.tick()
+t("app tick changed", changed, "True")
+t("app model after inc", app.model, "1")
+t("app queue after tick", app.queue_length(), "0")
+
+# -- Multiple dispatches --
+app.dispatch("inc")
+app.dispatch("inc")
+app.dispatch("inc")
+changed = app.tick()
+t("app model after 3x inc", app.model, "4")
+
+# -- Decrement --
+app.dispatch("dec")
+app.tick()
+t("app model after dec", app.model, "3")
+
+# -- No change tick --
+changed = app.tick()
+t("app no change tick", changed, "False")
+
+# -- Dispose --
+app.dispose()
+t("app disposed", app.is_disposed(), "True")
+t("app root after dispose", app.root_node, "None")
+
+# -- Dispatch after dispose (should be ignored) --
+app.dispatch("inc")
+t("app queue after dispose", app.queue_length(), "0")
+
+gc.collect()
+
+# -- App with Cmd.of_msg (cascading messages) --
+def cascade_update(msg, model):
+    if msg == "start":
+        return (model + 1, Cmd.of_msg("chain"))
+    if msg == "chain":
+        return (model + 10, Cmd.none())
+    return (model, Cmd.none())
+
+cascade_prog = Program(counter_init, cascade_update, counter_view)
+app2 = App(cascade_prog, rec)
+app2.dispatch("start")
+app2.tick()
+t("app cascade model", app2.model, "11")
+app2.dispose()
+
+gc.collect()
+
+# -- App with subscriptions --
+_timer_created = [0]
+_timer_torn_down = [0]
+
+def mock_timer_factory(interval_ms, app_ref, msg):
+    _timer_created[0] += 1
+    def teardown():
+        _timer_torn_down[0] += 1
+    return teardown
+
+def sub_counter_subscribe(model):
+    if model > 0:
+        return Sub.timer(100, "tick")
+    return Sub.none()
+
+sub_prog = Program(counter_init, counter_update, counter_view, sub_counter_subscribe)
+app3 = App(sub_prog, rec)
+app3.set_timer_factory(mock_timer_factory)
+
+# model=0, subscribe returns Sub.none, no timer created
+t("app sub no timer", _timer_created[0], "0")
+
+# Dispatch inc -> model=1 -> subscribe returns timer
+app3.dispatch("inc")
+app3.tick()
+t("app sub timer created", _timer_created[0], "1")
+
+# Dispose should tear down
+app3.dispose()
+t("app sub timer torn", _timer_torn_down[0], "1")
+
+gc.collect()
+
 # ---- summary ----
 gc.collect()
 print("@D:" + str(_total) + "|" + str(_passed) + "|" + str(_failed))

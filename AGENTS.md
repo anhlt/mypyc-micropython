@@ -53,9 +53,9 @@ tests/
 ├── test_type_checker.py # Unit tests - mypy type checker integration (20 tests)
 ├── mock_mp/             # Minimal C stubs for MicroPython API
 └── device/              # Device test runners (run on MicroPython via mpremote)
-    ├── run_device_tests.py          # Main device test runner (465 tests) - no LVGL required
+    ├── run_device_tests.py          # Base language feature tests (no LVGL required)
     ├── run_benchmarks.py            # Benchmark runner (native C vs vanilla)
-    ├── run_lvgl_tests.py            # LVGL tests: screens, MVU diff/viewnode/reconciler
+    ├── run_lvgl_tests.py            # LVGL tests: screens, MVU (diff/viewnode/reconciler/program/app)
     ├── run_nav_tests.py             # LVGL navigation tests (requires display)
     ├── run_lvgl_mvu_tests.py        # LVGL MVU architecture tests
     └── run_screen_navigation_tests.py  # Screen navigation tree tests (requires display)
@@ -658,8 +658,8 @@ make run-device-lvgl-tests PORT=/dev/cu.usbmodem2101    # MANDATORY for display 
 
 | File | Description | Requires Display |
 |------|-------------|-----------------|
-| `run_device_tests.py` | Core compiler tests (465 tests) | No |
-| `run_lvgl_tests.py` | LVGL screens + MVU logic tests (diff, viewnode, reconciler) | No (but needs LVGL modules) |
+| `run_device_tests.py` | Base language feature tests | No |
+| `run_lvgl_tests.py` | LVGL screens + MVU logic tests (diff, viewnode, reconciler, program, app) | No (but needs LVGL modules) |
 | `run_nav_tests.py` | LVGL navigation flow tests | Yes |
 | `run_lvgl_mvu_tests.py` | LVGL MVU architecture tests | No (but needs LVGL modules) |
 | `run_screen_navigation_tests.py` | Screen navigation tree tests | Yes |
