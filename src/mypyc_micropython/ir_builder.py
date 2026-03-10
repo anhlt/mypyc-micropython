@@ -3495,11 +3495,13 @@ class IRBuilder:
                     ann_py = self._annotation_to_py_type(arg.annotation)
                     if ann_py in self._known_classes:
                         py_type = ann_py
+                        c_type = CType.MP_OBJ_T  # Known class -> boxed object
                     else:
                         py_type = mypy_py
+                        c_type = CType.from_python_type(py_type)
                 else:
                     py_type = mypy_py
-                c_type = CType.from_python_type(py_type)
+                    c_type = CType.from_python_type(py_type)
             else:
                 py_type = (
                     self._annotation_to_py_type(arg.annotation) if arg.annotation else "object"

@@ -26,7 +26,6 @@ from mypyc_micropython.ir import (
     ConstIR,
     ContinueIR,
     CType,
-    DataclassInfo,
     DictNewIR,
     ExprStmtIR,
     FieldIR,
@@ -1859,53 +1858,6 @@ class TestCompareIdentityEmitter:
         assert "mp_obj_get_int" not in c_code
 
 
-        assert class_ir.struct_size == 16
-
-
-class TestForwardDeclSkipsPrivate:
-    def test_forward_decl_emitted_for_regular_methods(self):
-        from mypyc_micropython.class_emitter import ClassEmitter
-
-        class_ir = ClassIR(
-            name="App",
-            c_name="test_App",
-            module_name="test",
-            fields=[],
-        )
-        method = make_method_ir(
-            name="dispatch",
-            c_name="test_App_dispatch",
-            params=[("msg", CType.MP_OBJ_T)],
-            return_type=CType.VOID,
-        )
-        class_ir.methods["dispatch"] = method
-        emitter = ClassEmitter(class_ir, "test")
-        fwd = "\n".join(emitter.emit_method_obj_forward_declarations())
-        assert "test_App_dispatch_obj" in fwd
-
-    def test_forward_decl_skipped_for_private_methods(self):
-        from mypyc_micropython.class_emitter import ClassEmitter
-
-        class_ir = ClassIR(
-            name="App",
-            c_name="test_App",
-            module_name="test",
-            fields=[],
-        )
-        method = make_method_ir(
-            name="__compute",
-            c_name="test_App___compute",
-            params=[("x", CType.MP_INT_T)],
-            return_type=CType.MP_INT_T,
-        )
-        method.is_private = True
-        class_ir.methods["__compute"] = method
-        emitter = ClassEmitter(class_ir, "test")
-        fwd = "\n".join(emitter.emit_method_obj_forward_declarations())
-        assert "test_App___compute_obj" not in fwd
-
-    def test_forward_decl_skipped_for_static_methods(self):
-        from mypyc_micropython.class_emitter import ClassEmitter
 class TestForwardDeclSkipsPrivate:
     def test_forward_decl_emitted_for_regular_methods(self):
         from mypyc_micropython.class_emitter import ClassEmitter
