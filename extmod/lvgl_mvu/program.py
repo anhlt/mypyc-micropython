@@ -8,7 +8,14 @@ Core types for the Model-View-Update runtime:
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from typing import Callable, TypeVar
+
+from lvgl_mvu.widget import Widget
+
+# TypeVars for generic model and message types
+# These erase to 'object' in compiled C but provide mypy type checking
+Model = TypeVar("Model")
+Msg = TypeVar("Msg")
 
 # ---------------------------------------------------------------------------
 # Effect kind tags
@@ -67,7 +74,7 @@ class Cmd:
         return Cmd()
 
     @staticmethod
-    def of_msg(msg: object) -> Cmd:
+    def of_msg(msg: Msg) -> Cmd:
         """Create a command that dispatches a single message.
 
         Args:
@@ -99,7 +106,7 @@ class Cmd:
         return result
 
     @staticmethod
-    def of_effect(fn: Callable[[Callable[[object], None]], None]) -> Cmd:
+    def of_effect(fn: Callable[[Callable[[Msg], None]], None]) -> Cmd:
         """Create a command from a custom effect function.
 
         The function is called as ``fn(dispatch)`` where dispatch is a
@@ -172,7 +179,7 @@ class Sub:
         return Sub()
 
     @staticmethod
-    def timer(interval_ms: int, msg: object) -> Sub:
+    def timer(interval_ms: int, msg: Msg) -> Sub:
         """Timer subscription: dispatch msg every interval_ms milliseconds.
 
         Args:
@@ -214,10 +221,10 @@ class Program:
 
     Connects the four core functions of the MVU architecture:
 
-    - ``init_fn``:  ``() -> tuple[object, Cmd]``
-    - ``update_fn``: ``(object, object) -> tuple[object, Cmd]``
-    - ``view_fn``:  ``(object) -> object``
-    - ``subscribe_fn``: ``(object) -> Sub``  (optional)
+    - ``init_fn``:  ``() -> tuple[Model, Cmd]``
+    - ``update_fn``: ``(Msg, Model) -> tuple[Model, Cmd]``
+    - ``view_fn``:  ``(Model) -> Widget``
+    - ``subscribe_fn``: ``(Model) -> Sub``  (optional)
 
     Attributes:
         init_fn: Initialization function.
@@ -226,17 +233,17 @@ class Program:
         subscribe_fn: Subscription function, or None.
     """
 
-    init_fn: Callable[[], tuple[object, Cmd]]
-    update_fn: Callable[[object, object], tuple[object, Cmd]]
-    view_fn: Callable[[object], object]
-    subscribe_fn: Callable[[object], Sub] | None
+    init_fn: Callable[[], tuple[Model, Cmd]]
+    update_fn: Callable[[Msg, Model], tuple[Model, Cmd]]
+    view_fn: Callable[[Model], Widget]
+    subscribe_fn: Callable[[Model], Sub] | None
 
     def __init__(
         self,
-        init_fn: Callable[[], tuple[object, Cmd]],
-        update_fn: Callable[[object, object], tuple[object, Cmd]],
-        view_fn: Callable[[object], object],
-        subscribe_fn: Callable[[object], Sub] | None = None,
+        init_fn: Callable[[], tuple[Model, Cmd]],
+        update_fn: Callable[[Msg, Model], tuple[Model, Cmd]],
+        view_fn: Callable[[Model], Widget],
+        subscribe_fn: Callable[[Model], Sub] | None = None,
     ) -> None:
         self.init_fn = init_fn
         self.update_fn = update_fn
