@@ -125,7 +125,7 @@ def create_mypy_options(
     # Strict mode enables additional checks
     if strict:
         options.warn_redundant_casts = True
-        options.warn_unused_ignores = False
+        options.warn_unused_ignores = True
         options.warn_return_any = False  # Imported modules return Any; don't flag callers
         options.strict_equality = True
         options.disallow_any_generics = True

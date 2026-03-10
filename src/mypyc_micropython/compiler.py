@@ -582,6 +582,7 @@ def _extract_module_constants(source: str) -> dict[str, int | float | str | bool
 def _scan_package_recursive(
     package_path: Path,
     parent_prefix: str,
+    parent_python_name: str,
     *,
     type_check: bool,
     strict: bool,
@@ -697,6 +698,7 @@ def _scan_package_recursive(
 
         sub_name = sub_dir.name
         sub_prefix = sanitize_name(f"{parent_prefix}_{sub_name}")
+        sub_python_name = f"{parent_python_name}.{sub_name}"
 
         # Compile the sub-package's __init__.py
         init_source = sub_init.read_text()
@@ -705,7 +707,7 @@ def _scan_package_recursive(
         if type_check:
             sub_pkg_type_results = type_check_package(
                 sub_dir,
-                package_name=sub_prefix,
+                package_name=sub_python_name,
                 strict=strict,
             )
         # Use sub-package type result for __init__.py
@@ -743,6 +745,7 @@ def _scan_package_recursive(
         children = _scan_package_recursive(
             sub_dir,
             sub_prefix,
+            sub_python_name,
             type_check=type_check,
             strict=strict,
             accumulated_parts=accumulated_parts,
@@ -850,6 +853,7 @@ def compile_package(
 
         submodules = _scan_package_recursive(
             package_path,
+            module_name,
             module_name,
             type_check=type_check,
             strict=strict_type_check,

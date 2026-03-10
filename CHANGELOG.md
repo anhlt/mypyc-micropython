@@ -44,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Blog 38: LVGL MVU diffing engine compilation walkthrough
 - Blog 38: LVGL MVU diffing engine compilation walkthrough
 - LVGL MVU Milestone 4: MVU Runtime (Program, Cmd, Sub, App)
-  - `Program` dataclass with typed `Callable` fields for init/update/view/subscribe
+  - `Program` class with typed `Callable` fields for init/update/view/subscribe
   - `Cmd` side-effect system with tagged effects (`EFFECT_MSG`, `EFFECT_FN`)
   - `Sub` subscription system with `SubDef` for timer/event bindings
   - `App` runtime with message queue, `dispatch()`, `tick()`, subscription lifecycle

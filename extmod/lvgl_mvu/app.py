@@ -125,12 +125,15 @@ class App:
 
         # Process all queued messages (including cascading from Cmd.of_msg)
         while len(self._msg_queue) > 0:
-            msg: object = self._msg_queue.pop(0)
-            update_result = self.program.update_fn(msg, self.model)
-            self.model = update_result[0]
-            cmd: Cmd = update_result[1]
-            self._execute_cmd(cmd)
-            changed = True
+            # Snapshot current batch; _execute_cmd may append new messages
+            batch: list[object] = self._msg_queue
+            self._msg_queue = []
+            for msg in batch:
+                update_result = self.program.update_fn(msg, self.model)
+                self.model = update_result[0]
+                cmd: Cmd = update_result[1]
+                self._execute_cmd(cmd)
+                changed = True
 
         # Re-render if model changed or first render
         if changed or self.root_node is None:
