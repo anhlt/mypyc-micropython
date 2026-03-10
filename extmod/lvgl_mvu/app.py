@@ -10,11 +10,13 @@ The App class is the main runtime that:
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from typing import Callable, TypeVar
 
 from lvgl_mvu.program import (
     EFFECT_FN,
     EFFECT_MSG,
+    Model,
+    Msg,
     SUB_TIMER,
     Cmd,
     Effect,
@@ -42,13 +44,13 @@ class App:
 
     program: Program
     reconciler: Reconciler
-    model: object
+    model: Model
     root_node: ViewNode | None
-    _msg_queue: list[object]
+    _msg_queue: list[Msg]
     _root_lv_obj: object | None
-    _active_teardowns: list[object]
+    _active_teardowns: list[Callable[[], None]]
     _sub_keys: list[str]
-    _timer_factory: Callable[[int, App, object], Callable[[], None]] | None
+    _timer_factory: Callable[[int, App, Msg], Callable[[], None]] | None
     _disposed: bool
 
     def __init__(
@@ -87,7 +89,7 @@ class App:
         # Setup initial subscriptions
         self._setup_subscriptions()
 
-    def set_timer_factory(self, factory: Callable[[int, App, object], Callable[[], None]]) -> None:
+    def set_timer_factory(self, factory: Callable[[int, App, Msg], Callable[[], None]]) -> None:
         """Set the timer factory for SUB_TIMER subscriptions.
 
         The factory is called as ``factory(interval_ms, app, msg)`` and must
@@ -95,11 +97,11 @@ class App:
 
         Args:
             factory: Callable with signature
-                ``(interval_ms: int, app: App, msg: object) -> teardown_fn``.
+                ``(interval_ms: int, app: App, msg: Msg) -> teardown_fn``.
         """
         self._timer_factory = factory
 
-    def dispatch(self, msg: object) -> None:
+    def dispatch(self, msg: Msg) -> None:
         """Queue a message for processing on the next tick.
 
         Args:
@@ -126,7 +128,7 @@ class App:
         # Process all queued messages (including cascading from Cmd.of_msg)
         while len(self._msg_queue) > 0:
             # Snapshot current batch; _execute_cmd may append new messages
-            batch: list[object] = self._msg_queue
+            batch: list[Msg] = self._msg_queue
             self._msg_queue = []
             for msg in batch:
                 update_result = self.program.update_fn(msg, self.model)
@@ -250,7 +252,7 @@ class App:
         self._active_teardowns = []
         self._sub_keys = []
 
-    def _activate_sub(self, sub_def: SubDef) -> object | None:
+    def _activate_sub(self, sub_def: SubDef) -> Callable[[], None] | None:
         """Activate a single subscription definition.
 
         Args:
@@ -263,7 +265,7 @@ class App:
             return self._activate_timer_sub(sub_def)
         return None
 
-    def _activate_timer_sub(self, sub_def: SubDef) -> object | None:
+    def _activate_timer_sub(self, sub_def: SubDef) -> Callable[[], None] | None:
         """Activate a timer subscription.
 
         Calls the timer factory as ``factory(interval_ms, app, msg)``.
@@ -279,7 +281,7 @@ class App:
 
         timer_data = sub_def.data
         interval_ms: int = timer_data[0]
-        msg: object = timer_data[1]
+        msg: Msg = timer_data[1]
 
         teardown = self._timer_factory(interval_ms, self, msg)
         return teardown
