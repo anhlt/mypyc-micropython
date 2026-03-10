@@ -94,3 +94,31 @@ def test_typed_funcs() -> str:
         s: str = str(r)
         parts.append(s)
     return ",".join(parts)
+
+
+# --- TypeVar no-leak: function after TypeVar function uses int correctly ---
+
+
+def after_typevar(x: int) -> int:
+    """Function defined after TypeVar functions. Must unbox as int, not leak TypeVar."""
+    return x * 2
+
+
+# --- General type in class fields ---
+
+
+class GenericBox:
+    """Class with object-typed (GENERAL) field."""
+
+    value: object
+    label: str
+
+    def __init__(self, value: object, label: str) -> None:
+        self.value = value
+        self.label = label
+
+    def get_value(self) -> object:
+        return self.value
+
+    def get_label(self) -> str:
+        return self.label

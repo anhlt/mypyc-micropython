@@ -24,8 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 6 emitter tests for type system C code generation (TestTypeSystemEmission)
 - 5 C runtime tests for type system feature execution
 - 15 device tests for typed_funcs module
-
-### Added
 - LVGL MVU widget tree diffing engine compiled to native C
   - O(N) two-pointer merge diff for sorted scalar attribute tuples
   - Positional child diffing with insert/remove/replace/update operations
@@ -44,21 +42,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SelfMethodCallIR.param_types` for correct argument boxing in method calls
 - `BoolOp` (and/or) support in class method expressions
 - Blog 38: LVGL MVU diffing engine compilation walkthrough
-
-### Fixed
-- Boxed `mp_obj_t` comparison now uses `mp_obj_equal()` instead of unboxing to int
-  - Prevents crash when comparing strings, floats, or nested objects
-  - Ordering comparisons use `mp_binary_op()` with `mp_obj_is_true()`
-- Boolean truthiness: `if`/`while`/ternary/`not` now convert `mp_obj_t` via `mp_obj_is_true()`
-- `bool` boxing uses `mp_obj_new_bool()` instead of ternary expression
-- Dead code removal in `sorted()` emission (duplicated fallback block)
-- Method call argument preludes now correctly propagated (were silently dropped)
-
-### Changed
-- Makefile: 8MiB flash partition table with 4.5MB app partition for LVGL builds
-- Makefile: `sdkconfig.board` injection for board-specific ESP-IDF configuration
-- Makefile: `lvgl_mvu` package included in `compile-all` cmake generation
-### Added
 - `isinstance()` builtin support for compile-time type checking
   - `IsInstanceIR` node in IR for representing isinstance checks
   - Emits `mp_obj_is_type()` C calls for efficient runtime type dispatch
@@ -87,9 +70,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LVGL MVU framework: `user_key` refactored from `str | None` to `str` (sentinel `""`)
 - Blog 37: Optional type narrowing optimization documentation
 - `examples/optional_narrowing.py` demonstrating all narrowing patterns
-
-### Fixed
-- Trait-typed parameter attribute access now uses `mp_load_attr()` instead of direct struct access
 - Trait system for mypyc-style multiple inheritance
   - `@trait` decorator support (both `mypy_extensions.trait` and simple `@trait`)
   - ONE concrete base class + multiple traits allowed
@@ -97,11 +77,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Trait-typed function parameters with dynamic attribute lookup
   - 380 device tests passing on ESP32-C6
 - Blog 32: trait system implementation documentation with memory diagrams
-
-### Fixed
-- Trait-typed parameter attribute access now uses `mp_load_attr()` instead of direct struct access
-  - Prevents undefined behavior when implementing classes have different memory layouts
-### Added
 - Cross-module external C library call support (`CLibCallIR`, `CLibEnumIR`)
   - Compile-time resolution of `import lvgl as lv; lv.func()` to direct C wrapper calls
   - `CLibCallIR`: direct C wrapper function calls with var_args support (>3 params)
@@ -139,7 +114,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/lvgl-build-guide.md` with complete build workflow documentation
 - `docs/ideas/pyi/05-roadmap.md` for C bindings roadmap
 - Blog posts: 21 (pyi stub system), 22 (display driver), 23 (emitter rewrite)
-
 - Simple generator functions (`yield`) compiled into iterator objects with resumable `iternext` state machines
   - `range(start, end)` patterns in generators (non-zero start value)
   - `for x in items: yield x` pattern (iterate over arbitrary iterables in generators)
@@ -152,7 +126,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 7 unit tests for `__str__`/`__repr__` compilation
 - 4 C runtime tests for `__str__`/`__repr__` execution
 - 5 device tests for `__str__`/`__repr__` on ESP32
-
 - Private method (`__method`) optimization: skip MP wrappers, vtable entries, and `locals_dict` registration for class-internal methods
   - Compile-time enforcement: accessing `__private` methods from outside the class is a compilation error
   - Private methods emit only a native C function -- no boxing/unboxing wrapper
@@ -169,7 +142,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 11 device tests for `private_methods` module
 - 3 benchmarks: public vs private method call, `@final` FastCounter
 - Blog post 23: Private Methods, @final, and Constant Folding
-
 - Runtime import support for built-in MicroPython modules (`import math`, `import time`, etc.)
   - New IR nodes: `ModuleImportIR`, `ModuleCallIR`, `ModuleAttrIR`
   - Generated C uses `mp_import_name()` + `mp_load_attr()` + `mp_call_function_N()` pattern
@@ -190,7 +162,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Makefile `compile-all` now detects and compiles package directories automatically
 - `examples/math_ops.py` demonstrating runtime import of `math` and `time` modules
 - ESP-IDF Python version mismatch troubleshooting in AGENTS.md
-
 - `@staticmethod` decorator support for class methods
   - Static methods have no `self` parameter and are wrapped in `mp_type_staticmethod`
   - Accessible via both class and instance (e.g., `MyClass.add(1, 2)` or `obj.add(1, 2)`)
@@ -206,7 +177,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 14 device tests for decorator functionality
 - Compiler tests for `@staticmethod`, `@classmethod`, and `@property`
 - C runtime tests for static method and property getter execution
-
 - **Exception handling support**: `try`/`except`/`else`/`finally`/`raise` statements
   - `try`/`except ExceptionType:` - catch specific exception types
   - `try`/`except ExceptionType as e:` - catch with variable binding
@@ -333,12 +303,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `super()` call support in child class methods (`super().__init__()`, `super().method()`)
 
 ### Changed
+- Makefile: 8MiB flash partition table with 4.5MB app partition for LVGL builds
+- Makefile: `sdkconfig.board` injection for board-specific ESP-IDF configuration
+- Makefile: `lvgl_mvu` package included in `compile-all` cmake generation
 - `make compile-all` now cleans old usermod directories and deps/ build folder before compiling
 - Move generated usermod files from `examples/` to `modules/`
 - Update roadmap: mark inherited method propagation as done (Phase 3 ~95%)
 - Update roadmap: mark `print()` as done in builtins table
 
 ### Fixed
+- Boxed `mp_obj_t` comparison now uses `mp_obj_equal()` instead of unboxing to int
+  - Prevents crash when comparing strings, floats, or nested objects
+  - Ordering comparisons use `mp_binary_op()` with `mp_obj_is_true()`
+- Boolean truthiness: `if`/`while`/ternary/`not` now convert `mp_obj_t` via `mp_obj_is_true()`
+- `bool` boxing uses `mp_obj_new_bool()` instead of ternary expression
+- Dead code removal in `sorted()` emission (duplicated fallback block)
+- Method call argument preludes now correctly propagated (were silently dropped)
+- Trait-typed parameter attribute access now uses `mp_load_attr()` instead of direct struct access
+  - Prevents undefined behavior when implementing classes have different memory layouts
 - C emitter pointer wrapping: replaced `MP_OBJ_FROM_PTR` with `mp_c_ptr_t` struct wrapper
 - C emitter GC safety: module-prefixed callback registry with `MP_REGISTER_ROOT_POINTER`
 - C emitter callback trampolines: generic user_data extraction instead of hardcoded LVGL

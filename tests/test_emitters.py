@@ -26,6 +26,7 @@ from mypyc_micropython.ir import (
     ConstIR,
     ContinueIR,
     CType,
+    DataclassInfo,
     DictNewIR,
     ExprStmtIR,
     FieldIR,
@@ -1929,3 +1930,76 @@ class TestTypeSystemEmission:
         assert "mp_int_t x = mp_obj_get_int(x_obj);" in c_code
         assert "mp_obj_t y = y_obj;" in c_code
         assert "mp_obj_get_int(y_obj)" not in c_code
+
+
+class TestClassEmitterGeneralFields:
+    """Tests for class emission with CType.GENERAL fields."""
+
+    def test_general_field_init_to_none(self):
+        """GENERAL fields should be initialized to mp_const_none in make_new."""
+        from mypyc_micropython.class_emitter import ClassEmitter
+
+        class_ir = ClassIR(
+            name="GenericBox",
+            c_name="test_GenericBox",
+            module_name="test",
+            fields=[
+                FieldIR(name="value", py_type="object", c_type=CType.GENERAL),
+            ],
+        )
+        emitter = ClassEmitter(class_ir, "test")
+        init_code = "\n".join(emitter.emit_make_new())
+        assert "self->value = mp_const_none;" in init_code
+
+    def test_general_field_struct_uses_mp_obj_t(self):
+        """GENERAL fields should emit as mp_obj_t in struct."""
+        from mypyc_micropython.class_emitter import ClassEmitter
+
+        class_ir = ClassIR(
+            name="GenericBox",
+            c_name="test_GenericBox",
+            module_name="test",
+            fields=[
+                FieldIR(name="value", py_type="object", c_type=CType.GENERAL),
+            ],
+        )
+        emitter = ClassEmitter(class_ir, "test")
+        struct_code = "\n".join(emitter.emit_struct())
+        assert "mp_obj_t value;" in struct_code
+
+    def test_general_field_eq_uses_mp_obj_equal(self):
+        """GENERAL fields in dataclass __eq__ should use mp_obj_equal()."""
+        from mypyc_micropython.class_emitter import ClassEmitter
+
+        fields = [
+            FieldIR(name="key", py_type="int", c_type=CType.MP_INT_T),
+            FieldIR(name="value", py_type="object", c_type=CType.GENERAL),
+        ]
+        class_ir = ClassIR(
+            name="GenericPair",
+            c_name="test_GenericPair",
+            module_name="test",
+            is_dataclass=True,
+            fields=fields,
+            dataclass_info=DataclassInfo(fields=fields, eq=True),
+        )
+        emitter = ClassEmitter(class_ir, "test")
+        binary_code = "\n".join(emitter.emit_binary_op_handler())
+        assert "mp_obj_equal(lhs->value, rhs->value)" in binary_code
+        assert "lhs->key == rhs->key" in binary_code
+
+    def test_compute_layout_general_field_size(self):
+        """GENERAL fields should be treated like MP_OBJ_T (8 bytes) in layout."""
+        class_ir = ClassIR(
+            name="GenericBox",
+            c_name="test_GenericBox",
+            module_name="test",
+            fields=[
+                FieldIR(name="value", py_type="object", c_type=CType.GENERAL),
+                FieldIR(name="count", py_type="int", c_type=CType.MP_INT_T),
+            ],
+        )
+        class_ir.compute_layout()
+        assert class_ir.fields[0].offset == 0  # value: mp_obj_t at offset 0
+        assert class_ir.fields[1].offset == 8  # count: mp_int_t at offset 8
+        assert class_ir.struct_size == 16

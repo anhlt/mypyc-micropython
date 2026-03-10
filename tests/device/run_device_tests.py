@@ -940,6 +940,18 @@ t("add_or_zero 1", tf.add_or_zero(6, 1), "12")
 # Full integration test
 t("test_typed_funcs", tf.test_typed_funcs(), "42,10,5,11,True,42,77,12,0")
 
+# TypeVar no-leak: function after TypeVar functions uses int correctly
+t("after_typevar(5)", tf.after_typevar(5), "10")
+t("after_typevar(0)", tf.after_typevar(0), "0")
+t("after_typevar(-3)", tf.after_typevar(-3), "-6")
+
+# GenericBox class with GENERAL (object) field
+box1 = tf.GenericBox(99, "num")
+t("GenericBox get_value", box1.get_value(), "99")
+t("GenericBox get_label", box1.get_label(), "num")
+box2 = tf.GenericBox("hello", "str")
+t("GenericBox str val", box2.get_value(), "hello")
+t("GenericBox str lbl", box2.get_label(), "str")
 gc.collect()
 
 # ---- summary ----

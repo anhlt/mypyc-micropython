@@ -244,6 +244,7 @@ class IRBuilder:
         self._optional_class_params: set[str] = set()  # params typed as X | None
         self._class_field_element_types: dict[tuple[str, str], str] = {}
         self._typevar_bounds: dict[str, str] = {}  # TypeVar name -> bound type ("object" if unbounded)
+        self._pep695_typevars: set[str] = set()  # PEP 695 function-level TypeVar names (cleared per function)
         for class_ir in self._known_classes.values():
             class_node = class_ir.ast_node
             if class_node is None:
@@ -445,6 +446,12 @@ class IRBuilder:
         self._container_element_types = {}
         self._param_py_types: dict[str, str] = {}  # Python type annotations for params
         self._mypy_local_types = {}
+
+        # Clear PEP 695 function-level TypeVars from previous build
+        for tv_name in self._pep695_typevars:
+            self._typevar_bounds.pop(tv_name, None)
+        self._pep695_typevars = set()
+
 
         # Scan for PEP 695 type parameters: def f[T](x: T) -> T
         self._scan_typevars(node)
@@ -2816,6 +2823,7 @@ class IRBuilder:
                         self._typevar_bounds[tp.name] = tp.bound.id
                     else:
                         self._typevar_bounds[tp.name] = "object"
+                    self._pep695_typevars.add(tp.name)
 
     def register_typevar(self, node: ast.Assign) -> bool:
         """Register a classic TypeVar assignment: T = TypeVar('T', bound=int).

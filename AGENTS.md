@@ -132,6 +132,7 @@ The compiler follows mypyc's type erasure strategy:
 - `IRBuilder._resolve_typevar(name)` — resolves TypeVar name to bound type
 - `IRBuilder._scan_typevars()` — scans PEP 695 function type params
 - `IRBuilder.register_typevar(node)` — registers classic TypeVar assignments
+
 ## IR Debugging
 
 When debugging compilation issues, use the `--dump-ir` flag to inspect intermediate representation:

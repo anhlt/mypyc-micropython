@@ -2169,3 +2169,25 @@ def f[N: int](x: N) -> N:
                 func_ir = builder.build_function(node)
         assert func_ir is not None
         assert func_ir.params[0][1] == CType.MP_INT_T
+
+    @pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12+")
+    def test_typevar_pep695_no_leak_between_functions(self):
+        """PEP 695 TypeVars from one function should not leak to the next."""
+        source = """
+def f[T](x: T) -> T:
+    return x
+
+def g(y: int) -> int:
+    return y
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        funcs = []
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                funcs.append(builder.build_function(node))
+        assert len(funcs) == 2
+        # f[T] should have GENERAL param
+        assert funcs[0].params[0][1] == CType.GENERAL
+        # g should have int param, NOT GENERAL (no leak from f)
+        assert funcs[1].params[0][1] == CType.MP_INT_T

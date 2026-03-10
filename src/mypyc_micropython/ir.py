@@ -472,7 +472,7 @@ class ClassIR:
         for fld in self.fields:
             # Simple alignment (could be improved)
             fld.offset = offset
-            if fld.c_type == CType.MP_OBJ_T:
+            if fld.c_type in (CType.MP_OBJ_T, CType.GENERAL):
                 offset += 8  # sizeof(mp_obj_t) on 64-bit
             elif fld.c_type == CType.MP_INT_T:
                 offset += 8  # sizeof(mp_int_t)

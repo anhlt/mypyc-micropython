@@ -356,7 +356,7 @@ class ClassEmitter:
                 lines.append(f"    self->{vtable_path} = &{self.c_name}_vtable_inst;")
 
         for fld in self.class_ir.fields:
-            if fld.c_type == CType.MP_OBJ_T:
+            if fld.c_type in (CType.MP_OBJ_T, CType.GENERAL):
                 lines.append(f"    self->{fld.name} = mp_const_none;")
             elif fld.c_type == CType.MP_INT_T:
                 lines.append(f"    self->{fld.name} = 0;")
@@ -654,7 +654,7 @@ class ClassEmitter:
             fields_with_path = self.class_ir.get_all_fields_with_path()
             conditions = []
             for fld, path in fields_with_path:
-                if fld.c_type == CType.MP_OBJ_T:
+                if fld.c_type in (CType.MP_OBJ_T, CType.GENERAL):
                     conditions.append(f"mp_obj_equal(lhs->{path}, rhs->{path})")
                 else:
                     conditions.append(f"lhs->{path} == rhs->{path}")
