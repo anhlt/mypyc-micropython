@@ -2,7 +2,7 @@
 
 > Fabulous-style Model-View-Update framework for LVGL widgets, compiled to native C via mypyc-micropython.
 
-**Status**: Milestone 3 Complete, Starting Milestone 4
+**Status**: Milestone 4 Complete, Starting Milestone 5
 **Created**: 2026-03-07  
 **Target**: LVGL 9.6 / MicroPython 1.28.0
 
@@ -209,16 +209,16 @@ incorrect C function names. This has been fixed in PR #45 with:
 
 | Task | Description | Status |
 |------|-------------|--------|
-| 4.1 | Program dataclass definition | Pending |
-| 4.2 | Cmd (side effects) implementation | Pending |
-| 4.3 | App class with message queue | Pending |
-| 4.4 | tick() method for main loop | Pending |
-| 4.5 | Sub (subscriptions) for timers/events | Pending |
-| 4.6 | Integration tests | Pending |
+| 4.1 | Program dataclass definition | Done |
+| 4.2 | Cmd (side effects) implementation | Done |
+| 4.3 | App class with message queue | Done |
+| 4.4 | tick() method for main loop | Done |
+| 4.5 | Sub (subscriptions) for timers/events | Done |
+| 4.6 | Integration tests | Done |
 
 **Deliverables**:
-- `src/lvgl_mvu/program.py`
-- `src/lvgl_mvu/app.py`
+- `extmod/lvgl_mvu/program.py`
+- `extmod/lvgl_mvu/app.py`
 - `tests/test_app.py`
 
 **Exit Criteria**:

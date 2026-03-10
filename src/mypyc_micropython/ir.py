@@ -1052,6 +1052,21 @@ class AttrAssignIR(StmtIR):
 
 
 @dataclass
+class ObjAttrAssignIR(StmtIR):
+    """Attribute assignment on a local variable: obj.attr = value.
+
+    When the local variable's class is known (native), emit direct struct
+    field access.  Otherwise fall back to ``mp_store_attr``.
+    """
+
+    obj_name: str  # C variable name of the object
+    obj_class: str | None  # Class name if known, else None
+    attr_name: str
+    attr_path: str  # C struct path (may differ for inherited fields)
+    value: ValueIR
+    prelude: list[InstrIR] = field(default_factory=list)
+
+@dataclass
 class TupleUnpackIR(StmtIR):
     """Tuple unpacking: x, y = tuple_value."""
 

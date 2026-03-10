@@ -634,6 +634,8 @@ static inline mp_obj_t mp_binary_op(mp_binary_op_t op, mp_obj_t lhs, mp_obj_t rh
 #define MP_QSTR_color   ((qstr)0x2017)
 #define MP_QSTR_amount  ((qstr)0x2018)
 #define MP_QSTR_sorted  ((qstr)0x2019)
+#define MP_QSTR_items   ((qstr)0x201A)
+#define MP_QSTR_config  ((qstr)0x201B)
 #define MP_MOCK_TAG_ITER (0x173A)
 
 typedef struct {

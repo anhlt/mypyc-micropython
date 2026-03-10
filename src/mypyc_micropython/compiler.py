@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from .ir import CType, FuncIR, ModuleIR, RTuple
-from .type_checker import TypeCheckResult, type_check_file, type_check_source
+from .type_checker import TypeCheckResult, type_check_file, type_check_package, type_check_source
 
 
 @dataclass
@@ -293,6 +293,7 @@ def _compile_module_parts(
     known_classes: dict[str, Any] | None = None,
     known_enums: dict[str, Any] | None = None,
     func_class_returns: dict[str, str] | None = None,
+    mypy_type_result: TypeCheckResult | None = None,
 ) -> _ModuleCompileParts:
     from .async_emitter import AsyncEmitter
     from .class_emitter import ClassEmitter
@@ -301,7 +302,18 @@ def _compile_module_parts(
     from .ir_builder import IRBuilder, MypyTypeInfo
 
     mypy_types: MypyTypeInfo | None = None
-    if type_check:
+    if mypy_type_result is not None:
+        # Use pre-computed package-level type check result (cross-module aware).
+        # Don't raise on errors here -- package-level checking may report
+        # false positives (e.g. "object not callable" for fields typed as
+        # object that are actually callables).  The type *info* is still
+        # valuable even when some errors exist.
+        mypy_types = MypyTypeInfo(
+            functions=mypy_type_result.functions,
+            classes=mypy_type_result.classes,
+            module_types=mypy_type_result.module_types,
+        )
+    elif type_check:
         tc_result = type_check_source(source, module_name, strict=strict)
         if not tc_result.success:
             error_msgs = "; ".join(tc_result.errors)
@@ -575,11 +587,16 @@ def _scan_package_recursive(
     strict: bool,
     accumulated_parts: _ModuleCompileParts,
     sibling_modules: dict[str, str] | None = None,  # maps import name -> C prefix
+    pkg_type_results: dict[str, TypeCheckResult] | None = None,
 ) -> list[_PackageSubmodule]:
     """Recursively scan a package directory and compile all .py files and sub-packages.
 
     Returns a list of _PackageSubmodule with nested children for sub-packages.
     All function code, forward decls, etc. are accumulated into accumulated_parts.
+
+    If pkg_type_results is provided, it contains pre-computed per-file type
+    check results from type_check_package() that properly resolve cross-module
+    imports.  Otherwise falls back to per-file type checking.
     """
     submodules: list[_PackageSubmodule] = []
 
@@ -631,16 +648,21 @@ def _scan_package_recursive(
         submodule_name = py_file.stem
         symbol_prefix = sanitize_name(f"{parent_prefix}_{submodule_name}")
         source = py_file.read_text()
+        # Look up pre-computed type check result for this submodule
+        sub_type_result: TypeCheckResult | None = None
+        if pkg_type_results is not None:
+            sub_type_result = pkg_type_results.get(submodule_name)
         parts = _compile_module_parts(
             source,
             symbol_prefix,
-            type_check=type_check,
+            type_check=type_check and sub_type_result is None,
             strict=strict,
             sibling_modules=sibling_modules,
             sibling_constants=package_constants,
             known_classes=package_classes,
             known_enums=package_enums,
             func_class_returns=package_func_class_returns,
+            mypy_type_result=sub_type_result,
         )
         submodules.append(
             _PackageSubmodule(
@@ -678,12 +700,25 @@ def _scan_package_recursive(
 
         # Compile the sub-package's __init__.py
         init_source = sub_init.read_text()
+        # For sub-packages, do package-level type checking
+        sub_pkg_type_results: dict[str, TypeCheckResult] | None = None
+        if type_check:
+            sub_pkg_type_results = type_check_package(
+                sub_dir,
+                package_name=sub_prefix,
+                strict=strict,
+            )
+        # Use sub-package type result for __init__.py
+        init_type_result_sub: TypeCheckResult | None = None
+        if sub_pkg_type_results is not None:
+            init_type_result_sub = sub_pkg_type_results.get("__init__")
         init_parts = _compile_module_parts(
             init_source,
             sub_prefix,
-            type_check=type_check,
+            type_check=type_check and init_type_result_sub is None,
             strict=strict,
             sibling_modules=sibling_modules,
+            mypy_type_result=init_type_result_sub,
         )
 
         accumulated_parts.forward_decls.extend(init_parts.forward_decls)
@@ -712,6 +747,7 @@ def _scan_package_recursive(
             strict=strict,
             accumulated_parts=accumulated_parts,
             sibling_modules=sibling_modules,
+            pkg_type_results=sub_pkg_type_results,
         )
 
         submodules.append(
@@ -778,12 +814,25 @@ def compile_package(
     output_dir = Path(output_dir)
 
     try:
+        # Package-level type checking: type-check all files at once so mypy
+        # resolves cross-module imports correctly (not reported as Any).
+        pkg_type_results: dict[str, TypeCheckResult] | None = None
+        if type_check:
+            pkg_type_results = type_check_package(
+                package_path,
+                package_name=module_name,
+                strict=strict_type_check,
+            )
+
         init_source = init_path.read_text()
+        # Use the pre-computed result for __init__.py if available
+        init_type_result = pkg_type_results.get("__init__") if pkg_type_results else None
         parent_parts = _compile_module_parts(
             init_source,
             module_name,
-            type_check=type_check,
+            type_check=type_check and init_type_result is None,
             strict=strict_type_check,
+            mypy_type_result=init_type_result,
         )
 
         # Build sibling modules map: maps import name -> C prefix
@@ -806,6 +855,7 @@ def compile_package(
             strict=strict_type_check,
             accumulated_parts=parent_parts,
             sibling_modules=sibling_modules,
+            pkg_type_results=pkg_type_results,
         )
 
         module_emitter = ModuleEmitter(

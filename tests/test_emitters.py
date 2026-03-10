@@ -40,6 +40,7 @@ from mypyc_micropython.ir import (
     MethodCallIR,
     MethodIR,
     NameIR,
+    ObjAttrAssignIR,
     PassIR,
     ReturnIR,
     SelfMethodCallIR,
@@ -1858,148 +1859,244 @@ class TestCompareIdentityEmitter:
         assert "mp_obj_get_int" not in c_code
 
 
-class TestTypeSystemEmission:
-    def test_emit_general_param_no_unbox(self):
-        func_ir = make_func(
-            params=[("x", CType.GENERAL)],
-            return_type=CType.GENERAL,
-            body=[ReturnIR(value=make_name("x", IRType.OBJ))],
-        )
-        func_ir.arg_types = ["mp_obj_t"]
-
-        c_code = FunctionEmitter(func_ir).emit()[0]
-        assert "mp_obj_t x = x_obj;" in c_code
-        assert "mp_obj_get_int" not in c_code
-
-    def test_emit_general_return_no_box(self):
-        func_ir = make_func(
-            params=[("x", CType.GENERAL)],
-            return_type=CType.GENERAL,
-            body=[ReturnIR(value=make_name("x", IRType.OBJ))],
-        )
-        func_ir.arg_types = ["mp_obj_t"]
-
-        c_code = FunctionEmitter(func_ir).emit()[0]
-        assert "return x;" in c_code
-        assert "mp_obj_new_int" not in c_code
-
-    def test_emit_literal_erased_to_int(self):
-        func_ir = make_func(
-            params=[("x", CType.MP_INT_T)],
-            return_type=CType.MP_INT_T,
-            body=[ReturnIR(value=make_name("x", IRType.INT))],
-        )
-        func_ir.arg_types = ["mp_int_t"]
-
-        c_code = FunctionEmitter(func_ir).emit()[0]
-        assert "mp_int_t x = mp_obj_get_int(x_obj);" in c_code
-
-    def test_emit_typevar_unbounded_as_obj(self):
-        func_ir = make_func(
-            params=[("x", CType.GENERAL)],
-            return_type=CType.GENERAL,
-            body=[ReturnIR(value=make_name("x", IRType.OBJ))],
-        )
-        func_ir.arg_types = ["mp_obj_t"]
-
-        c_code = FunctionEmitter(func_ir).emit()[0]
-        assert "mp_obj_t x = x_obj;" in c_code
-        assert "mp_obj_get_int(x_obj)" not in c_code
-
-    def test_emit_typevar_bounded_int(self):
-        func_ir = make_func(
-            params=[("x", CType.MP_INT_T)],
-            return_type=CType.MP_INT_T,
-            body=[ReturnIR(value=make_name("x", IRType.INT))],
-        )
-        func_ir.arg_types = ["mp_int_t"]
-
-        c_code = FunctionEmitter(func_ir).emit()[0]
-        assert "mp_int_t x = mp_obj_get_int(x_obj);" in c_code
-        assert "return mp_obj_new_int(x);" in c_code
-
-    def test_emit_mixed_general_and_typed(self):
-        func_ir = make_func(
-            params=[("x", CType.MP_INT_T), ("y", CType.GENERAL)],
-            return_type=CType.MP_INT_T,
-            body=[ReturnIR(value=make_name("x", IRType.INT))],
-        )
-        func_ir.arg_types = ["mp_int_t", "mp_obj_t"]
-
-        c_code = FunctionEmitter(func_ir).emit()[0]
-        assert "mp_int_t x = mp_obj_get_int(x_obj);" in c_code
-        assert "mp_obj_t y = y_obj;" in c_code
-        assert "mp_obj_get_int(y_obj)" not in c_code
-
-
-class TestClassEmitterGeneralFields:
-    """Tests for class emission with CType.GENERAL fields."""
-
-    def test_general_field_init_to_none(self):
-        """GENERAL fields should be initialized to mp_const_none in make_new."""
-        from mypyc_micropython.class_emitter import ClassEmitter
-
-        class_ir = ClassIR(
-            name="GenericBox",
-            c_name="test_GenericBox",
-            module_name="test",
-            fields=[
-                FieldIR(name="value", py_type="object", c_type=CType.GENERAL),
-            ],
-        )
-        emitter = ClassEmitter(class_ir, "test")
-        init_code = "\n".join(emitter.emit_make_new())
-        assert "self->value = mp_const_none;" in init_code
-
-    def test_general_field_struct_uses_mp_obj_t(self):
-        """GENERAL fields should emit as mp_obj_t in struct."""
-        from mypyc_micropython.class_emitter import ClassEmitter
-
-        class_ir = ClassIR(
-            name="GenericBox",
-            c_name="test_GenericBox",
-            module_name="test",
-            fields=[
-                FieldIR(name="value", py_type="object", c_type=CType.GENERAL),
-            ],
-        )
-        emitter = ClassEmitter(class_ir, "test")
-        struct_code = "\n".join(emitter.emit_struct())
-        assert "mp_obj_t value;" in struct_code
-
-    def test_general_field_eq_uses_mp_obj_equal(self):
-        """GENERAL fields in dataclass __eq__ should use mp_obj_equal()."""
-        from mypyc_micropython.class_emitter import ClassEmitter
-
-        fields = [
-            FieldIR(name="key", py_type="int", c_type=CType.MP_INT_T),
-            FieldIR(name="value", py_type="object", c_type=CType.GENERAL),
-        ]
-        class_ir = ClassIR(
-            name="GenericPair",
-            c_name="test_GenericPair",
-            module_name="test",
-            is_dataclass=True,
-            fields=fields,
-            dataclass_info=DataclassInfo(fields=fields, eq=True),
-        )
-        emitter = ClassEmitter(class_ir, "test")
-        binary_code = "\n".join(emitter.emit_binary_op_handler())
-        assert "mp_obj_equal(lhs->value, rhs->value)" in binary_code
-        assert "lhs->key == rhs->key" in binary_code
-
-    def test_compute_layout_general_field_size(self):
-        """GENERAL fields should be treated like MP_OBJ_T (8 bytes) in layout."""
-        class_ir = ClassIR(
-            name="GenericBox",
-            c_name="test_GenericBox",
-            module_name="test",
-            fields=[
-                FieldIR(name="value", py_type="object", c_type=CType.GENERAL),
-                FieldIR(name="count", py_type="int", c_type=CType.MP_INT_T),
-            ],
-        )
-        class_ir.compute_layout()
-        assert class_ir.fields[0].offset == 0  # value: mp_obj_t at offset 0
-        assert class_ir.fields[1].offset == 8  # count: mp_int_t at offset 8
         assert class_ir.struct_size == 16
+
+
+class TestForwardDeclSkipsPrivate:
+    def test_forward_decl_emitted_for_regular_methods(self):
+        from mypyc_micropython.class_emitter import ClassEmitter
+
+        class_ir = ClassIR(
+            name="App",
+            c_name="test_App",
+            module_name="test",
+            fields=[],
+        )
+        method = make_method_ir(
+            name="dispatch",
+            c_name="test_App_dispatch",
+            params=[("msg", CType.MP_OBJ_T)],
+            return_type=CType.VOID,
+        )
+        class_ir.methods["dispatch"] = method
+        emitter = ClassEmitter(class_ir, "test")
+        fwd = "\n".join(emitter.emit_method_obj_forward_declarations())
+        assert "test_App_dispatch_obj" in fwd
+
+    def test_forward_decl_skipped_for_private_methods(self):
+        from mypyc_micropython.class_emitter import ClassEmitter
+
+        class_ir = ClassIR(
+            name="App",
+            c_name="test_App",
+            module_name="test",
+            fields=[],
+        )
+        method = make_method_ir(
+            name="__compute",
+            c_name="test_App___compute",
+            params=[("x", CType.MP_INT_T)],
+            return_type=CType.MP_INT_T,
+        )
+        method.is_private = True
+        class_ir.methods["__compute"] = method
+        emitter = ClassEmitter(class_ir, "test")
+        fwd = "\n".join(emitter.emit_method_obj_forward_declarations())
+        assert "test_App___compute_obj" not in fwd
+
+    def test_forward_decl_skipped_for_static_methods(self):
+        from mypyc_micropython.class_emitter import ClassEmitter
+class TestForwardDeclSkipsPrivate:
+    def test_forward_decl_emitted_for_regular_methods(self):
+        from mypyc_micropython.class_emitter import ClassEmitter
+
+        class_ir = ClassIR(
+            name="App",
+            c_name="test_App",
+            module_name="test",
+            fields=[],
+        )
+        method = make_method_ir(
+            name="dispatch",
+            c_name="test_App_dispatch",
+            params=[("msg", CType.MP_OBJ_T)],
+            return_type=CType.VOID,
+        )
+        class_ir.methods["dispatch"] = method
+        emitter = ClassEmitter(class_ir, "test")
+        fwd = "\n".join(emitter.emit_method_obj_forward_declarations())
+        assert "test_App_dispatch_obj" in fwd
+
+    def test_forward_decl_skipped_for_private_methods(self):
+        from mypyc_micropython.class_emitter import ClassEmitter
+
+        class_ir = ClassIR(
+            name="App",
+            c_name="test_App",
+            module_name="test",
+            fields=[],
+        )
+        method = make_method_ir(
+            name="__compute",
+            c_name="test_App___compute",
+            params=[("x", CType.MP_INT_T)],
+            return_type=CType.MP_INT_T,
+        )
+        method.is_private = True
+        class_ir.methods["__compute"] = method
+        emitter = ClassEmitter(class_ir, "test")
+        fwd = "\n".join(emitter.emit_method_obj_forward_declarations())
+        assert "test_App___compute_obj" not in fwd
+
+    def test_forward_decl_skipped_for_static_methods(self):
+        from mypyc_micropython.class_emitter import ClassEmitter
+
+        class_ir = ClassIR(
+            name="App",
+            c_name="test_App",
+            module_name="test",
+            fields=[],
+        )
+        method = make_method_ir(
+            name="create",
+            c_name="test_App_create",
+            params=[],
+            return_type=CType.MP_OBJ_T,
+        )
+        method.is_static = True
+        class_ir.methods["create"] = method
+        emitter = ClassEmitter(class_ir, "test")
+        fwd = "\n".join(emitter.emit_method_obj_forward_declarations())
+        assert "test_App_create_obj" not in fwd
+
+
+class TestObjAttrAssignEmission:
+    """Tests for ObjAttrAssignIR -> C code emission."""
+
+    def test_generic_path_uses_mp_store_attr(self):
+        """Unknown class should emit mp_store_attr."""
+        stmt = ObjAttrAssignIR(
+            obj_name="cmd",
+            obj_class=None,
+            attr_name="effects",
+            attr_path="effects",
+            value=make_const_int(42),
+            prelude=[],
+        )
+        func = make_func(
+            name="test",
+            body=[stmt],
+            locals_={"cmd": CType.MP_OBJ_T},
+        )
+        emitter = FunctionEmitter(func)
+        lines = emitter._emit_obj_attr_assign(stmt)
+        code = "\n".join(lines)
+        assert "mp_store_attr" in code
+        assert "MP_QSTR_effects" in code
+        assert "cmd" in code
+
+    def test_native_class_path_uses_struct_cast(self):
+        """Known native class should emit struct cast and direct field access."""
+        stmt = ObjAttrAssignIR(
+            obj_name="holder",
+            obj_class="test_Holder",
+            attr_name="value",
+            attr_path="value",
+            value=make_const_int(99),
+            prelude=[],
+        )
+        func = make_func(
+            name="test",
+            body=[stmt],
+            locals_={"holder": CType.MP_OBJ_T},
+        )
+        emitter = FunctionEmitter(func)
+        lines = emitter._emit_obj_attr_assign(stmt)
+        code = "\n".join(lines)
+        assert "test_Holder_obj_t" in code
+        assert "MP_OBJ_TO_PTR" in code
+        assert "->value" in code
+        # Should NOT use mp_store_attr for native path
+        assert "mp_store_attr" not in code
+
+    def test_prelude_emitted_before_assignment(self):
+        """Prelude instructions should appear before the assignment."""
+        from mypyc_micropython.ir import ListNewIR
+        prelude_instr = ListNewIR(
+            result=TempIR(name="_tmp1", ir_type=IRType.OBJ),
+            items=[make_const_int(1), make_const_int(2)],
+        )
+        stmt = ObjAttrAssignIR(
+            obj_name="obj",
+            obj_class=None,
+            attr_name="items",
+            attr_path="items",
+            value=TempIR(name="_tmp1", ir_type=IRType.OBJ),
+            prelude=[prelude_instr],
+        )
+        func = make_func(
+            name="test",
+            body=[stmt],
+            locals_={"obj": CType.MP_OBJ_T},
+            max_temp=2,
+        )
+        emitter = FunctionEmitter(func)
+        lines = emitter._emit_obj_attr_assign(stmt)
+        code = "\n".join(lines)
+        # Prelude (list creation) should come before mp_store_attr
+        list_pos = code.find("mp_obj_new_list")
+        store_pos = code.find("mp_store_attr")
+        assert list_pos < store_pos, "Prelude must come before the assignment"
+
+
+class TestMypyAnyFieldTypeFallback:
+    """Bug 5: When field py_type resolves correctly (not Any), chained
+    attribute access should generate native struct access, not mp_load_attr."""
+
+    def test_chained_attr_uses_native_access_for_known_class(self):
+        """self.config.name should use self->config->name, not mp_load_attr.
+        This verifies Bug 5 fix: field typed as known class enables native path."""
+        from mypyc_micropython.compiler import compile_source
+        source = '''
+class Config:
+    name: str
+    value: int
+
+    def __init__(self, name: str, value: int) -> None:
+        self.name = name
+        self.value = value
+
+class App:
+    config: Config
+
+    def __init__(self, config: Config) -> None:
+        self.config = config
+
+    def get_name(self) -> str:
+        return self.config.name
+'''
+        c_code = compile_source(source, "test")
+        # With proper type resolution, self.config.name should use native
+        # struct access: self->config->name (not mp_load_attr)
+        assert "self->config" in c_code, (
+            "Expected native struct access for self.config but not found"
+        )
+
+    def test_any_typed_field_falls_back_to_generic_access(self):
+        """When field type is unresolved (object), chained access uses mp_load_attr."""
+        from mypyc_micropython.compiler import compile_source
+        # Use 'object' typed field (simulates unresolved Any)
+        source = '''
+class Container:
+    item: object
+
+    def __init__(self, item: object) -> None:
+        self.item = item
+
+    def get_label(self) -> object:
+        return self.item
+'''
+        c_code = compile_source(source, "test")
+        # 'object' typed field: cannot do chained native access
+        # self.item access should still work but won't chain natively
+        assert "self->item" in c_code

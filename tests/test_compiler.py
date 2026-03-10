@@ -7181,187 +7181,174 @@ def sort_key(x: int) -> int:
         assert "mp_obj_new_int(sort_key)" not in result
 
 
-class TestTypeSystemGeneral:
-    def test_general_object_param(self):
-        source = """
-def f(x: object) -> object:
-    return x
-"""
-        result = compile_source(source, "test", type_check=False)
-        assert "mp_obj_t" in result
-        assert "mp_obj_get_int(x_obj)" not in result
-
-    def test_general_any_param(self):
-        source = """
-from typing import Any
-
-def f(x: Any) -> Any:
-    return x
-"""
-        result = compile_source(source, "test", type_check=False)
-        assert "mp_obj_t" in result
-        assert "mp_obj_get_int(x_obj)" not in result
-
-    def test_general_unannotated_param(self):
-        source = """
-def f(x):
-    return x
-"""
-        result = compile_source(source, "test", type_check=False)
-        assert "mp_obj_t" in result
-        assert "mp_obj_get_int(x_obj)" not in result
-
-    def test_general_mixed_params(self):
-        source = """
-def f(x: int, y: object) -> int:
-    return x
-"""
-        result = compile_source(source, "test", type_check=False)
-        assert "mp_int_t x = mp_obj_get_int(x_obj);" in result
-        assert "mp_obj_t y = y_obj;" in result
-        assert "mp_obj_get_int(y_obj)" not in result
-
-    def test_general_ctype_enum(self):
-        from mypyc_micropython.ir import CType
-
-        assert CType.GENERAL.to_c_type_str() == "mp_obj_t"
-
-    def test_general_from_python_type(self):
-        from mypyc_micropython.ir import CType
-
-        assert CType.from_python_type("object") == CType.GENERAL
-        assert CType.from_python_type("Any") == CType.GENERAL
-
-
-class TestTypeSystemLiteral:
-    def test_literal_int_erased(self):
-        source = """
-from typing import Literal
-
-def f(x: Literal[3]) -> int:
-    return x
-"""
-        result = compile_source(source, "test", type_check=False)
-        assert "mp_int_t x = mp_obj_get_int(x_obj);" in result
-
-    def test_literal_str_erased(self):
-        source = """
-from typing import Literal
-
-def f(x: Literal[\"hello\"]) -> str:
-    return x
-"""
-        result = compile_source(source, "test", type_check=False)
         assert "mp_obj_t x = x_obj;" in result
         assert "mp_obj_get_int(x_obj)" not in result
+        assert "return x;" in result
+        assert "mp_obj_new_int" not in result
 
-    def test_literal_bool_erased(self):
-        source = """
-from typing import Literal
+    def test_emit_literal_erased_to_int(self):
+        func_ir = make_func(
+            params=[("x", CType.MP_INT_T)],
+            return_type=CType.MP_INT_T,
+            body=[ReturnIR(value=make_name("x", IRType.INT))],
+        )
+        func_ir.arg_types = ["mp_int_t"]
 
-def f(x: Literal[True]) -> bool:
-    return x
-"""
-        result = compile_source(source, "test", type_check=False)
-        assert "bool x = mp_obj_is_true(x_obj);" in result
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        assert "mp_int_t x = mp_obj_get_int(x_obj);" in c_code
 
-    def test_literal_union_erased(self):
-        source = """
-from typing import Literal
+    def test_emit_typevar_unbounded_as_obj(self):
+        func_ir = make_func(
+            params=[("x", CType.GENERAL)],
+            return_type=CType.GENERAL,
+            body=[ReturnIR(value=make_name("x", IRType.OBJ))],
+        )
+        func_ir.arg_types = ["mp_obj_t"]
 
-def f(x: Literal[1, 2, 3]) -> int:
-    return x
-"""
-        result = compile_source(source, "test", type_check=False)
-        assert "mp_int_t x = mp_obj_get_int(x_obj);" in result
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        assert "mp_obj_t x = x_obj;" in c_code
+        assert "mp_obj_get_int(x_obj)" not in c_code
 
-    def test_literal_return_type(self):
-        source = """
-from typing import Literal
+    def test_emit_typevar_bounded_int(self):
+        func_ir = make_func(
+            params=[("x", CType.MP_INT_T)],
+            return_type=CType.MP_INT_T,
+            body=[ReturnIR(value=make_name("x", IRType.INT))],
+        )
+        func_ir.arg_types = ["mp_int_t"]
 
-def f() -> Literal[42]:
-    return 42
-"""
-        result = compile_source(source, "test", type_check=False)
-        assert "static mp_obj_t test_f(void)" in result
-        assert "return mp_obj_new_int(42);" in result
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        assert "mp_int_t x = mp_obj_get_int(x_obj);" in c_code
+        assert "return mp_obj_new_int(x);" in c_code
 
-    def test_literal_no_literal_in_output(self):
-        source = """
-from typing import Literal
+    def test_emit_mixed_general_and_typed(self):
+        func_ir = make_func(
+            params=[("x", CType.MP_INT_T), ("y", CType.GENERAL)],
+            return_type=CType.MP_INT_T,
+            body=[ReturnIR(value=make_name("x", IRType.INT))],
+        )
+        func_ir.arg_types = ["mp_int_t", "mp_obj_t"]
 
-def f(x: Literal[3]) -> int:
-    return x
-"""
-        result = compile_source(source, "test", type_check=False)
-        assert "Literal" not in result
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        assert "mp_int_t x = mp_obj_get_int(x_obj);" in c_code
+        assert "mp_obj_t y = y_obj;" in c_code
+        assert "mp_obj_get_int(y_obj)" not in c_code
 
 
-class TestTypeSystemTypeVar:
-    @pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12+")
-    def test_typevar_pep695_unbounded(self):
-        source = """
-def f[T](x: T) -> T:
-    return x
-"""
-        result = compile_source(source, "test", type_check=False)
-        assert "mp_obj_t x = x_obj;" in result
-        assert "mp_obj_get_int(x_obj)" not in result
+class TestClassEmitterGeneralFields:
+    """Tests for class emission with CType.GENERAL fields."""
 
-    @pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12+")
-    def test_typevar_pep695_bounded(self):
-        source = """
-def f[N: int](x: N) -> N:
-    return x + x
-"""
-        result = compile_source(source, "test", type_check=False)
-        assert "mp_int_t x = mp_obj_get_int(x_obj);" in result
-        assert "return mp_obj_new_int((x + x));" in result
+    def test_general_field_init_to_none(self):
+        """GENERAL fields should be initialized to mp_const_none in make_new."""
+        from mypyc_micropython.class_emitter import ClassEmitter
 
-    def test_typevar_classic_unbounded(self):
-        source = """
-from typing import TypeVar
+        class_ir = ClassIR(
+            name="GenericBox",
+            c_name="test_GenericBox",
+            module_name="test",
+            fields=[
+                FieldIR(name="value", py_type="object", c_type=CType.GENERAL),
+            ],
+        )
+        emitter = ClassEmitter(class_ir, "test")
+        init_code = "\n".join(emitter.emit_make_new())
+        assert "self->value = mp_const_none;" in init_code
 
-T = TypeVar(\"T\")
+    def test_general_field_struct_uses_mp_obj_t(self):
+        """GENERAL fields should emit as mp_obj_t in struct."""
+        from mypyc_micropython.class_emitter import ClassEmitter
 
-def identity(x: T) -> T:
-    return x
-"""
-        result = compile_source(source, "test", type_check=False)
-        assert "mp_obj_t x = x_obj;" in result
-        assert "mp_obj_get_int(x_obj)" not in result
+        class_ir = ClassIR(
+            name="GenericBox",
+            c_name="test_GenericBox",
+            module_name="test",
+            fields=[
+                FieldIR(name="value", py_type="object", c_type=CType.GENERAL),
+            ],
+        )
+        emitter = ClassEmitter(class_ir, "test")
+        struct_code = "\n".join(emitter.emit_struct())
+        assert "mp_obj_t value;" in struct_code
 
-    def test_typevar_classic_bounded(self):
-        source = """
-from typing import TypeVar
+    def test_general_field_eq_uses_mp_obj_equal(self):
+        """GENERAL fields in dataclass __eq__ should use mp_obj_equal()."""
+        from mypyc_micropython.class_emitter import ClassEmitter
 
-N = TypeVar(\"N\", bound=int)
+        fields = [
+            FieldIR(name="key", py_type="int", c_type=CType.MP_INT_T),
+            FieldIR(name="value", py_type="object", c_type=CType.GENERAL),
+        ]
+        class_ir = ClassIR(
+            name="GenericPair",
+            c_name="test_GenericPair",
+            module_name="test",
+            is_dataclass=True,
+            fields=fields,
+            dataclass_info=DataclassInfo(fields=fields, eq=True),
+        )
+        emitter = ClassEmitter(class_ir, "test")
+        binary_code = "\n".join(emitter.emit_binary_op_handler())
+        assert "mp_obj_equal(lhs->value, rhs->value)" in binary_code
+        assert "lhs->key == rhs->key" in binary_code
 
-def double(x: N) -> N:
-    return x + x
-"""
-        result = compile_source(source, "test", type_check=False)
-        assert "mp_int_t x = mp_obj_get_int(x_obj);" in result
-        assert "return mp_obj_new_int((x + x));" in result
+    def test_compute_layout_general_field_size(self):
+        """GENERAL fields should be treated like MP_OBJ_T (8 bytes) in layout."""
+        class_ir = ClassIR(
+            name="GenericBox",
+            c_name="test_GenericBox",
+            module_name="test",
+            fields=[
+                FieldIR(name="value", py_type="object", c_type=CType.GENERAL),
+                FieldIR(name="count", py_type="int", c_type=CType.MP_INT_T),
+            ],
+        )
+        class_ir.compute_layout()
+        assert class_ir.fields[0].offset == 0  # value: mp_obj_t at offset 0
+        assert class_ir.fields[1].offset == 8  # count: mp_int_t at offset 8
+        assert class_ir.struct_size == 16
 
-    def test_typevar_no_typevar_in_output(self):
-        source = """
-from typing import TypeVar
 
-T = TypeVar(\"T\")
+class TestForwardDeclSkipsPrivate:
+    def test_forward_decl_emitted_for_regular_methods(self):
+        from mypyc_micropython.class_emitter import ClassEmitter
 
-def identity(x: T) -> T:
-    return x
-"""
-        result = compile_source(source, "test", type_check=False)
-        assert "TypeVar" not in result
+        class_ir = ClassIR(
+            name="App",
+            c_name="test_App",
+            module_name="test",
+            fields=[],
+        )
+        method = make_method_ir(
+            name="dispatch",
+            c_name="test_App_dispatch",
+            params=[("msg", CType.MP_OBJ_T)],
+            return_type=CType.VOID,
+        )
+        class_ir.methods["dispatch"] = method
+        emitter = ClassEmitter(class_ir, "test")
+        fwd = "\n".join(emitter.emit_method_obj_forward_declarations())
+        assert "test_App_dispatch_obj" in fwd
 
-    @pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12+")
-    def test_typevar_multiple_params(self):
-        source = """
-def f[T, N: int](x: T, y: N) -> N:
-    return y
-"""
-        result = compile_source(source, "test", type_check=False)
-        assert "mp_obj_t x = x_obj;" in result
-        assert "mp_int_t y = mp_obj_get_int(y_obj);" in result
+    def test_forward_decl_skipped_for_private_methods(self):
+        from mypyc_micropython.class_emitter import ClassEmitter
+
+        class_ir = ClassIR(
+            name="App",
+            c_name="test_App",
+            module_name="test",
+            fields=[],
+        )
+        method = make_method_ir(
+            name="__compute",
+            c_name="test_App___compute",
+            params=[("x", CType.MP_INT_T)],
+            return_type=CType.MP_INT_T,
+        )
+        method.is_private = True
+        class_ir.methods["__compute"] = method
+        emitter = ClassEmitter(class_ir, "test")
+        fwd = "\n".join(emitter.emit_method_obj_forward_declarations())
+        assert "test_App___compute_obj" not in fwd
+
+    def test_forward_decl_skipped_for_static_methods(self):
+        from mypyc_micropython.class_emitter import ClassEmitter

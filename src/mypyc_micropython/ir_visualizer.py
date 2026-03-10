@@ -57,6 +57,7 @@ from .ir import (
     ModuleImportIR,
     ModuleIR,
     NameIR,
+    ObjAttrAssignIR,
     ParamAttrIR,
     PassIR,
     PrintIR,
@@ -296,6 +297,8 @@ class IRPrinter:
             return self._print_subscript_assign(stmt)
         elif isinstance(stmt, AttrAssignIR):
             return self._print_attr_assign(stmt)
+        elif isinstance(stmt, ObjAttrAssignIR):
+            return self._print_obj_attr_assign(stmt)
         elif isinstance(stmt, TupleUnpackIR):
             return self._print_tuple_unpack(stmt)
         elif isinstance(stmt, ExprStmtIR):
@@ -556,6 +559,18 @@ class IRPrinter:
             self._indent_dec()
         value = self.print_value(stmt.value)
         lines.append(f"{self._i()}self.{stmt.attr_name} = {value}")
+        return "\n".join(lines)
+
+    def _print_obj_attr_assign(self, stmt: ObjAttrAssignIR) -> str:
+        lines = []
+        if stmt.prelude:
+            lines.append(f"{self._i()}# prelude:")
+            self._indent_inc()
+            for instr in stmt.prelude:
+                lines.append(self.print_instr(instr))
+            self._indent_dec()
+        value = self.print_value(stmt.value)
+        lines.append(f"{self._i()}{stmt.obj_name}.{stmt.attr_name} = {value}")
         return "\n".join(lines)
 
     def _print_tuple_unpack(self, stmt: TupleUnpackIR) -> str:

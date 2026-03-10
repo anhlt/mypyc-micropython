@@ -42,6 +42,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SelfMethodCallIR.param_types` for correct argument boxing in method calls
 - `BoolOp` (and/or) support in class method expressions
 - Blog 38: LVGL MVU diffing engine compilation walkthrough
+- Blog 38: LVGL MVU diffing engine compilation walkthrough
+- LVGL MVU Milestone 4: MVU Runtime (Program, Cmd, Sub, App)
+  - `Program` dataclass with typed `Callable` fields for init/update/view/subscribe
+  - `Cmd` side-effect system with tagged effects (`EFFECT_MSG`, `EFFECT_FN`)
+  - `Sub` subscription system with `SubDef` for timer/event bindings
+  - `App` runtime with message queue, `dispatch()`, `tick()`, subscription lifecycle
+  - `set_timer_factory()` for pluggable timer support (avoids closure compilation)
+  - 70 unit tests + 220 device tests for MVU runtime
+- `ObjAttrAssignIR`: attribute assignment on local variables (`obj.attr = value`)
+  - New IR node, IR builder handler, and function emitter with native/generic paths
+- `type_check_package()`: package-level mypy type checking
+  - Runs mypy once with `follow_imports="normal"` for cross-module type resolution
+  - Distributes per-file results to compilation loop via `mypy_type_result` parameter
+- Forward declarations for method `_obj` symbols in class emitter
+- Blog 42: When mypy Says Any -- type tracking, CType vs py_type, package-level fix
 - `isinstance()` builtin support for compile-time type checking
   - `IsInstanceIR` node in IR for representing isinstance checks
   - Emits `mp_obj_is_type()` C calls for efficient runtime type dispatch

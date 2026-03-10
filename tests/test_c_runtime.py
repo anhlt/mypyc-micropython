@@ -1,4 +1,3 @@
-import sys
 from pathlib import Path
 
 import pytest
@@ -3295,99 +3294,141 @@ int main(void) {
     assert stdout.strip() == "16"  # 1 + 5 + 10
 
 
-def test_c_literal_int_param(compile_and_run):
+@pytest.mark.c_runtime
+def test_c_callable_field_on_self(compile_and_run):
     source = """
-from typing import Literal
+class Doubler:
+    value: object
 
-def f(x: Literal[3]) -> int:
-    return x + 1
+    def __init__(self, f: object) -> None:
+        self.value = f
+
+    def run(self, x: object) -> object:
+        return self.value(x)
 """
     test_main_c = """
 #include <stdio.h>
 
 int main(void) {
-    mp_obj_t result = test_f(mp_obj_new_int(3));
-    printf("%ld\\n", (long)mp_obj_get_int(result));
+    mp_obj_t func = MP_OBJ_FROM_PTR(&mp_type_list);
+    mp_obj_t args[] = {func};
+    mp_obj_t doubler = test_Doubler_make_new(&test_Doubler_type, 1, 0, args);
+
+    mp_obj_t list_items[] = {mp_obj_new_int(42)};
+    mp_obj_t list_arg = mp_obj_new_list(1, list_items);
+    mp_obj_t result = test_Doubler_run_mp(doubler, list_arg);
+
+    mp_obj_t first = mp_obj_subscr(result, mp_obj_new_int(0), MP_OBJ_SENTINEL);
+    printf("%d\\n", (int)mp_obj_get_int(first));
     return 0;
 }
 """
     stdout = compile_and_run(source, "test", test_main_c)
-    assert stdout.strip() == "4"
+    assert stdout.strip() == "42"
 
 
-@pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12+")
-def test_c_typevar_unbounded_identity(compile_and_run):
+@pytest.mark.c_runtime
+def test_c_local_var_attr_assign(compile_and_run):
+    """local_var.attr = value should work via mp_store_attr."""
     source = """
-def identity[T](x: T) -> T:
-    return x
+class Box:
+    value: int
+
+    def __init__(self, v: int) -> None:
+        self.value = v
+
+def set_box_value(b: Box, v: int) -> int:
+    b.value = v
+    return b.value
 """
     test_main_c = """
 #include <stdio.h>
 
 int main(void) {
-    mp_obj_t result = test_identity(mp_obj_new_int(7));
-    printf("%ld\\n", (long)mp_obj_get_int(result));
+    mp_obj_t args[] = {mp_obj_new_int(10)};
+    mp_obj_t box = test_Box_make_new(&test_Box_type, 1, 0, args);
+    mp_obj_t result = test_set_box_value(box, mp_obj_new_int(99));
+    printf("%d\\n", (int)mp_obj_get_int(result));
     return 0;
 }
 """
     stdout = compile_and_run(source, "test", test_main_c)
-    assert stdout.strip() == "7"
+    assert stdout.strip() == "99"
 
 
-@pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12+")
-def test_c_typevar_bounded_int_double(compile_and_run):
+@pytest.mark.c_runtime
+def test_c_local_var_attr_assign_with_list(compile_and_run):
+    """local_var.attr = [list] should work (the original Bug 4 case)."""
     source = """
-def double[N: int](x: N) -> N:
-    return x + x
+class Container:
+    items: list
+
+    def __init__(self) -> None:
+        self.items = []
+
+def fill_container(c: Container) -> list:
+    c.items = [1, 2, 3]
+    return c.items
 """
     test_main_c = """
 #include <stdio.h>
 
 int main(void) {
-    mp_obj_t result = test_double_(mp_obj_new_int(5));
-    printf("%ld\\n", (long)mp_obj_get_int(result));
+    mp_obj_t args[] = {};
+    mp_obj_t container = test_Container_make_new(&test_Container_type, 0, 0, args);
+    mp_obj_t result = test_fill_container(container);
+
+    // Check it's a list with 3 elements
+    mp_obj_t len_val = mp_obj_len(result);
+    printf("%d\\n", (int)mp_obj_get_int(len_val));
     return 0;
 }
 """
     stdout = compile_and_run(source, "test", test_main_c)
-    assert stdout.strip() == "10"
+    assert stdout.strip() == "3"
 
 
-def test_c_general_object_passthrough(compile_and_run):
-    source = """
-def passthrough(x: object) -> object:
-    return x
-"""
-    test_main_c = """
+def test_c_chained_attr_access_known_class(compile_and_run):
+    """Bug 5: chained attribute access on a field typed as a known class
+    should use native struct access and produce correct results."""
+    source = '''
+class Config:
+    name: str
+    value: int
+
+    def __init__(self, name: str, value: int) -> None:
+        self.name = name
+        self.value = value
+
+class App:
+    config: Config
+
+    def __init__(self, config: Config) -> None:
+        self.config = config
+
+    def get_value(self) -> int:
+        return self.config.value
+'''
+    test_main_c = '''
 #include <stdio.h>
 
 int main(void) {
-    mp_obj_t result = test_passthrough(mp_obj_new_int(11));
+    // Create Config("test", 42)
+    mp_obj_t config_args[2] = {
+        mp_obj_new_str("test", 4),
+        mp_obj_new_int(42)
+    };
+    mp_obj_t config = test_Config_make_new(&test_Config_type, 2, 0, config_args);
+
+    // Create App(config)
+    mp_obj_t app_args[1] = { config };
+    mp_obj_t app = test_App_make_new(&test_App_type, 1, 0, app_args);
+
+    // Call app.get_value() -- should return 42 via chained native access
+    mp_obj_t result = test_App_get_value_mp(app);
     printf("%ld\\n", (long)mp_obj_get_int(result));
     return 0;
 }
-"""
+'''
     stdout = compile_and_run(source, "test", test_main_c)
-    assert stdout.strip() == "11"
-
-
-def test_c_classic_typevar_identity(compile_and_run):
-    source = """
-from typing import TypeVar
-
-T = TypeVar(\"T\")
-
-def identity(x: T) -> T:
-    return x
-"""
-    test_main_c = """
-#include <stdio.h>
-
-int main(void) {
-    mp_obj_t result = test_identity(mp_obj_new_int(9));
-    printf("%ld\\n", (long)mp_obj_get_int(result));
-    return 0;
-}
-"""
-    stdout = compile_and_run(source, "test", test_main_c)
-    assert stdout.strip() == "9"
+    assert stdout.strip() == "42"

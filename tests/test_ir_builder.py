@@ -28,6 +28,7 @@ from mypyc_micropython.ir import (
     ListNewIR,
     MethodCallIR,
     NameIR,
+    ObjAttrAssignIR,
     ParamAttrIR,
     PassIR,
     PrintIR,
@@ -37,7 +38,7 @@ from mypyc_micropython.ir import (
     TupleNewIR,
     UnaryOpIR,
     WhileIR,
-)
+    )
 from mypyc_micropython.ir_builder import BuildContext, IRBuilder, sanitize_name
 
 
@@ -2191,3 +2192,361 @@ def g(y: int) -> int:
         assert funcs[0].params[0][1] == CType.GENERAL
         # g should have int param, NOT GENERAL (no leak from f)
         assert funcs[1].params[0][1] == CType.MP_INT_T
+
+
+class TestObjAttrAssignIR:
+    """Tests for local_var.attr = value generating ObjAttrAssignIR."""
+
+    def test_local_var_attr_assign_generates_obj_attr_assign(self):
+        """Assignment to local_var.attr should produce ObjAttrAssignIR."""
+        source = '''
+class Container:
+    items: list
+
+    def __init__(self) -> None:
+        self.items = []
+
+def fill(c: Container) -> None:
+    c.items = [1, 2, 3]
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+
+        # Build class first so it's known
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                builder.build_class(node)
+
+        # Build function
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                func_ir = builder.build_function(node)
+
+        # The c.items = [1,2,3] should be ObjAttrAssignIR
+        assign = func_ir.body[0]
+        assert isinstance(assign, ObjAttrAssignIR)
+        assert assign.obj_name == "c"
+        assert assign.attr_name == "items"
+
+    def test_obj_attr_assign_known_class_has_c_name(self):
+        """When local var's class is known, obj_class should be set."""
+        source = '''
+class Holder:
+    value: int
+
+    def __init__(self, v: int) -> None:
+        self.value = v
+
+def set_val(h: Holder) -> None:
+    h.value = 42
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                builder.build_class(node)
+
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                func_ir = builder.build_function(node)
+
+        assign = func_ir.body[0]
+        assert isinstance(assign, ObjAttrAssignIR)
+        assert assign.obj_class is not None
+        assert "Holder" in assign.obj_class
+
+    def test_obj_attr_assign_unknown_class_has_none(self):
+        """When local var's class is NOT known, obj_class should be None."""
+        source = '''
+def modify(obj: object) -> None:
+    obj.value = 10
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        assign = func_ir.body[0]
+        assert isinstance(assign, ObjAttrAssignIR)
+        assert assign.obj_class is None
+        assert assign.attr_name == "value"
+
+    def test_self_attr_assign_is_not_obj_attr_assign(self):
+        """self.attr = value should NOT produce mp_store_attr in generated C.
+        It should use direct struct field access via AttrAssignIR."""
+        from mypyc_micropython.compiler import compile_source
+        source = '''
+class Foo:
+    x: int
+
+    def __init__(self) -> None:
+        self.x = 0
+
+    def set_x(self, v: int) -> None:
+        self.x = v
+'''
+        c_code = compile_source(source, "test", type_check=False)
+        # self.x = v in set_x should use direct struct access: self->x = v
+        assert "self->x = v" in c_code
+        # Should NOT use mp_store_attr for self attribute access
+        assert "mp_store_attr" not in c_code
+
+
+class TestMypyAnyFallbackToAnnotation:
+    """Bug 5: When mypy reports 'Any' for a cross-module import, fall back to annotation."""
+
+    def test_field_type_falls_back_to_annotation_when_mypy_says_any(self):
+        """If mypy reports 'Any' for a field type but annotation names a known class,
+        the IR builder should use the annotation type."""
+        import ast
+
+        from mypyc_micropython.ir_builder import IRBuilder, MypyTypeInfo
+        from mypyc_micropython.type_checker import ClassTypeInfo, FunctionTypeInfo
+
+        # Simulate a known class 'Config' in a sibling module
+        config_source = '''
+class Config:
+    name: str
+    value: int
+
+    def __init__(self, name: str, value: int) -> None:
+        self.name = name
+        self.value = value
+'''
+        config_tree = ast.parse(config_source)
+        config_builder = IRBuilder("config_mod")
+        for node in ast.iter_child_nodes(config_tree):
+            if isinstance(node, ast.ClassDef):
+class TestObjAttrAssignIR:
+    """Tests for local_var.attr = value generating ObjAttrAssignIR."""
+
+    def test_local_var_attr_assign_generates_obj_attr_assign(self):
+        """Assignment to local_var.attr should produce ObjAttrAssignIR."""
+        source = '''
+class Container:
+    items: list
+
+    def __init__(self) -> None:
+        self.items = []
+
+def fill(c: Container) -> None:
+    c.items = [1, 2, 3]
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+
+        # Build class first so it's known
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                builder.build_class(node)
+
+        # Build function
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                func_ir = builder.build_function(node)
+
+        # The c.items = [1,2,3] should be ObjAttrAssignIR
+        assign = func_ir.body[0]
+        assert isinstance(assign, ObjAttrAssignIR)
+        assert assign.obj_name == "c"
+        assert assign.attr_name == "items"
+
+    def test_obj_attr_assign_known_class_has_c_name(self):
+        """When local var's class is known, obj_class should be set."""
+        source = '''
+class Holder:
+    value: int
+
+    def __init__(self, v: int) -> None:
+        self.value = v
+
+def set_val(h: Holder) -> None:
+    h.value = 42
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                builder.build_class(node)
+
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                func_ir = builder.build_function(node)
+
+        assign = func_ir.body[0]
+        assert isinstance(assign, ObjAttrAssignIR)
+        assert assign.obj_class is not None
+        assert "Holder" in assign.obj_class
+
+    def test_obj_attr_assign_unknown_class_has_none(self):
+        """When local var's class is NOT known, obj_class should be None."""
+        source = '''
+def modify(obj: object) -> None:
+    obj.value = 10
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = builder.build_function(tree.body[0])
+
+        assign = func_ir.body[0]
+        assert isinstance(assign, ObjAttrAssignIR)
+        assert assign.obj_class is None
+        assert assign.attr_name == "value"
+
+    def test_self_attr_assign_is_not_obj_attr_assign(self):
+        """self.attr = value should NOT produce mp_store_attr in generated C.
+        It should use direct struct field access via AttrAssignIR."""
+        from mypyc_micropython.compiler import compile_source
+        source = '''
+class Foo:
+    x: int
+
+    def __init__(self) -> None:
+        self.x = 0
+
+    def set_x(self, v: int) -> None:
+        self.x = v
+'''
+        c_code = compile_source(source, "test", type_check=False)
+        # self.x = v in set_x should use direct struct access: self->x = v
+        assert "self->x = v" in c_code
+        # Should NOT use mp_store_attr for self attribute access
+        assert "mp_store_attr" not in c_code
+
+
+class TestMypyAnyFallbackToAnnotation:
+    """Bug 5: When mypy reports 'Any' for a cross-module import, fall back to annotation."""
+
+    def test_field_type_falls_back_to_annotation_when_mypy_says_any(self):
+        """If mypy reports 'Any' for a field type but annotation names a known class,
+        the IR builder should use the annotation type."""
+        import ast
+
+        from mypyc_micropython.ir_builder import IRBuilder, MypyTypeInfo
+        from mypyc_micropython.type_checker import ClassTypeInfo, FunctionTypeInfo
+
+        # Simulate a known class 'Config' in a sibling module
+        config_source = '''
+class Config:
+    name: str
+    value: int
+
+    def __init__(self, name: str, value: int) -> None:
+        self.name = name
+        self.value = value
+'''
+        config_tree = ast.parse(config_source)
+        config_builder = IRBuilder("config_mod")
+        for node in ast.iter_child_nodes(config_tree):
+            if isinstance(node, ast.ClassDef):
+                config_class_ir = config_builder.build_class(node)
+
+        # Source with a class that has a field typed as Config
+        app_source = '''
+class App:
+    config: Config
+
+    def __init__(self, config: Config) -> None:
+        self.config = config
+'''
+        # Simulate mypy reporting 'Any' for the Config field (unresolved import)
+        mypy_types = MypyTypeInfo(
+            functions={},
+            classes={
+                "App": ClassTypeInfo(
+                    name="App",
+                    fields=[("config", "Any")],  # mypy couldn't resolve
+                    methods=[FunctionTypeInfo(
+                        name="__init__",
+                        params=[("config", "Any")],
+                        return_type="None",
+                        is_method=True,
+                    )],
+                )
+            },
+            module_types={},
+        )
+
+        app_tree = ast.parse(app_source)
+        builder = IRBuilder(
+            "app_mod",
+            known_classes={"Config": config_class_ir},
+            mypy_types=mypy_types,
+        )
+        for node in ast.iter_child_nodes(app_tree):
+            if isinstance(node, ast.ClassDef):
+                class_ir = builder.build_class(node)
+
+        # The config field should resolve to 'Config', not 'Any'
+        config_fields = [f for f in class_ir.fields if f.name == "config"]
+        assert len(config_fields) == 1, f"Expected 1 config field, got {len(config_fields)}"
+        field = config_fields[0]
+        assert field.py_type == "Config", (
+            f"Expected Config but got {field.py_type}. "
+            "Bug 5: mypy Any should fall back to annotation for known classes"
+        )
+
+    def test_method_param_falls_back_to_annotation_when_mypy_says_any(self):
+        """Method parameters typed as Any by mypy should fall back to annotation."""
+        import ast
+
+        from mypyc_micropython.ir_builder import IRBuilder, MypyTypeInfo
+        from mypyc_micropython.type_checker import ClassTypeInfo, FunctionTypeInfo
+
+        # Build a known class 'Widget'
+        widget_source = '''
+class Widget:
+    label: str
+
+    def __init__(self, label: str) -> None:
+        self.label = label
+'''
+        widget_tree = ast.parse(widget_source)
+        widget_builder = IRBuilder("widget_mod")
+        for node in ast.iter_child_nodes(widget_tree):
+            if isinstance(node, ast.ClassDef):
+                widget_class_ir = widget_builder.build_class(node)
+
+        # A class with a method that takes Widget parameter
+        view_source = '''
+class View:
+    def render(self, w: Widget) -> int:
+        return 0
+'''
+        mypy_types = MypyTypeInfo(
+            functions={},
+            classes={
+                "View": ClassTypeInfo(
+                    name="View",
+                    fields=[],
+                    methods=[FunctionTypeInfo(
+                        name="render",
+                        params=[("w", "Any")],  # mypy couldn't resolve
+                        return_type="int",
+                        is_method=True,
+                    )],
+                )
+            },
+            module_types={},
+        )
+
+        view_tree = ast.parse(view_source)
+        builder = IRBuilder(
+            "view_mod",
+            known_classes={"Widget": widget_class_ir},
+            mypy_types=mypy_types,
+        )
+        for node in ast.iter_child_nodes(view_tree):
+            if isinstance(node, ast.ClassDef):
+                class_ir = builder.build_class(node)
+
+        # The 'render' method's 'w' param should be typed as Widget, not Any
+        from mypyc_micropython.ir import CType
+        render_method = class_ir.methods.get("render")
+        assert render_method is not None
+        # Params: [("w", CType)] -- self is excluded in method IR
+        w_param = render_method.params[0]
+        assert w_param[0] == "w"
+        # Widget maps to MP_OBJ_T regardless, but arg_types tracks the C string
+        assert w_param[1] == CType.MP_OBJ_T
