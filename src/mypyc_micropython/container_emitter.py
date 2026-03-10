@@ -21,12 +21,16 @@ from .ir import (
     CompareIR,
     ConstIR,
     DictNewIR,
+    DynamicCallIR,
+    FuncRefIR,
     GetItemIR,
     InstrIR,
     IRType,
     ListCompIR,
     ListNewIR,
     MethodCallIR,
+    ModuleAttrIR,
+    ModuleCallIR,
     ModuleRefIR,
     NameIR,
     ParamAttrIR,
@@ -37,12 +41,31 @@ from .ir import (
     SetNewIR,
     SiblingClassInstantiationIR,
     SubscriptIR,
+    TempAssignIR,
     TempIR,
     TupleNewIR,
     UnaryOpIR,
     UnboxIR,
     ValueIR,
 )
+
+
+def _emit_dotted_module_import(module_name: str) -> str:
+    """Generate C code for importing a (possibly dotted) module name.
+
+    For simple names like 'math':
+        mp_import_name(MP_QSTR_math, mp_const_none, MP_OBJ_NEW_SMALL_INT(0))
+
+    For dotted names like 'lvgl_mvu.program':
+        mp_load_attr(
+            mp_import_name(MP_QSTR_lvgl_mvu, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)),
+            MP_QSTR_program)
+    """
+    parts = module_name.split('.')
+    expr = f"mp_import_name(MP_QSTR_{parts[0]}, mp_const_none, MP_OBJ_NEW_SMALL_INT(0))"
+    for part in parts[1:]:
+        expr = f"mp_load_attr({expr}, MP_QSTR_{part})"
+    return expr
 
 
 class ContainerEmitter:
@@ -72,6 +95,8 @@ class ContainerEmitter:
             return self.emit_attr_access(instr)
         elif isinstance(instr, ListCompIR):
             return self.emit_list_comp(instr)
+        elif isinstance(instr, TempAssignIR):
+            return self.emit_temp_assign(instr)
         return [f"    /* unsupported IR instruction: {type(instr).__name__} */"]
 
     def emit_prelude(self, prelude: list[InstrIR]) -> list[str]:
@@ -154,17 +179,26 @@ class ContainerEmitter:
         return [f"    mp_obj_subscr({container_c}, {key_c}, {val_c});"]
 
     def emit_method_call(self, instr: MethodCallIR) -> list[str]:
-        """MethodCallIR → method-specific C code via table dispatch."""
+        """MethodCallIR → method-specific C code via table dispatch.
+
+        Only use builtin method handlers for builtin types (list, dict, set, str).
+        Custom class methods always use generic mp_load_method dispatch.
+        """
         method = instr.method
         receiver_c = self._value_to_c(instr.receiver)
 
-        handler = _METHOD_TABLE.get(method)
-        if handler is not None:
-            return handler(self, instr, receiver_c)
+        # Check if receiver is a builtin type that should use optimized handlers
+        builtin_types = {None, "list", "dict", "set", "str", "bytes"}
+        receiver_type = instr.receiver_py_type
+
+        # Only use table dispatch for builtin types
+        if receiver_type in builtin_types:
+            handler = _METHOD_TABLE.get(method)
+            if handler is not None:
+                return handler(self, instr, receiver_c)
 
         # Fallback: generic mp_load_method + mp_call_method pattern
         return self._emit_generic_method_call(instr, receiver_c)
-
     def emit_box(self, instr: BoxIR) -> list[str]:
         """BoxIR → mp_obj_new_int/float/bool."""
         result_name = instr.result.name
@@ -194,6 +228,13 @@ class ContainerEmitter:
         c_type = instr.result_type.to_c_type_str()
         access_expr = f"(({instr.class_c_name}_obj_t *)MP_OBJ_TO_PTR({obj_c}))->{instr.attr_name}"
         return [f"    {c_type} {result_name} = {access_expr};"]
+
+    def emit_temp_assign(self, instr: TempAssignIR) -> list[str]:
+        """Emit a temp variable assignment: mp_obj_t _tmpN = <value>;"""
+        result_name = instr.result.name
+        value_c = self._value_to_c(instr.value)
+        c_type = instr.result.ir_type.to_c_type_str()
+        return [f"    {c_type} {result_name} = {value_c};"]
 
     def emit_list_comp(self, instr: ListCompIR) -> list[str]:
         """Emit list comprehension as inline loop.
@@ -571,9 +612,16 @@ class ContainerEmitter:
             return value.name
         elif isinstance(value, NameIR):
             return value.c_name
+        elif isinstance(value, FuncRefIR):
+            # Function reference as first-class value
+            return f"MP_OBJ_FROM_PTR(&{value.c_name}_obj)"
         elif isinstance(value, ModuleRefIR):
-            # Import the module at runtime
-            return f"mp_import_name(MP_QSTR_{value.module_name}, mp_const_none, MP_OBJ_NEW_SMALL_INT(0))"
+            # Import the module at runtime (supports dotted names)
+            return _emit_dotted_module_import(value.module_name)
+        elif isinstance(value, ModuleAttrIR):
+            # Import module and load attribute at runtime (supports dotted names)
+            mod_import = _emit_dotted_module_import(value.module_name)
+            return f"mp_load_attr({mod_import}, MP_QSTR_{value.attr_name})"
         elif isinstance(value, ConstIR):
             return self._const_to_c(value)
         elif isinstance(value, BinOpIR):
@@ -687,6 +735,69 @@ class ContainerEmitter:
             args_str = ", ".join(boxed_args)
             n = len(boxed_args)
             return f"{c_name}_make_new(&{c_name}_type, {n}, 0, (const mp_obj_t[]){{{args_str}}})"
+        elif isinstance(value, ModuleCallIR):
+            # Module function call: module.func(args, **kwargs)
+            mod_import = _emit_dotted_module_import(value.module_name)
+            fn_expr = f"mp_load_attr({mod_import}, MP_QSTR_{value.func_name})"
+            boxed_args = [self._box_value_ir(a) for a in value.args]
+            # Build keyword args (interleaved: key, value, key, value, ...)
+            boxed_kwargs = []
+            for kw_name, kw_val in value.kwargs:
+                boxed_kwargs.append(f"MP_OBJ_NEW_QSTR(MP_QSTR_{kw_name})")
+                boxed_kwargs.append(self._box_value_ir(kw_val))
+            n_args = len(boxed_args)
+            n_kw = len(value.kwargs)
+            if n_kw > 0:
+                all_args = boxed_args + boxed_kwargs
+                args_str = ", ".join(all_args)
+                return (
+                    f"mp_call_function_n_kw({fn_expr}, "
+                    f"{n_args}, {n_kw}, (const mp_obj_t[]){{{args_str}}})"
+                )
+            if n_args == 0:
+                return f"mp_call_function_0({fn_expr})"
+            elif n_args == 1:
+                return f"mp_call_function_1({fn_expr}, {boxed_args[0]})"
+            elif n_args == 2:
+                return f"mp_call_function_2({fn_expr}, {boxed_args[0]}, {boxed_args[1]})"
+            else:
+                args_str = ", ".join(boxed_args)
+                return (
+                    f"mp_call_function_n_kw({fn_expr}, "
+                    f"{n_args}, 0, (const mp_obj_t[]){{{args_str}}})"
+                )
+        elif isinstance(value, DynamicCallIR):
+            # Dynamic callable invocation: local_var(args)
+            callable_var = value.callable_var
+            boxed_args = [self._box_value_ir(a) for a in value.args]
+            # Build keyword args (interleaved: key, value, key, value, ...)
+            boxed_kwargs = []
+            for kw_name, kw_val in value.kwargs:
+                boxed_kwargs.append(f"MP_OBJ_NEW_QSTR(MP_QSTR_{kw_name})")
+                boxed_kwargs.append(self._box_value_ir(kw_val))
+            n_args = len(boxed_args)
+            n_kw = len(value.kwargs)
+            if n_kw > 0:
+                all_args = boxed_args + boxed_kwargs
+                args_str = ", ".join(all_args)
+                return (
+                    f"mp_call_function_n_kw({callable_var}, "
+                    f"{n_args}, {n_kw}, (const mp_obj_t[]){{{args_str}}})"
+                )
+            if n_args == 0:
+                return f"mp_call_function_0({callable_var})"
+            elif n_args == 1:
+                return f"mp_call_function_1({callable_var}, {boxed_args[0]})"
+            elif n_args == 2:
+                return (
+                    f"mp_call_function_2({callable_var}, {boxed_args[0]}, {boxed_args[1]})"
+                )
+            else:
+                args_str = ", ".join(boxed_args)
+                return (
+                    f"mp_call_function_n_kw({callable_var}, "
+                    f"{n_args}, 0, (const mp_obj_t[]){{{args_str}}})"
+                )
         return "/* unknown value */"
 
     def _const_to_c(self, const: ConstIR) -> str:

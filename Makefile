@@ -213,6 +213,7 @@ compile-all: check-board
 			mpy-compile "$(EXTMOD_DIR)/lvui/" -o "$(MODULES_DIR)/usermod_lvui" || exit 1; \
 		fi; \
 		echo ""; \
+		echo ""; \
 		echo "Compiling extmod/lvgl_mvu package..."; \
 		if [ -f "$(EXTMOD_DIR)/lvgl_mvu/__init__.py" ]; then \
 			echo "Compiling package $(EXTMOD_DIR)/lvgl_mvu/ -> $(MODULES_DIR)/usermod_lvgl_mvu/"; \
@@ -253,6 +254,7 @@ compile-all: check-board
 	@if [ -d "$(MODULES_DIR)/usermod_lvgl_mvu" ]; then \
 		echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_lvgl_mvu/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
 	fi
+	@echo "Done! Ready to build."
 	@echo "Done! Ready to build."
 
 compile-lvgl-only:

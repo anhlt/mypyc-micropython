@@ -2,7 +2,7 @@
 
 > Fabulous-style Model-View-Update framework for LVGL widgets, compiled to native C via mypyc-micropython.
 
-**Status**: Milestone 4 Complete, Starting Milestone 5
+**Status**: Milestone 5 Complete (P0 Widgets), Starting Milestone 6
 **Created**: 2026-03-07  
 **Target**: LVGL 9.6 / MicroPython 1.28.0
 
@@ -228,27 +228,27 @@ incorrect C function names. This has been fixed in PR #45 with:
 
 ---
 
+
 ### Milestone 5: P0 Widgets (Week 5)
 
 **Goal**: Essential widgets for basic UIs.
 
 | Task | Description | Status |
 |------|-------------|--------|
-| 5.1 | Screen widget (root container) | Pending |
-| 5.2 | Label widget with text attributes | Pending |
-| 5.3 | Button widget with click handler | Pending |
-| 5.4 | Container widget (lv_obj) | Pending |
-| 5.5 | VStack/HStack flex layouts | Pending |
-| 5.6 | Device tests on ESP32 | Pending |
+| 5.1 | Screen widget (root container) | Done |
+| 5.2 | Label widget with text attributes | Done |
+| 5.3 | Button widget with click handler | Done |
+| 5.4 | Container widget (lv_obj) | Done |
+| 5.5 | VStack/HStack flex layouts | Done |
+| 5.6 | Device tests on ESP32 | Done |
 
 **Deliverables**:
-- `src/lvgl_mvu/dsl.py`
-- `src/lvgl_mvu/layouts.py`
-- `src/lvgl_mvu/widgets/base.py`
-- `src/lvgl_mvu/widgets/label.py`
-- `src/lvgl_mvu/widgets/button.py`
-- `examples/counter_app.py`
-- `tests/device/run_mvu_p0_tests.py`
+- `extmod/lvgl_mvu/dsl.py` - Screen, Container, Label, Button DSL functions
+- `extmod/lvgl_mvu/layouts.py` - VStack, HStack flex layout builders
+- `extmod/lvgl_mvu/factories.py` - LVGL object creation factories
+- `extmod/lvgl_mvu/appliers.py` - Attribute apply functions for P0 widgets
+- `examples/counter_mvu.py` - Counter app demonstrating MVU with P0 widgets
+- `tests/device/run_mvu_p0_tests.py` - Device tests for P0 widgets
 
 **Exit Criteria**:
 - Counter app runs on device

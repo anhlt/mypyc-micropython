@@ -83,6 +83,7 @@ from .ir import (
     SubscriptAssignIR,
     SubscriptIR,
     SuperCallIR,
+    TempAssignIR,
     TempIR,
     TryIR,
     TupleNewIR,
@@ -1642,6 +1643,20 @@ class IRBuilder:
                     elif const_val is None:
                         return ConstIR(ir_type=IRType.OBJ, value=None)
 
+        # Check for imported names that are not sibling constants (runtime import needed)
+        # e.g., `from lvgl_mvu.program import Cmd` -> Cmd resolves to
+        # mp_load_attr(mp_import_name(MP_QSTR_lvgl_mvu_program, ...), MP_QSTR_Cmd)
+        if name in self._imported_from:
+            source_module = self._imported_from[name]
+            # Skip if this is a sibling module (handled by direct C calls)
+            if source_module not in self._sibling_modules:
+                self._uses_imports = True
+                return ModuleAttrIR(
+                    ir_type=IRType.OBJ,
+                    module_name=source_module,
+                    attr_name=name,
+                )
+
         if name in self._module_vars and name not in self._var_types:
             return NameIR(
                 ir_type=IRType.OBJ,
@@ -1801,7 +1816,38 @@ class IRBuilder:
             return self._build_method_call(expr, locals_)
 
         if not isinstance(expr.func, ast.Name):
-            return ConstIR(ir_type=IRType.OBJ, value=None), []
+            # Handle callable-call-result: e.g., Screen()(...) where expr.func is ast.Call
+            # Evaluate the inner expression to get the callable, then call it dynamically
+            func_val, func_prelude = self._build_expr(expr.func, locals_)
+            temp = self._fresh_temp()
+            temp_ir = TempIR(ir_type=IRType.OBJ, name=temp)
+            # Store the callable in a temp variable
+            assign_instr = TempAssignIR(result=temp_ir, value=func_val)
+            # Build args for the outer call
+            args: list[ValueIR] = []
+            arg_preludes: list[list] = []
+            for arg in expr.args:
+                val, prelude = self._build_expr(arg, locals_)
+                args.append(val)
+                arg_preludes.append(prelude)
+            kwargs: list[tuple[str, ValueIR]] = []
+            kwarg_preludes: list[list] = []
+            for kw in expr.keywords:
+                if kw.arg is None:
+                    continue
+                val, prelude = self._build_expr(kw.value, locals_)
+                kwargs.append((kw.arg, val))
+                kwarg_preludes.append(prelude)
+            all_preludes = func_prelude + [assign_instr]
+            all_preludes.extend(p for pl in arg_preludes for p in pl)
+            all_preludes.extend(p for pl in kwarg_preludes for p in pl)
+            return DynamicCallIR(
+                ir_type=IRType.OBJ,
+                callable_var=temp,
+                args=args,
+                kwargs=kwargs,
+                arg_preludes=arg_preludes,
+            ), all_preludes
 
         func_name = expr.func.id
 

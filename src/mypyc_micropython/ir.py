@@ -824,6 +824,19 @@ class LoweredExpr:
     prelude: list[InstrIR] = field(default_factory=list)
 
 
+@dataclass
+class TempAssignIR(InstrIR):
+    """Assign an arbitrary value expression to a temp variable in a prelude.
+
+    Used when a complex expression (e.g., a function call result) needs to be
+    stored in a temp before further use (e.g., callable-call-result pattern).
+
+    Generated C: mp_obj_t _tmpN = <value_expr>;
+    """
+
+    result: TempIR
+    value: ValueIR
+
 # ---------------------------------------------------------------------------
 # Statement IR - Full statement-level intermediate representation
 # ---------------------------------------------------------------------------

@@ -1,16 +1,37 @@
 """LVGL MVU Framework - Fabulous-style Model-View-Update for LVGL widgets.
 
-Compiles to a single MicroPython C module with namespaced submodules:
+Compiles to a single MicroPython C module with namespaced submodules::
+
     import lvgl_mvu
+
+    # Core types
     lvgl_mvu.widget.Widget
     lvgl_mvu.widget.WidgetKey
     lvgl_mvu.attrs.AttrKey
     lvgl_mvu.builders.WidgetBuilder
+
+    # Diffing and reconciliation
     lvgl_mvu.diff.diff_widgets
     lvgl_mvu.viewnode.ViewNode
     lvgl_mvu.reconciler.Reconciler
+
+    # MVU runtime
     lvgl_mvu.program.Program
     lvgl_mvu.program.Cmd
     lvgl_mvu.program.Sub
     lvgl_mvu.app.App
+
+    # P0 Widget DSL (Milestone 5)
+    lvgl_mvu.dsl.Screen
+    lvgl_mvu.dsl.Container
+    lvgl_mvu.dsl.Label
+    lvgl_mvu.dsl.Button
+
+    # Layouts
+    lvgl_mvu.layouts.VStack
+    lvgl_mvu.layouts.HStack
+
+    # Factories and appliers
+    lvgl_mvu.factories.register_p0_factories
+    lvgl_mvu.appliers.register_p0_appliers
 """
