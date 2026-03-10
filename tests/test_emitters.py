@@ -26,6 +26,7 @@ from mypyc_micropython.ir import (
     ConstIR,
     ContinueIR,
     CType,
+    DataclassInfo,
     DictNewIR,
     ExprStmtIR,
     FieldIR,
@@ -124,7 +125,7 @@ def make_method_ir(
     dummy_args = ast.arguments(
         posonlyargs=[],
         args=[ast.arg(arg="self", annotation=None)]
-             + [ast.arg(arg=p[0], annotation=None) for p in (params or [])],
+        + [ast.arg(arg=p[0], annotation=None) for p in (params or [])],
         kwonlyargs=[],
         kw_defaults=[],
         defaults=[],
@@ -148,6 +149,7 @@ def make_method_ir(
         body_ast=dummy_body_ast,
         max_temp=max_temp,
     )
+
 
 def make_temp(name: str, ir_type: IRType = IRType.OBJ) -> TempIR:
     """Create a temporary variable."""
@@ -1298,7 +1300,6 @@ class TestEmitMethodCall:
         assert "MP_QSTR_value" in c_code
 
 
-
 # ============================================================================
 # Test: Edge Cases
 # ============================================================================
@@ -1777,12 +1778,11 @@ class TestSelfMethodCallArgumentTypes:
         c_code = emitter.emit_native(body_ir)
 
         # Should pass int directly and obj directly (no mp_obj_get_int on obj)
-        assert "mp_obj_get_int(obj)" not in c_code, (
-            "Object argument should not be unboxed"
-        )
+        assert "mp_obj_get_int(obj)" not in c_code, "Object argument should not be unboxed"
         assert "test_Widget_update_native(self, 0, obj)" in c_code, (
             "Should pass int constant and object variable correctly"
         )
+
 
 class TestCompareIdentityEmitter:
     """Tests for identity comparison emission (is, is not).
@@ -1810,13 +1810,9 @@ class TestCompareIdentityEmitter:
         c_code = FunctionEmitter(func_ir).emit()[0]
 
         # Should use direct pointer comparison
-        assert "x == mp_const_none" in c_code, (
-            "'is None' should compile to pointer comparison"
-        )
+        assert "x == mp_const_none" in c_code, "'is None' should compile to pointer comparison"
         # Should NOT use mp_obj_get_int
-        assert "mp_obj_get_int" not in c_code, (
-            "'is None' should not call mp_obj_get_int"
-        )
+        assert "mp_obj_get_int" not in c_code, "'is None' should not call mp_obj_get_int"
 
     def test_emit_is_not_none_comparison(self):
         """'is not None' should emit pointer comparison with !=."""
@@ -1837,9 +1833,7 @@ class TestCompareIdentityEmitter:
         c_code = FunctionEmitter(func_ir).emit()[0]
 
         # Should use != for 'is not'
-        assert "x != mp_const_none" in c_code, (
-            "'is not None' should compile to != comparison"
-        )
+        assert "x != mp_const_none" in c_code, "'is not None' should compile to != comparison"
         assert "mp_obj_get_int" not in c_code
 
     def test_emit_is_comparison_between_objects(self):
@@ -1860,7 +1854,152 @@ class TestCompareIdentityEmitter:
         )
         c_code = FunctionEmitter(func_ir).emit()[0]
 
-        assert "a == b" in c_code, (
-            "'a is b' should compile to pointer comparison"
-        )
+        assert "a == b" in c_code, "'a is b' should compile to pointer comparison"
         assert "mp_obj_get_int" not in c_code
+
+
+class TestTypeSystemEmission:
+    def test_emit_general_param_no_unbox(self):
+        func_ir = make_func(
+            params=[("x", CType.GENERAL)],
+            return_type=CType.GENERAL,
+            body=[ReturnIR(value=make_name("x", IRType.OBJ))],
+        )
+        func_ir.arg_types = ["mp_obj_t"]
+
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        assert "mp_obj_t x = x_obj;" in c_code
+        assert "mp_obj_get_int" not in c_code
+
+    def test_emit_general_return_no_box(self):
+        func_ir = make_func(
+            params=[("x", CType.GENERAL)],
+            return_type=CType.GENERAL,
+            body=[ReturnIR(value=make_name("x", IRType.OBJ))],
+        )
+        func_ir.arg_types = ["mp_obj_t"]
+
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        assert "return x;" in c_code
+        assert "mp_obj_new_int" not in c_code
+
+    def test_emit_literal_erased_to_int(self):
+        func_ir = make_func(
+            params=[("x", CType.MP_INT_T)],
+            return_type=CType.MP_INT_T,
+            body=[ReturnIR(value=make_name("x", IRType.INT))],
+        )
+        func_ir.arg_types = ["mp_int_t"]
+
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        assert "mp_int_t x = mp_obj_get_int(x_obj);" in c_code
+
+    def test_emit_typevar_unbounded_as_obj(self):
+        func_ir = make_func(
+            params=[("x", CType.GENERAL)],
+            return_type=CType.GENERAL,
+            body=[ReturnIR(value=make_name("x", IRType.OBJ))],
+        )
+        func_ir.arg_types = ["mp_obj_t"]
+
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        assert "mp_obj_t x = x_obj;" in c_code
+        assert "mp_obj_get_int(x_obj)" not in c_code
+
+    def test_emit_typevar_bounded_int(self):
+        func_ir = make_func(
+            params=[("x", CType.MP_INT_T)],
+            return_type=CType.MP_INT_T,
+            body=[ReturnIR(value=make_name("x", IRType.INT))],
+        )
+        func_ir.arg_types = ["mp_int_t"]
+
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        assert "mp_int_t x = mp_obj_get_int(x_obj);" in c_code
+        assert "return mp_obj_new_int(x);" in c_code
+
+    def test_emit_mixed_general_and_typed(self):
+        func_ir = make_func(
+            params=[("x", CType.MP_INT_T), ("y", CType.GENERAL)],
+            return_type=CType.MP_INT_T,
+            body=[ReturnIR(value=make_name("x", IRType.INT))],
+        )
+        func_ir.arg_types = ["mp_int_t", "mp_obj_t"]
+
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        assert "mp_int_t x = mp_obj_get_int(x_obj);" in c_code
+        assert "mp_obj_t y = y_obj;" in c_code
+        assert "mp_obj_get_int(y_obj)" not in c_code
+
+
+class TestClassEmitterGeneralFields:
+    """Tests for class emission with CType.GENERAL fields."""
+
+    def test_general_field_init_to_none(self):
+        """GENERAL fields should be initialized to mp_const_none in make_new."""
+        from mypyc_micropython.class_emitter import ClassEmitter
+
+        class_ir = ClassIR(
+            name="GenericBox",
+            c_name="test_GenericBox",
+            module_name="test",
+            fields=[
+                FieldIR(name="value", py_type="object", c_type=CType.GENERAL),
+            ],
+        )
+        emitter = ClassEmitter(class_ir, "test")
+        init_code = "\n".join(emitter.emit_make_new())
+        assert "self->value = mp_const_none;" in init_code
+
+    def test_general_field_struct_uses_mp_obj_t(self):
+        """GENERAL fields should emit as mp_obj_t in struct."""
+        from mypyc_micropython.class_emitter import ClassEmitter
+
+        class_ir = ClassIR(
+            name="GenericBox",
+            c_name="test_GenericBox",
+            module_name="test",
+            fields=[
+                FieldIR(name="value", py_type="object", c_type=CType.GENERAL),
+            ],
+        )
+        emitter = ClassEmitter(class_ir, "test")
+        struct_code = "\n".join(emitter.emit_struct())
+        assert "mp_obj_t value;" in struct_code
+
+    def test_general_field_eq_uses_mp_obj_equal(self):
+        """GENERAL fields in dataclass __eq__ should use mp_obj_equal()."""
+        from mypyc_micropython.class_emitter import ClassEmitter
+
+        fields = [
+            FieldIR(name="key", py_type="int", c_type=CType.MP_INT_T),
+            FieldIR(name="value", py_type="object", c_type=CType.GENERAL),
+        ]
+        class_ir = ClassIR(
+            name="GenericPair",
+            c_name="test_GenericPair",
+            module_name="test",
+            is_dataclass=True,
+            fields=fields,
+            dataclass_info=DataclassInfo(fields=fields, eq=True),
+        )
+        emitter = ClassEmitter(class_ir, "test")
+        binary_code = "\n".join(emitter.emit_binary_op_handler())
+        assert "mp_obj_equal(lhs->value, rhs->value)" in binary_code
+        assert "lhs->key == rhs->key" in binary_code
+
+    def test_compute_layout_general_field_size(self):
+        """GENERAL fields should be treated like MP_OBJ_T (8 bytes) in layout."""
+        class_ir = ClassIR(
+            name="GenericBox",
+            c_name="test_GenericBox",
+            module_name="test",
+            fields=[
+                FieldIR(name="value", py_type="object", c_type=CType.GENERAL),
+                FieldIR(name="count", py_type="int", c_type=CType.MP_INT_T),
+            ],
+        )
+        class_ir.compute_layout()
+        assert class_ir.fields[0].offset == 0  # value: mp_obj_t at offset 0
+        assert class_ir.fields[1].offset == 8  # count: mp_int_t at offset 8
+        assert class_ir.struct_size == 16

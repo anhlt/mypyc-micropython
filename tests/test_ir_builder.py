@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import ast
+import sys
+
+import pytest
 
 from mypyc_micropython.ir import (
     AnnAssignIR,
@@ -1614,7 +1617,6 @@ def sort_list(lst: list) -> list:
         assert isinstance(kw_val, NameIR)
 
 
-
 class TestBuildContext:
     """Tests for BuildContext and method context detection."""
 
@@ -1640,14 +1642,14 @@ class TestParamPyTypesTracking:
 
     def test_param_py_type_tracked_for_receiver(self):
         """Parameters with class annotations track Python types for receiver_py_type."""
-        source = '''
+        source = """
 class Point:
     x: int
     y: int
 
 def get_x(p: Point) -> int:
     return p.x
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
 
@@ -1671,10 +1673,10 @@ def get_x(p: Point) -> int:
 
     def test_method_call_on_typed_param_has_receiver_py_type(self):
         """Method calls on typed params should have receiver_py_type set."""
-        source = '''
+        source = """
 def process_list(items: list) -> int:
     return len(items)
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         func_ir = builder.build_function(tree.body[0])
@@ -1691,10 +1693,10 @@ class TestContainerPreludeHandling:
 
     def test_list_with_method_call_elements(self):
         """List literals with method call elements should collect preludes with type info."""
-        source = '''
+        source = """
 def f(lst: list) -> list:
     return [lst.pop(), 1, 2]
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         func_ir = builder.build_function(tree.body[0])
@@ -1716,11 +1718,11 @@ def f(lst: list) -> list:
         """Dict literals with method call values should collect preludes with type info."""
         from mypyc_micropython.ir import DictNewIR
 
-        source = '''
+        source = """
 def f(lst: list) -> dict:
     d: dict = {"val": lst.pop()}
     return d
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         func_ir = builder.build_function(tree.body[0])
@@ -1739,10 +1741,10 @@ def f(lst: list) -> dict:
 
     def test_tuple_with_method_call_elements(self):
         """Tuple literals with method call elements should collect preludes with type info."""
-        source = '''
+        source = """
 def f(lst: list) -> tuple:
     return (lst.pop(), 1)
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         func_ir = builder.build_function(tree.body[0])
@@ -1763,10 +1765,10 @@ def f(lst: list) -> tuple:
         """Set literals with method call elements should collect preludes with type info."""
         from mypyc_micropython.ir import SetNewIR
 
-        source = '''
+        source = """
 def f(lst: list) -> set:
     return {lst.pop(), 1, 2}
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         func_ir = builder.build_function(tree.body[0])
@@ -1789,10 +1791,10 @@ class TestObjectTypedParamAttrAccess:
 
     def test_object_param_uses_dynamic_attr(self):
         """Parameters typed as 'object' should use dynamic attr access."""
-        source = '''
+        source = """
 def get_value(obj: object) -> int:
     return obj.value
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         func_ir = builder.build_function(tree.body[0])
@@ -1805,10 +1807,10 @@ def get_value(obj: object) -> int:
 
     def test_untyped_param_defaults_to_object(self):
         """Untyped parameters default to mp_obj_t (object)."""
-        source = '''
+        source = """
 def process(x):
     return x
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         func_ir = builder.build_function(tree.body[0])
@@ -1822,10 +1824,10 @@ class TestIRTypeInfoCompleteness:
 
     def test_method_call_has_result_temp_with_ir_type(self):
         """MethodCallIR.result TempIR should have ir_type set."""
-        source = '''
+        source = """
 def f(lst: list) -> int:
     return lst.pop()
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         func_ir = builder.build_function(tree.body[0])
@@ -1842,10 +1844,10 @@ def f(lst: list) -> int:
 
     def test_method_call_receiver_has_ir_type(self):
         """MethodCallIR.receiver should have ir_type set."""
-        source = '''
+        source = """
 def f(lst: list):
     lst.append(1)
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         func_ir = builder.build_function(tree.body[0])
@@ -1859,14 +1861,14 @@ def f(lst: list):
 
     def test_param_attr_has_complete_type_info(self):
         """ParamAttrIR should have class_c_name, result_type, and is_trait_type."""
-        source = '''
+        source = """
 class Point:
     x: int
     y: int
 
 def get_x(p: Point) -> int:
     return p.x
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
 
@@ -1892,10 +1894,10 @@ def get_x(p: Point) -> int:
 
     def test_binop_has_ir_type(self):
         """BinOpIR should have ir_type based on operand types."""
-        source = '''
+        source = """
 def add(a: int, b: int) -> int:
     return a + b
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         func_ir = builder.build_function(tree.body[0])
@@ -1910,10 +1912,10 @@ def add(a: int, b: int) -> int:
         """ConstIR should have correct ir_type based on value type."""
         from mypyc_micropython.ir import ConstIR
 
-        source = '''
+        source = """
 def f() -> int:
     return 42
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         func_ir = builder.build_function(tree.body[0])
@@ -1927,10 +1929,10 @@ def f() -> int:
 
     def test_name_has_ir_type(self):
         """NameIR should have ir_type matching variable type."""
-        source = '''
+        source = """
 def f(x: int) -> int:
     return x
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         func_ir = builder.build_function(tree.body[0])
@@ -1947,10 +1949,10 @@ def f(x: int) -> int:
         """TempIR generated for expressions should have ir_type."""
         from mypyc_micropython.ir import TempIR
 
-        source = '''
+        source = """
 def f(d: dict) -> object:
     return d.get("key")
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         func_ir = builder.build_function(tree.body[0])
@@ -1967,10 +1969,10 @@ def f(d: dict) -> object:
 
     def test_compare_has_bool_ir_type(self):
         """CompareIR should have BOOL ir_type."""
-        source = '''
+        source = """
 def is_positive(x: int) -> bool:
     return x > 0
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         func_ir = builder.build_function(tree.body[0])
@@ -1983,10 +1985,10 @@ def is_positive(x: int) -> bool:
 
     def test_subscript_has_ir_type(self):
         """SubscriptIR should have ir_type."""
-        source = '''
+        source = """
 def get_first(lst: list) -> object:
     return lst[0]
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         func_ir = builder.build_function(tree.body[0])
@@ -1999,13 +2001,13 @@ def get_first(lst: list) -> object:
 
     def test_list_of_int_has_element_type_info(self):
         """list[int] should track element type for proper emission."""
-        source = '''
+        source = """
 def sum_list(nums: list[int]) -> int:
     total: int = 0
     for n in nums:
         total += n
     return total
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         func_ir = builder.build_function(tree.body[0])
@@ -2021,13 +2023,13 @@ def sum_list(nums: list[int]) -> int:
 
     def test_list_of_str_has_element_type_info(self):
         """list[str] should track element type for proper emission."""
-        source = '''
+        source = """
 def join_strings(words: list[str]) -> str:
     result: str = ""
     for w in words:
         result = result + w
     return result
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         func_ir = builder.build_function(tree.body[0])
@@ -2040,7 +2042,7 @@ def join_strings(words: list[str]) -> str:
 
     def test_dict_field_in_class_has_type_info(self):
         """Dict field in class should have complete type info for attr access."""
-        source = '''
+        source = """
 class Config:
     settings: dict
 
@@ -2049,7 +2051,7 @@ class Config:
 
 def get_setting(cfg: Config, key: str) -> object:
     return cfg.settings.get(key)
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
 
@@ -2081,7 +2083,7 @@ def get_setting(cfg: Config, key: str) -> object:
 
     def test_nested_dict_in_class_has_type_info(self):
         """Nested dict access in class should maintain type info chain."""
-        source = '''
+        source = """
 class Cache:
     data: dict
 
@@ -2091,7 +2093,7 @@ class Cache:
 def cache_get(c: Cache, key: str) -> object:
     d: dict = c.data
     return d[key]
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
 
@@ -2119,3 +2121,73 @@ def cache_get(c: Cache, key: str) -> object:
         subscript = ret.value
         assert isinstance(subscript, SubscriptIR)
         assert subscript.ir_type == IRType.OBJ
+
+
+class TestTypeSystemIR:
+    def test_literal_erased_to_int_ctype(self):
+        source = """
+from typing import Literal
+
+def f(x: Literal[3]) -> int:
+    return x
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = None
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                func_ir = builder.build_function(node)
+        assert func_ir is not None
+        assert func_ir.params[0][1] == CType.MP_INT_T
+
+    @pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12+")
+    def test_typevar_pep695_resolves_in_params(self):
+        source = """
+def f[T](x: T) -> T:
+    return x
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = None
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                func_ir = builder.build_function(node)
+        assert func_ir is not None
+        assert func_ir.params[0][1] == CType.GENERAL
+
+    @pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12+")
+    def test_typevar_bounded_resolves_in_params(self):
+        source = """
+def f[N: int](x: N) -> N:
+    return x
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        func_ir = None
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                func_ir = builder.build_function(node)
+        assert func_ir is not None
+        assert func_ir.params[0][1] == CType.MP_INT_T
+
+    @pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12+")
+    def test_typevar_pep695_no_leak_between_functions(self):
+        """PEP 695 TypeVars from one function should not leak to the next."""
+        source = """
+def f[T](x: T) -> T:
+    return x
+
+def g(y: int) -> int:
+    return y
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        funcs = []
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                funcs.append(builder.build_function(node))
+        assert len(funcs) == 2
+        # f[T] should have GENERAL param
+        assert funcs[0].params[0][1] == CType.GENERAL
+        # g should have int param, NOT GENERAL (no leak from f)
+        assert funcs[1].params[0][1] == CType.MP_INT_T

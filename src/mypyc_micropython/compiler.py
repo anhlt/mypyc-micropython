@@ -353,8 +353,10 @@ def _compile_module_parts(
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             ir_builder.register_import(node)
         elif isinstance(node, ast.Assign):
-            # Register module-level constants (NAME = literal)
-            ir_builder.register_constant(node)
+            # Register TypeVar assignments: T = TypeVar('T', bound=int)
+            if not ir_builder.register_typevar(node):
+                # Register module-level constants (NAME = literal)
+                ir_builder.register_constant(node)
         elif isinstance(node, ast.AnnAssign):
             ir_builder.register_module_var(node)
         elif isinstance(node, ast.ClassDef):

@@ -897,333 +897,62 @@ t("direct access", on.get_x_direct(p1), "10")
 t("full test", on.test_optional_narrowing(), "10,42,20,-1,10,20,no point,100,30,0,99,0,10")
 
 gc.collect()
-suite("lvgl_mvu_diff")
-import lvgl_mvu
 
-Widget = lvgl_mvu.widget.Widget
-ScalarAttr = lvgl_mvu.widget.ScalarAttr
-diff_widgets = lvgl_mvu.diff.diff_widgets
-diff_scalars = lvgl_mvu.diff.diff_scalars
-can_reuse = lvgl_mvu.diff.can_reuse
-diff_children = lvgl_mvu.diff.diff_children
+# NOTE: LVGL test suites (lvgl_mvu_diff, lvgl_mvu_viewnode, lvgl_mvu_reconciler)
+# are in tests/device/run_lvgl_tests.py — run separately with:
+#   mpremote connect PORT run tests/device/run_lvgl_tests.py
 
-# -- Widget & ScalarAttr construction --
-LABEL = 2
-BUTTON = 3
-CONTAINER = 1
+# ---- typed_funcs ----
+suite("typed_funcs")
+import typed_funcs as tf
 
-a1 = ScalarAttr(1, "hello")
-t("scalar_attr key", a1.key, "1")
-t("scalar_attr value", a1.value, "hello")
+# TypeVar unbounded (identity passthrough)
+t("identity(42)", tf.identity(42), "42")
+t("identity(str)", tf.identity("hello"), "hello")
 
-w1 = Widget(LABEL, "", (ScalarAttr(1, "text1"),), (), ())
-t("widget key", w1.key, str(LABEL))
-t("widget user_key", w1.user_key, "")
-t("widget scalar len", len(w1.scalar_attrs), "1")
-t("widget children len", len(w1.children), "0")
-t("widget events len", len(w1.event_handlers), "0")
+# TypeVar bounded to int
+t("int_identity(5)", tf.int_identity(5), "5")
+t("int_identity(0)", tf.int_identity(0), "0")
+t("int_identity(-3)", tf.int_identity(-3), "-3")
 
-# -- diff_scalars: no changes --
-attrs_a = (ScalarAttr(1, 10), ScalarAttr(2, 20))
-attrs_b = (ScalarAttr(1, 10), ScalarAttr(2, 20))
-sc = diff_scalars(attrs_a, attrs_b)
-t("scalars no change", len(sc), "0")
+# Literal erasure (int)
+t("get_status(0)", tf.get_status(0), "10")
+t("get_status(1)", tf.get_status(1), "11")
+t("get_status(2)", tf.get_status(2), "12")
 
-# -- diff_scalars: value updated --
-attrs_c = (ScalarAttr(1, 10), ScalarAttr(2, 99))
-sc2 = diff_scalars(attrs_a, attrs_c)
-t("scalars updated len", len(sc2), "1")
-t("scalars updated kind", sc2[0].kind, "updated")
-t("scalars updated key", sc2[0].key, "2")
-t("scalars updated old", sc2[0].old_value, "20")
-t("scalars updated new", sc2[0].new_value, "99")
+# Literal erasure (bool)
+t("check_flag(T)", tf.check_flag(True), "True")
+t("check_flag(F)", tf.check_flag(False), "False")
 
-# -- diff_scalars: added --
-attrs_d = (ScalarAttr(1, 10), ScalarAttr(2, 20), ScalarAttr(3, 30))
-sc3 = diff_scalars(attrs_a, attrs_d)
-t("scalars added len", len(sc3), "1")
-t("scalars added kind", sc3[0].kind, "added")
-t("scalars added key", sc3[0].key, "3")
+# Literal return type
+t("fixed_offset", tf.fixed_offset(), "42")
 
-# -- diff_scalars: removed --
-attrs_e = (ScalarAttr(1, 10),)
-sc4 = diff_scalars(attrs_a, attrs_e)
-t("scalars removed len", len(sc4), "1")
-t("scalars removed kind", sc4[0].kind, "removed")
-t("scalars removed key", sc4[0].key, "2")
+# General (object) passthrough
+t("passthrough(77)", tf.passthrough(77), "77")
+t("passthrough(str)", tf.passthrough("abc"), "abc")
 
-# -- can_reuse: same type, no user_key --
-wa = Widget(LABEL, "", (), (), ())
-wb = Widget(LABEL, "", (), (), ())
-t("reuse same type", can_reuse(wa, wb), "True")
+# Mixed typed and general params
+t("add_or_zero T", tf.add_or_zero(6, True), "12")
+t("add_or_zero F", tf.add_or_zero(6, False), "0")
+t("add_or_zero 0", tf.add_or_zero(6, 0), "0")
+t("add_or_zero 1", tf.add_or_zero(6, 1), "12")
 
-# -- can_reuse: different type --
-wc = Widget(BUTTON, "", (), (), ())
-t("reuse diff type", can_reuse(wa, wc), "False")
+# Full integration test
+t("test_typed_funcs", tf.test_typed_funcs(), "42,10,5,11,True,42,77,12,0")
 
-# -- can_reuse: same user_key --
-wd = Widget(LABEL, "k1", (), (), ())
-we = Widget(LABEL, "k1", (), (), ())
-t("reuse same ukey", can_reuse(wd, we), "True")
+# TypeVar no-leak: function after TypeVar functions uses int correctly
+t("after_typevar(5)", tf.after_typevar(5), "10")
+t("after_typevar(0)", tf.after_typevar(0), "0")
+t("after_typevar(-3)", tf.after_typevar(-3), "-6")
 
-# -- can_reuse: different user_key --
-wf = Widget(LABEL, "k2", (), (), ())
-t("reuse diff ukey", can_reuse(wd, wf), "False")
-
-# -- can_reuse: one has user_key, other empty --
-t("reuse one ukey", can_reuse(wa, wd), "False")
-
+# GenericBox class with GENERAL (object) field
+box1 = tf.GenericBox(99, "num")
+t("GenericBox get_value", box1.get_value(), "99")
+t("GenericBox get_label", box1.get_label(), "num")
+box2 = tf.GenericBox("hello", "str")
+t("GenericBox str val", box2.get_value(), "hello")
+t("GenericBox str lbl", box2.get_label(), "str")
 gc.collect()
-# -- diff_children: no changes --
-ch_a = (Widget(LABEL, "", (ScalarAttr(1, "x"),), (), ()),)
-ch_b = (Widget(LABEL, "", (ScalarAttr(1, "x"),), (), ()),)
-cc = diff_children(ch_a, ch_b)
-t("children no change", len(cc), "0")
-
-# -- diff_children: child updated --
-ch_c = (Widget(LABEL, "", (ScalarAttr(1, "y"),), (), ()),)
-cc2 = diff_children(ch_a, ch_c)
-t("children updated len", len(cc2), "1")
-t("children updated kind", cc2[0].kind, "update")
-
-# -- diff_children: child inserted --
-ch_d = (Widget(LABEL, "", (), (), ()), Widget(BUTTON, "", (), (), ()))
-cc3 = diff_children(ch_a, ch_d)
-# first child reusable (same type LABEL), second is insert
-has_insert = False
-for c in cc3:
-    if c.kind == "insert":
-        has_insert = True
-t("children has insert", has_insert, "True")
-
-# -- diff_children: child removed --
-cc4 = diff_children(ch_d, ch_a)
-has_remove = False
-for c in cc4:
-    if c.kind == "remove":
-        has_remove = True
-t("children has remove", has_remove, "True")
-
-# -- diff_children: child replaced (type mismatch) --
-ch_e = (Widget(BUTTON, "", (), (), ()),)
-cc5 = diff_children(ch_a, ch_e)
-t("children replace len", len(cc5), "1")
-t("children replace kind", cc5[0].kind, "replace")
-
-# -- diff_widgets: identical widgets --
-w_prev = Widget(LABEL, "", (ScalarAttr(1, 10),), (), ())
-w_next = Widget(LABEL, "", (ScalarAttr(1, 10),), (), ())
-d1 = diff_widgets(w_prev, w_next)
-t("diff identical empty", d1.is_empty(), "True")
-t("diff identical scalars", len(d1.scalar_changes), "0")
-t("diff identical children", len(d1.child_changes), "0")
-t("diff identical events", d1.event_changes, "False")
-
-# -- diff_widgets: scalar change --
-w_next2 = Widget(LABEL, "", (ScalarAttr(1, 99),), (), ())
-d2 = diff_widgets(w_prev, w_next2)
-t("diff scalar not empty", d2.is_empty(), "False")
-t("diff scalar changes", len(d2.scalar_changes), "1")
-
-# -- diff_widgets: child change --
-w_prev3 = Widget(CONTAINER, "", (), (Widget(LABEL, "", (), (), ()),), ())
-w_next3 = Widget(CONTAINER, "", (), (Widget(LABEL, "", (ScalarAttr(1, 5),), (), ()),), ())
-d3 = diff_widgets(w_prev3, w_next3)
-t("diff child not empty", d3.is_empty(), "False")
-t("diff child changes", len(d3.child_changes), "1")
-
-# -- diff_widgets: event change --
-w_prev4 = Widget(BUTTON, "", (), (), ((1, "click"),))
-w_next4 = Widget(BUTTON, "", (), (), ((1, "tap"),))
-d4 = diff_widgets(w_prev4, w_next4)
-t("diff event not empty", d4.is_empty(), "False")
-t("diff event flag", d4.event_changes, "True")
-
-# -- diff_widgets: event equal (identity vs equality fix) --
-w_prev5 = Widget(BUTTON, "", (), (), ((1, "click"), (2, "hold")))
-w_next5 = Widget(BUTTON, "", (), (), ((1, "click"), (2, "hold")))
-d5 = diff_widgets(w_prev5, w_next5)
-t("diff event eq empty", d5.is_empty(), "True")
-t("diff event eq flag", d5.event_changes, "False")
-
-# -- diff_widgets: prev is None (Optional narrowing path) --
-w_new = Widget(LABEL, "", (ScalarAttr(1, "hi"), ScalarAttr(2, 42)), (Widget(BUTTON, "", (), (), ()),), ())
-d6 = diff_widgets(None, w_new)
-t("diff None prev not empty", d6.is_empty(), "False")
-t("diff None scalar adds", len(d6.scalar_changes), "2")
-t("diff None child inserts", len(d6.child_changes), "1")
-t("diff None event flag", d6.event_changes, "False")
-
-# -- diff_widgets: prev None with events --
-w_new2 = Widget(BUTTON, "", (), (), ((1, "click"),))
-d7 = diff_widgets(None, w_new2)
-t("diff None events flag", d7.event_changes, "True")
-
-# ---- lvgl_mvu_viewnode ----
-suite("lvgl_mvu_viewnode")
-# ViewNode tests - testing without actual LVGL (mocked lv_obj)
-
-ViewNode = lvgl_mvu.viewnode.ViewNode
-AttrRegistry = lvgl_mvu.attrs.AttrRegistry
-AttrChange = lvgl_mvu.diff.AttrChange
-WidgetDiff = lvgl_mvu.diff.WidgetDiff
-CHANGE_ADDED = lvgl_mvu.diff.CHANGE_ADDED
-CHANGE_UPDATED = lvgl_mvu.diff.CHANGE_UPDATED
-CHANGE_REMOVED = lvgl_mvu.diff.CHANGE_REMOVED
-
-# Mock LVGL object - just a dict for testing
-class MockLvObj:
-    def __init__(self, name):
-        self.name = name
-        self.attrs = {}
-
-# Create an empty registry for testing
-test_registry = AttrRegistry()
-# Test ViewNode creation
-mock_lv = MockLvObj("test_label")
-w = Widget(LABEL, "", (ScalarAttr(1, "hello"),), (), ())
-node = ViewNode(mock_lv, w, test_registry)
-t("viewnode lv_obj", node.lv_obj.name, "test_label")
-t("viewnode widget", node.widget.key, str(LABEL))
-t("viewnode children", len(node.children), "0")
-t("viewnode handlers", len(node.handlers), "0")
-t("viewnode not disposed", node.is_disposed(), "False")
-
-# Test add_child / get_child
-child_lv = MockLvObj("child_button")
-child_w = Widget(BUTTON, "", (), (), ())
-child_node = ViewNode(child_lv, child_w, test_registry)
-node.add_child(child_node)
-t("viewnode add_child", len(node.children), "1")
-t("viewnode get_child", node.get_child(0).lv_obj.name, "child_button")
-t("viewnode get_child_none", node.get_child(5), "None")
-
-# Test remove_child
-node2 = ViewNode(MockLvObj("p"), w, test_registry)
-child_node2 = ViewNode(MockLvObj("c"), child_w, test_registry)
-node2.add_child(child_node2)
-removed = node2.remove_child(0)
-t("viewnode remove_child", removed.lv_obj.name, "c")
-t("viewnode after remove", len(node2.children), "0")
-
-# Test handler registration
-node3 = ViewNode(MockLvObj("btn"), Widget(BUTTON, "", (), (), ()), test_registry)
-node3.register_handler(1, "handler_fn")
-t("viewnode register_handler", node3.handlers[1], "handler_fn")
-h = node3.unregister_handler(1)
-t("viewnode unregister", h, "handler_fn")
-t("viewnode after unreg", len(node3.handlers), "0")
-
-# Test clear_handlers
-node4 = ViewNode(MockLvObj("btn2"), Widget(BUTTON, "", (), (), ()), test_registry)
-node4.register_handler(1, "h1")
-node4.register_handler(2, "h2")
-old = node4.clear_handlers()
-t("viewnode clear len", len(old), "2")
-t("viewnode after clear", len(node4.handlers), "0")
-
-# Test update_widget
-node5 = ViewNode(MockLvObj("lbl"), Widget(LABEL, "", (ScalarAttr(1, "old"),), (), ()), test_registry)
-new_w = Widget(LABEL, "", (ScalarAttr(1, "new"),), (), ())
-node5.update_widget(new_w)
-t("viewnode update_widget", node5.widget.scalar_attrs[0].value, "new")
-
-# Test dispose
-disposed_list = []
-def track_delete(obj):
-    disposed_list.append(obj.name)
-
-root = ViewNode(MockLvObj("root"), Widget(CONTAINER, "", (), (), ()), test_registry)
-c1 = ViewNode(MockLvObj("c1"), Widget(LABEL, "", (), (), ()), test_registry)
-c2 = ViewNode(MockLvObj("c2"), Widget(BUTTON, "", (), (), ()), test_registry)
-root.add_child(c1)
-root.add_child(c2)
-root.dispose(track_delete)
-t("viewnode dispose root", root.is_disposed(), "True")
-t("viewnode dispose c1", c1.is_disposed(), "True")
-t("viewnode dispose c2", c2.is_disposed(), "True")
-t("viewnode dispose order", "c1" in str(disposed_list), "True")
-t("viewnode dispose all", len(disposed_list), "3")
-
-gc.collect()
-
-# ---- lvgl_mvu_reconciler ----
-suite("lvgl_mvu_reconciler")
-
-Reconciler = lvgl_mvu.reconciler.Reconciler
-
-# Track created objects for testing
-created_objs = []
-deleted_objs = []
-
-def make_label(parent):
-    obj = MockLvObj("label_" + str(len(created_objs)))
-    created_objs.append(obj)
-    return obj
-
-def make_button(parent):
-    obj = MockLvObj("button_" + str(len(created_objs)))
-    created_objs.append(obj)
-    return obj
-
-def make_container(parent):
-    obj = MockLvObj("container_" + str(len(created_objs)))
-    created_objs.append(obj)
-    return obj
-
-def delete_obj(obj):
-    deleted_objs.append(obj.name)
-
-# Test Reconciler creation and factory registration
-rec = Reconciler(test_registry)
-rec.register_factory(LABEL, make_label)
-rec.register_factory(BUTTON, make_button)
-rec.register_factory(CONTAINER, make_container)
-rec.set_delete_fn(delete_obj)
-t("reconciler created", rec is not None, "True")
-
-# Test reconcile: create new node
-created_objs.clear()
-w1 = Widget(LABEL, "", (ScalarAttr(1, "test"),), (), ())
-n1 = rec.reconcile(None, w1, None)
-t("reconcile new", n1 is not None, "True")
-t("reconcile lv_obj", "label" in n1.lv_obj.name, "True")
-t("reconcile widget", n1.widget.key, str(LABEL))
-
-# Test reconcile: update existing node (same type)
-w2 = Widget(LABEL, "", (ScalarAttr(1, "updated"),), (), ())
-n2 = rec.reconcile(n1, w2, None)
-t("reconcile update same", n2 is n1, "True")  # Should reuse same node
-t("reconcile widget updated", n2.widget.scalar_attrs[0].value, "updated")
-
-# Test reconcile: replace node (different type)
-created_objs.clear()
-deleted_objs.clear()
-old_node = ViewNode(MockLvObj("old_label"), Widget(LABEL, "", (), (), ()), test_registry)
-w3 = Widget(BUTTON, "", (), (), ())
-n3 = rec.reconcile(old_node, w3, None)
-t("reconcile replace", "button" in n3.lv_obj.name, "True")
-t("reconcile old disposed", old_node.is_disposed(), "True")
-
-# Test reconcile: with children
-created_objs.clear()
-w_parent = Widget(CONTAINER, "", (), (Widget(LABEL, "", (), (), ()), Widget(BUTTON, "", (), (), ())), ())
-n_parent = rec.reconcile(None, w_parent, None)
-t("reconcile children", len(n_parent.children), "2")
-t("reconcile child0", "label" in n_parent.children[0].lv_obj.name, "True")
-t("reconcile child1", "button" in n_parent.children[1].lv_obj.name, "True")
-
-# Test dispose_tree
-created_objs.clear()
-deleted_objs.clear()
-w_tree = Widget(CONTAINER, "", (), (Widget(LABEL, "", (), (), ()),), ())
-n_tree = rec.reconcile(None, w_tree, None)
-rec.dispose_tree(n_tree)
-t("dispose_tree root", n_tree.is_disposed(), "True")
-t("dispose_tree count", len(deleted_objs), "2")  # container + label
-
-gc.collect()
-
 
 # ---- summary ----
 gc.collect()

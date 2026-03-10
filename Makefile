@@ -64,8 +64,8 @@ LVGL := 1
 endif
 
 .PHONY: help setup setup-idf setup-mpy compile build flash monitor clean clean-all \
-        test test-device run-device-tests benchmark compile-all check-env check-board \
-        test-lvgl run-lvgl-tests erase run info repl run-nav-tests
+        test test-device run-device-base-tests benchmark compile-all check-env check-board \
+        test-lvgl run-device-lvgl-tests erase run info repl run-nav-tests
 
 # Default target
 help:
@@ -95,8 +95,8 @@ help:
 	@echo "TESTING:"
 	@echo "  make test           - Run Python tests locally (pytest)"
 	@echo "  make test-device    - Full cycle: compile + build + flash + test"
-	@echo "  make run-device-tests - Run device tests on flashed firmware"
-	@echo "  make run-lvgl-tests - Run LVGL test suite on device"
+	@echo "  make run-device-base-tests  - Run base language feature tests on device"
+	@echo "  make run-device-lvgl-tests  - Run LVGL test suite on device"
 	@echo "  make run-nav-tests  - Run navigation tests on device"
 	@echo "  make test-lvgl      - Quick LVGL display test"
 	@echo "  make benchmark      - Run native vs vanilla performance tests"
@@ -382,11 +382,11 @@ test:
 	@echo "Running Python tests locally..."
 	pytest -x
 
-test-device: compile-all build flash run-device-tests
+test-device: compile-all build flash run-device-base-tests
 	@echo "Device testing complete!"
 
-run-device-tests:
-	@echo "Running device tests on $(PORT)..."
+run-device-base-tests:
+	@echo "Running base language feature tests on $(PORT)..."
 	mpremote connect $(PORT) run tests/device/run_device_tests.py
 
 benchmark:
@@ -397,7 +397,7 @@ test-lvgl:
 	@echo "Testing LVGL on device..."
 	@mpremote connect $(PORT) exec "import lvgl, time; lvgl.init_display(); scr = lvgl.lv_screen_active(); lvgl.lv_obj_clean(scr); label = lvgl.lv_label_create(scr); lvgl.lv_obj_center(label); lvgl.lv_label_set_text(label, 'LVGL Test OK'); [lvgl.timer_handler() or time.sleep_ms(10) for _ in range(100)]; print('LVGL test passed')"
 
-run-lvgl-tests:
+run-device-lvgl-tests:
 	@echo "Running LVGL test suite on $(PORT)..."
 	mpremote connect $(PORT) run tests/device/run_lvgl_tests.py
 

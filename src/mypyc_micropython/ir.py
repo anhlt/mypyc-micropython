@@ -46,6 +46,7 @@ class CType(Enum):
     MP_FLOAT_T = auto()  # mp_float_t (unboxed float)
     BOOL = auto()  # bool
     VOID = auto()  # void (for None returns)
+    GENERAL = auto()  # Truly unknown/dynamic type (object, Any, unannotated). Maps to mp_obj_t
 
     def to_c_type_str(self) -> str:
         """Return the C type string."""
@@ -55,6 +56,7 @@ class CType(Enum):
             CType.MP_FLOAT_T: "mp_float_t",
             CType.BOOL: "bool",
             CType.VOID: "void",
+            CType.GENERAL: "mp_obj_t",
         }
         return mapping[self]
 
@@ -65,6 +67,7 @@ class CType(Enum):
             CType.MP_INT_T: 1,
             CType.MP_FLOAT_T: 2,
             CType.BOOL: 3,
+            CType.GENERAL: 0,
         }
         return mapping.get(self, 0)
 
@@ -80,11 +83,27 @@ class CType(Enum):
             "list": CType.MP_OBJ_T,
             "dict": CType.MP_OBJ_T,
             "tuple": CType.MP_OBJ_T,
-            "object": CType.MP_OBJ_T,
+            "object": CType.GENERAL,
+            "Any": CType.GENERAL,
         }
         base_type = type_str.split("[")[0].strip()
-        return mapping.get(base_type, CType.MP_OBJ_T)
+        return mapping.get(base_type, CType.GENERAL)
 
+    @staticmethod
+    def from_c_type_str(c_type: str) -> CType:
+        """Convert C type string to CType.
+
+        Unlike from_python_type, this maps 'mp_obj_t' to MP_OBJ_T (not GENERAL),
+        since a known C type string indicates the type was explicitly resolved.
+        """
+        mapping = {
+            "mp_obj_t": CType.MP_OBJ_T,
+            "mp_int_t": CType.MP_INT_T,
+            "mp_float_t": CType.MP_FLOAT_T,
+            "bool": CType.BOOL,
+            "void": CType.VOID,
+        }
+        return mapping.get(c_type, CType.MP_OBJ_T)
 
 @dataclass
 class RTuple:
@@ -453,7 +472,7 @@ class ClassIR:
         for fld in self.fields:
             # Simple alignment (could be improved)
             fld.offset = offset
-            if fld.c_type == CType.MP_OBJ_T:
+            if fld.c_type in (CType.MP_OBJ_T, CType.GENERAL):
                 offset += 8  # sizeof(mp_obj_t) on 64-bit
             elif fld.c_type == CType.MP_INT_T:
                 offset += 8  # sizeof(mp_int_t)

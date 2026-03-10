@@ -1052,7 +1052,13 @@ class BaseEmitter:
         value_expr, _ = self._emit_expr(sub.value, native)
 
         if sub.is_rtuple and sub.rtuple_index is not None:
-            return f"{value_expr}.f{sub.rtuple_index}", "mp_int_t"
+            # Look up element type from RTuple metadata
+            el_c_type = "mp_int_t"
+            if isinstance(sub.value, NameIR):
+                rtuple = self.func_ir.rtuple_types.get(sub.value.py_name)
+                if rtuple and sub.rtuple_index < len(rtuple.element_types):
+                    el_c_type = rtuple.element_types[sub.rtuple_index].to_c_type_str()
+            return f"{value_expr}.f{sub.rtuple_index}", el_c_type
 
         if isinstance(sub.slice_, SliceIR):
             slice_c = self._emit_slice(sub.slice_, native)[0]
@@ -1554,6 +1560,8 @@ class FunctionEmitter(BaseEmitter):
                 for i, el_type in enumerate(rtuple.element_types):
                     if el_type == CType.MP_FLOAT_T:
                         items_parts.append(f"mp_obj_new_float({expr}.f{i})")
+                    elif el_type in (CType.MP_OBJ_T, CType.GENERAL):
+                        items_parts.append(f"{expr}.f{i}")
                     else:
                         items_parts.append(f"mp_obj_new_int({expr}.f{i})")
                 items = ", ".join(items_parts)
@@ -1639,7 +1647,7 @@ class FunctionEmitter(BaseEmitter):
                 items.append(f"mp_obj_get_float({temp}->items[{i}])")
             elif el_type == CType.BOOL:
                 items.append(f"mp_obj_is_true({temp}->items[{i}])")
-            elif el_type == CType.MP_OBJ_T:
+            elif el_type in (CType.MP_OBJ_T, CType.GENERAL):
                 items.append(f"{temp}->items[{i}]")
             else:
                 items.append(f"mp_obj_get_int({temp}->items[{i}])")

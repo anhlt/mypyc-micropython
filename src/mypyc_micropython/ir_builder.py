@@ -243,6 +243,8 @@ class IRBuilder:
         self._container_element_types: dict[str, str] = {}
         self._optional_class_params: set[str] = set()  # params typed as X | None
         self._class_field_element_types: dict[tuple[str, str], str] = {}
+        self._typevar_bounds: dict[str, str] = {}  # TypeVar name -> bound type ("object" if unbounded)
+        self._pep695_typevars: set[str] = set()  # PEP 695 function-level TypeVar names (cleared per function)
         for class_ir in self._known_classes.values():
             class_node = class_ir.ast_node
             if class_node is None:
@@ -445,6 +447,15 @@ class IRBuilder:
         self._param_py_types: dict[str, str] = {}  # Python type annotations for params
         self._mypy_local_types = {}
 
+        # Clear PEP 695 function-level TypeVars from previous build
+        for tv_name in self._pep695_typevars:
+            self._typevar_bounds.pop(tv_name, None)
+        self._pep695_typevars = set()
+
+
+        # Scan for PEP 695 type parameters: def f[T](x: T) -> T
+        self._scan_typevars(node)
+
         # Check if this is an async function
         is_async = isinstance(node, ast.AsyncFunctionDef)
 
@@ -582,9 +593,7 @@ class IRBuilder:
             is_method=False,
             class_ir=None,
             locals_={
-                name: CType.from_python_type(
-                    self._c_type_to_py_type(self._var_types.get(name, "mp_obj_t"))
-                )
+                name: CType.from_c_type_str(self._var_types.get(name, "mp_obj_t"))
                 for name in local_vars
             },
             docstring=ast.get_docstring(node),
@@ -2671,6 +2680,9 @@ class IRBuilder:
         return None
 
     def _mypy_type_to_c_type(self, mypy_type: str) -> str:
+        # Handle Literal types from mypy: "Literal[3]" -> "int"
+        if mypy_type.startswith("Literal["):
+            return self._erase_mypy_literal_to_c_type(mypy_type)
         type_map = {
             "int": "mp_int_t",
             "float": "mp_float_t",
@@ -2685,20 +2697,172 @@ class IRBuilder:
             "Any": "mp_obj_t",
         }
         base_type = mypy_type.split("[")[0].strip()
+        # Resolve TypeVar names
+        resolved = self._resolve_typevar(base_type)
+        if resolved is not None:
+            base_type = resolved
         return type_map.get(base_type, "mp_obj_t")
 
     def _mypy_type_to_py_type(self, mypy_type: str) -> str:
+        # Handle Literal types from mypy: "Literal[3]" -> "int"
+        if mypy_type.startswith("Literal["):
+            return self._erase_mypy_literal_to_py_type(mypy_type)
         base_type = mypy_type.split("[")[0].strip()
+        # Resolve TypeVar names
+        resolved = self._resolve_typevar(base_type)
+        if resolved is not None:
+            return resolved
         if base_type in ("int", "float", "bool", "str", "list", "dict", "tuple", "set", "None"):
             return base_type
         if "." in base_type:
             return base_type.split(".")[-1]
         return base_type if base_type else "object"
 
+    def _erase_mypy_literal_to_py_type(self, mypy_type: str) -> str:
+        """Erase mypy Literal string to Python type: 'Literal[3]' -> 'int'."""
+        # Extract value between Literal[ and ]
+        inner = mypy_type[len("Literal["):-1].strip() if mypy_type.endswith("]") else ""
+        if not inner:
+            return "object"
+        # Handle union literals: Literal[1, 2, 3] - use first value
+        first_val = inner.split(",")[0].strip()
+        if first_val in ("True", "False"):
+            return "bool"
+        if first_val == "None":
+            return "None"
+        # Try int
+        try:
+            int(first_val)
+            return "int"
+        except ValueError:
+            pass
+        # Try float
+        try:
+            float(first_val)
+            return "float"
+        except ValueError:
+            pass
+        # Must be a string literal (possibly quoted)
+        return "str"
+
+    def _erase_mypy_literal_to_c_type(self, mypy_type: str) -> str:
+        """Erase mypy Literal string to C type: 'Literal[3]' -> 'mp_int_t'."""
+        py_type = self._erase_mypy_literal_to_py_type(mypy_type)
+        c_type_map = {
+            "int": "mp_int_t",
+            "float": "mp_float_t",
+            "bool": "bool",
+            "str": "mp_obj_t",
+            "None": "void",
+        }
+        return c_type_map.get(py_type, "mp_obj_t")
+
+    def _erase_literal_type(self, annotation: ast.expr) -> ast.expr:
+        """Erase Literal[X] to its underlying type.
+
+        Literal[3] -> int, Literal["hello"] -> str, Literal[True] -> bool.
+        Following mypyc's strategy of erasing Literal to the underlying type.
+        """
+        if not isinstance(annotation, ast.Subscript):
+            return annotation
+        if not isinstance(annotation.value, ast.Name):
+            return annotation
+        if annotation.value.id != "Literal":
+            return annotation
+
+        # Extract the literal value from the slice
+        literal_val = annotation.slice
+        # Handle Literal[3], Literal["hello"], Literal[True], Literal[None]
+        if isinstance(literal_val, ast.Constant):
+            val = literal_val.value
+            if isinstance(val, bool):
+                return ast.Name(id="bool", ctx=ast.Load())
+            elif isinstance(val, int):
+                return ast.Name(id="int", ctx=ast.Load())
+            elif isinstance(val, float):
+                return ast.Name(id="float", ctx=ast.Load())
+            elif isinstance(val, str):
+                return ast.Name(id="str", ctx=ast.Load())
+            elif val is None:
+                return ast.Constant(value=None)
+        # Handle Literal[1, 2, 3] (union of literals) - erase to first element's type
+        elif isinstance(literal_val, ast.Tuple) and literal_val.elts:
+            first = literal_val.elts[0]
+            if isinstance(first, ast.Constant):
+                val = first.value
+                if isinstance(val, bool):
+                    return ast.Name(id="bool", ctx=ast.Load())
+                elif isinstance(val, int):
+                    return ast.Name(id="int", ctx=ast.Load())
+                elif isinstance(val, float):
+                    return ast.Name(id="float", ctx=ast.Load())
+                elif isinstance(val, str):
+                    return ast.Name(id="str", ctx=ast.Load())
+        # Fallback: return object for unrecognized literal types
+        return ast.Name(id="object", ctx=ast.Load())
+
+    def _resolve_typevar(self, name: str) -> str | None:
+        """Resolve a TypeVar name to its bound type string.
+
+        Returns the bound type (e.g., "int") or "object" for unbounded TypeVars.
+        Returns None if the name is not a known TypeVar.
+        """
+        return self._typevar_bounds.get(name)
+
+    def _scan_typevars(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        """Scan function for TypeVar declarations and PEP 695 type params.
+
+        Populates self._typevar_bounds with mappings from TypeVar name
+        to bound type. Unbounded TypeVars map to "object".
+        """
+        # PEP 695 type_params: def f[T](x: T) -> T, def f[T: int](x: T) -> T
+        if hasattr(node, "type_params"):
+            for tp in node.type_params:
+                if isinstance(tp, ast.TypeVar):
+                    if tp.bound is not None and isinstance(tp.bound, ast.Name):
+                        self._typevar_bounds[tp.name] = tp.bound.id
+                    else:
+                        self._typevar_bounds[tp.name] = "object"
+                    self._pep695_typevars.add(tp.name)
+
+    def register_typevar(self, node: ast.Assign) -> bool:
+        """Register a classic TypeVar assignment: T = TypeVar('T', bound=int).
+
+        Returns True if this was a TypeVar assignment, False otherwise.
+        """
+        if len(node.targets) != 1:
+            return False
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            return False
+        if not isinstance(node.value, ast.Call):
+            return False
+        func = node.value.func
+        if not isinstance(func, ast.Name) or func.id != "TypeVar":
+            return False
+
+        tv_name = target.id
+        # Check for bound= keyword argument
+        bound_type = "object"
+        for kw in node.value.keywords:
+            if kw.arg == "bound" and isinstance(kw.value, ast.Name):
+                bound_type = kw.value.id
+                break
+        self._typevar_bounds[tv_name] = bound_type
+        return True
+
     def _annotation_to_c_type(self, annotation: ast.expr | None) -> str:
         if annotation is None:
             return "mp_obj_t"
+        # Erase Literal types first: Literal[3] -> int
+        annotation = self._erase_literal_type(annotation)
         if isinstance(annotation, ast.Name):
+            # Resolve TypeVar names: T -> bound type
+            resolved = self._resolve_typevar(annotation.id)
+            if resolved is not None:
+                name = resolved
+            else:
+                name = annotation.id
             type_map = {
                 "int": "mp_int_t",
                 "float": "mp_float_t",
@@ -2709,8 +2873,10 @@ class IRBuilder:
                 "dict": "mp_obj_t",
                 "tuple": "mp_obj_t",
                 "set": "mp_obj_t",
+                "object": "mp_obj_t",
+                "Any": "mp_obj_t",
             }
-            return type_map.get(annotation.id, "mp_obj_t")
+            return type_map.get(name, "mp_obj_t")
         elif isinstance(annotation, ast.Subscript):
             if isinstance(annotation.value, ast.Name):
                 if annotation.value.id == "tuple":
@@ -2725,7 +2891,13 @@ class IRBuilder:
     def _annotation_to_py_type(self, annotation: ast.expr | None) -> str:
         if annotation is None:
             return "object"
+        # Erase Literal types first: Literal[3] -> int
+        annotation = self._erase_literal_type(annotation)
         if isinstance(annotation, ast.Name):
+            # Resolve TypeVar names: T -> bound type
+            resolved = self._resolve_typevar(annotation.id)
+            if resolved is not None:
+                return resolved
             return annotation.id
         elif isinstance(annotation, ast.Subscript):
             if isinstance(annotation.value, ast.Name):
