@@ -1,4 +1,4 @@
-# Blog Post 39: Fixing Cross-Module Attribute Access for Dataclass Instances
+# 39. Cross-Module Attribute Access: Fixing Type Tracking for Dataclass Instances
 
 ## The Problem: When Attributes Disappear into `None`
 
@@ -187,6 +187,138 @@ if parent_type and parent_type in self._known_classes:  # False! No match
 ```
 
 The check `"WidgetDiff | None" in self._known_classes` fails because `_known_classes` only has `"WidgetDiff"`. So again, attribute access falls through to returning `None`.
+
+### IR Visualization: Seeing the Bug in the Intermediate Representation
+
+The easiest way to see both bugs in action is to dump the IR and compare it against what we expect.
+
+Consider this simplified two-module package:
+
+```
+pkg/
+├── __init__.py
+├── engine.py      # defines Diff dataclass and compute_diff
+└── reconciler.py  # uses compute_diff and accesses Diff fields
+```
+
+`engine.py`:
+```python
+from dataclasses import dataclass
+
+@dataclass
+class Diff:
+    changes: list[int]
+    has_events: bool
+
+def compute_diff(a: list[int], b: list[int]) -> Diff:
+    changes: list[int] = []
+    has_events: bool = len(a) != len(b)
+    return Diff(changes, has_events)
+```
+
+`reconciler.py`:
+```python
+from pkg.engine import compute_diff
+
+def apply(prev: list[int], next_list: list[int]) -> int:
+    diff = compute_diff(prev, next_list)
+    count: int = len(diff.changes)
+    if diff.has_events:
+        count += 1
+    return count
+```
+
+**IR dump without the fix** (compiled without cross-module type information):
+
+```
+def apply(prev: MP_OBJ_T, next_list: MP_OBJ_T) -> MP_INT_T:
+  c_name: reconciler_apply
+  max_temp: 0
+  locals: {prev: MP_OBJ_T, next_list: MP_OBJ_T, diff: MP_OBJ_T, count: MP_INT_T}
+  body:
+    (new) diff = compute_diff(prev, next_list)
+    count: mp_int_t = len(None)
+    if None:
+      count += 1
+    return count
+```
+
+Both `diff.changes` and `diff.has_events` resolve to `None`. The IR builder saw that `diff` is `mp_obj_t`, checked `_class_typed_params` for the name `"diff"`, found nothing, and fell through to the `ConstIR(value=None)` catch-all.
+
+The C code this IR generates:
+
+```c
+static mp_obj_t reconciler_apply(mp_obj_t prev_obj, mp_obj_t next_list_obj) {
+    mp_obj_t prev = prev_obj;
+    mp_obj_t next_list = next_list_obj;
+
+    mp_obj_t diff = engine_compute_diff(prev, next_list);
+    mp_int_t count = mp_obj_get_int(mp_obj_len(mp_const_none));  // BUG: should be diff->changes
+    if (mp_obj_is_true(mp_const_none)) {                         // BUG: should be diff->has_events
+        count += 1;
+    }
+    return mp_obj_new_int(count);
+}
+```
+
+At runtime, `mp_obj_len(mp_const_none)` raises a TypeError, and `mp_obj_is_true(mp_const_none)` always evaluates to false, silently skipping the event handler update.
+
+**IR dump with the fix** (compiled as a package, `_func_class_returns` populated from `engine.py`):
+
+```
+def apply(prev: MP_OBJ_T, next_list: MP_OBJ_T) -> MP_INT_T:
+  c_name: reconciler_apply
+  max_temp: 0
+  locals: {prev: MP_OBJ_T, next_list: MP_OBJ_T, diff: MP_OBJ_T, count: MP_INT_T}
+  body:
+    (new) diff = compute_diff(prev, next_list)
+    count: mp_int_t = len(diff.changes)
+    if diff.has_events:
+      count += 1
+    return count
+```
+
+Now `diff.changes` and `diff.has_events` resolve correctly. The IR builder looked up `"diff"` in `_class_typed_params`, found `"Diff"`, fetched the `Diff` class IR from `engine.py`, and emitted `ParamAttrIR` for each field access.
+
+The C code this IR generates:
+
+```c
+static mp_obj_t reconciler_apply(mp_obj_t prev_obj, mp_obj_t next_list_obj) {
+    mp_obj_t prev = prev_obj;
+    mp_obj_t next_list = next_list_obj;
+
+    mp_obj_t diff = engine_compute_diff(prev, next_list);
+    mp_int_t count = mp_obj_get_int(
+        mp_obj_len(((engine_Diff_obj_t *)MP_OBJ_TO_PTR(diff))->changes));
+    if (((engine_Diff_obj_t *)MP_OBJ_TO_PTR(diff))->has_events) {
+        count += 1;
+    }
+    return mp_obj_new_int(count);
+}
+```
+
+The cast `(engine_Diff_obj_t *)MP_OBJ_TO_PTR(diff)` tells the C compiler exactly which struct layout to use — the `Diff` struct defined in `engine.py`. The `->changes` and `->has_events` field accesses are direct memory reads with zero runtime dispatch overhead.
+
+### The `_class_typed_params` Dictionary
+
+The central data structure for type tracking is `_class_typed_params: dict[str, str]` — a map from local variable name to Python class name. Every attribute access in the IR builder consults this dictionary:
+
+```
+_class_typed_params = {
+    "self":   "Reconciler",   # from method signature
+    "node":   "ViewNode",     # from method signature
+    "widget": "Widget",       # from method signature
+    "diff":   "WidgetDiff",   # FIXED: from func_class_returns scan
+}
+```
+
+When the builder processes `diff.child_changes`:
+1. Look up `"diff"` in `_class_typed_params` — finds `"WidgetDiff"`
+2. Look up `"WidgetDiff"` in `_known_classes` — finds the class IR
+3. Scan `class_ir.get_all_fields()` for a field named `"child_changes"`
+4. Emit `ParamAttrIR(param_name="diff", attr_name="child_changes", class_c_name="..._WidgetDiff", ...)`
+
+Without the fix, step 1 fails. `"diff"` is not in `_class_typed_params`, so the builder falls through to `ConstIR(value=None)`. With the fix, the second pass over the package populates `_func_class_returns = {"diff_widgets": "WidgetDiff"}`, and the assignment handler sees `diff = diff_widgets(...)` and records `_class_typed_params["diff"] = "WidgetDiff"` before any attribute access is compiled.
 
 ### The Fix: Multi-Pronged Type Tracking
 
