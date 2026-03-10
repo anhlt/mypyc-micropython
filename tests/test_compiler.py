@@ -1,5 +1,6 @@
 """Tests for the mypyc-micropython compiler."""
 
+import sys
 import tempfile
 from pathlib import Path
 
@@ -644,72 +645,72 @@ class TestObjectComparisons:
     """Tests for comparison operations between boxed mp_obj_t values."""
 
     def test_str_eq_uses_mp_obj_equal(self):
-        source = '''
+        source = """
 def check_str(s: str) -> bool:
     return s == "hello"
-'''
+"""
         result = compile_source(source, "test")
         assert "mp_obj_equal" in result
         assert "mp_obj_get_int" not in result or "mp_obj_get_int(s" not in result
 
     def test_str_ne_uses_mp_obj_equal(self):
-        source = '''
+        source = """
 def check_ne(s: str) -> bool:
     return s != ""
-'''
+"""
         result = compile_source(source, "test")
         assert "mp_obj_equal" in result
 
     def test_str_eq_empty_string(self):
-        source = '''
+        source = """
 def is_empty(s: str) -> bool:
     return s == ""
-'''
+"""
         result = compile_source(source, "test")
         assert "mp_obj_equal" in result
         # Must NOT unbox strings to int
-        assert 'mp_obj_get_int(mp_obj_new_str' not in result
+        assert "mp_obj_get_int(mp_obj_new_str" not in result
 
     def test_object_eq_uses_mp_obj_equal(self):
-        source = '''
+        source = """
 def check_eq(a: object, b: object) -> bool:
     return a == b
-'''
+"""
         result = compile_source(source, "test")
         assert "mp_obj_equal" in result
 
     def test_object_ne_uses_mp_obj_equal(self):
-        source = '''
+        source = """
 def check_ne(a: object, b: object) -> bool:
     return a != b
-'''
+"""
         result = compile_source(source, "test")
         assert "!mp_obj_equal" in result
 
     def test_int_compare_still_unboxes(self):
         """Ensure int comparisons still use native C operators."""
-        source = '''
+        source = """
 def cmp(a: int, b: int) -> bool:
     return a == b
-'''
+"""
         result = compile_source(source, "test")
         assert "(a == b)" in result
 
     def test_mixed_int_obj_unboxes(self):
         """When one side is int and other is mp_obj_t, unbox to int."""
-        source = '''
+        source = """
 def check(a: int, b: object) -> bool:
     return a == b
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "mp_obj_get_int" in result
 
     def test_object_ordering_uses_binary_op(self):
         """Ordering comparisons on mp_obj_t use mp_binary_op."""
-        source = '''
+        source = """
 def less(a: str, b: str) -> bool:
     return a < b
-'''
+"""
         result = compile_source(source, "test")
         assert "MP_BINARY_OP_LESS" in result
 
@@ -7178,3 +7179,189 @@ def sort_key(x: int) -> int:
         result = compile_source(source, "test", type_check=False)
         assert "MP_OBJ_FROM_PTR(&test_sort_key_obj)" in result
         assert "mp_obj_new_int(sort_key)" not in result
+
+
+class TestTypeSystemGeneral:
+    def test_general_object_param(self):
+        source = """
+def f(x: object) -> object:
+    return x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_obj_t" in result
+        assert "mp_obj_get_int(x_obj)" not in result
+
+    def test_general_any_param(self):
+        source = """
+from typing import Any
+
+def f(x: Any) -> Any:
+    return x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_obj_t" in result
+        assert "mp_obj_get_int(x_obj)" not in result
+
+    def test_general_unannotated_param(self):
+        source = """
+def f(x):
+    return x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_obj_t" in result
+        assert "mp_obj_get_int(x_obj)" not in result
+
+    def test_general_mixed_params(self):
+        source = """
+def f(x: int, y: object) -> int:
+    return x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_int_t x = mp_obj_get_int(x_obj);" in result
+        assert "mp_obj_t y = y_obj;" in result
+        assert "mp_obj_get_int(y_obj)" not in result
+
+    def test_general_ctype_enum(self):
+        from mypyc_micropython.ir import CType
+
+        assert CType.GENERAL.to_c_type_str() == "mp_obj_t"
+
+    def test_general_from_python_type(self):
+        from mypyc_micropython.ir import CType
+
+        assert CType.from_python_type("object") == CType.GENERAL
+        assert CType.from_python_type("Any") == CType.GENERAL
+
+
+class TestTypeSystemLiteral:
+    def test_literal_int_erased(self):
+        source = """
+from typing import Literal
+
+def f(x: Literal[3]) -> int:
+    return x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_int_t x = mp_obj_get_int(x_obj);" in result
+
+    def test_literal_str_erased(self):
+        source = """
+from typing import Literal
+
+def f(x: Literal[\"hello\"]) -> str:
+    return x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_obj_t x = x_obj;" in result
+        assert "mp_obj_get_int(x_obj)" not in result
+
+    def test_literal_bool_erased(self):
+        source = """
+from typing import Literal
+
+def f(x: Literal[True]) -> bool:
+    return x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "bool x = mp_obj_is_true(x_obj);" in result
+
+    def test_literal_union_erased(self):
+        source = """
+from typing import Literal
+
+def f(x: Literal[1, 2, 3]) -> int:
+    return x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_int_t x = mp_obj_get_int(x_obj);" in result
+
+    def test_literal_return_type(self):
+        source = """
+from typing import Literal
+
+def f() -> Literal[42]:
+    return 42
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "static mp_obj_t test_f(void)" in result
+        assert "return mp_obj_new_int(42);" in result
+
+    def test_literal_no_literal_in_output(self):
+        source = """
+from typing import Literal
+
+def f(x: Literal[3]) -> int:
+    return x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "Literal" not in result
+
+
+class TestTypeSystemTypeVar:
+    @pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12+")
+    def test_typevar_pep695_unbounded(self):
+        source = """
+def f[T](x: T) -> T:
+    return x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_obj_t x = x_obj;" in result
+        assert "mp_obj_get_int(x_obj)" not in result
+
+    @pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12+")
+    def test_typevar_pep695_bounded(self):
+        source = """
+def f[N: int](x: N) -> N:
+    return x + x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_int_t x = mp_obj_get_int(x_obj);" in result
+        assert "return mp_obj_new_int((x + x));" in result
+
+    def test_typevar_classic_unbounded(self):
+        source = """
+from typing import TypeVar
+
+T = TypeVar(\"T\")
+
+def identity(x: T) -> T:
+    return x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_obj_t x = x_obj;" in result
+        assert "mp_obj_get_int(x_obj)" not in result
+
+    def test_typevar_classic_bounded(self):
+        source = """
+from typing import TypeVar
+
+N = TypeVar(\"N\", bound=int)
+
+def double(x: N) -> N:
+    return x + x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_int_t x = mp_obj_get_int(x_obj);" in result
+        assert "return mp_obj_new_int((x + x));" in result
+
+    def test_typevar_no_typevar_in_output(self):
+        source = """
+from typing import TypeVar
+
+T = TypeVar(\"T\")
+
+def identity(x: T) -> T:
+    return x
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "TypeVar" not in result
+
+    @pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12+")
+    def test_typevar_multiple_params(self):
+        source = """
+def f[T, N: int](x: T, y: N) -> N:
+    return y
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_obj_t x = x_obj;" in result
+        assert "mp_int_t y = mp_obj_get_int(y_obj);" in result

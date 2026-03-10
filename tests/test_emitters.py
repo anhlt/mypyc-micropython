@@ -124,7 +124,7 @@ def make_method_ir(
     dummy_args = ast.arguments(
         posonlyargs=[],
         args=[ast.arg(arg="self", annotation=None)]
-             + [ast.arg(arg=p[0], annotation=None) for p in (params or [])],
+        + [ast.arg(arg=p[0], annotation=None) for p in (params or [])],
         kwonlyargs=[],
         kw_defaults=[],
         defaults=[],
@@ -148,6 +148,7 @@ def make_method_ir(
         body_ast=dummy_body_ast,
         max_temp=max_temp,
     )
+
 
 def make_temp(name: str, ir_type: IRType = IRType.OBJ) -> TempIR:
     """Create a temporary variable."""
@@ -1298,7 +1299,6 @@ class TestEmitMethodCall:
         assert "MP_QSTR_value" in c_code
 
 
-
 # ============================================================================
 # Test: Edge Cases
 # ============================================================================
@@ -1777,12 +1777,11 @@ class TestSelfMethodCallArgumentTypes:
         c_code = emitter.emit_native(body_ir)
 
         # Should pass int directly and obj directly (no mp_obj_get_int on obj)
-        assert "mp_obj_get_int(obj)" not in c_code, (
-            "Object argument should not be unboxed"
-        )
+        assert "mp_obj_get_int(obj)" not in c_code, "Object argument should not be unboxed"
         assert "test_Widget_update_native(self, 0, obj)" in c_code, (
             "Should pass int constant and object variable correctly"
         )
+
 
 class TestCompareIdentityEmitter:
     """Tests for identity comparison emission (is, is not).
@@ -1810,13 +1809,9 @@ class TestCompareIdentityEmitter:
         c_code = FunctionEmitter(func_ir).emit()[0]
 
         # Should use direct pointer comparison
-        assert "x == mp_const_none" in c_code, (
-            "'is None' should compile to pointer comparison"
-        )
+        assert "x == mp_const_none" in c_code, "'is None' should compile to pointer comparison"
         # Should NOT use mp_obj_get_int
-        assert "mp_obj_get_int" not in c_code, (
-            "'is None' should not call mp_obj_get_int"
-        )
+        assert "mp_obj_get_int" not in c_code, "'is None' should not call mp_obj_get_int"
 
     def test_emit_is_not_none_comparison(self):
         """'is not None' should emit pointer comparison with !=."""
@@ -1837,9 +1832,7 @@ class TestCompareIdentityEmitter:
         c_code = FunctionEmitter(func_ir).emit()[0]
 
         # Should use != for 'is not'
-        assert "x != mp_const_none" in c_code, (
-            "'is not None' should compile to != comparison"
-        )
+        assert "x != mp_const_none" in c_code, "'is not None' should compile to != comparison"
         assert "mp_obj_get_int" not in c_code
 
     def test_emit_is_comparison_between_objects(self):
@@ -1860,7 +1853,79 @@ class TestCompareIdentityEmitter:
         )
         c_code = FunctionEmitter(func_ir).emit()[0]
 
-        assert "a == b" in c_code, (
-            "'a is b' should compile to pointer comparison"
-        )
+        assert "a == b" in c_code, "'a is b' should compile to pointer comparison"
         assert "mp_obj_get_int" not in c_code
+
+
+class TestTypeSystemEmission:
+    def test_emit_general_param_no_unbox(self):
+        func_ir = make_func(
+            params=[("x", CType.GENERAL)],
+            return_type=CType.GENERAL,
+            body=[ReturnIR(value=make_name("x", IRType.OBJ))],
+        )
+        func_ir.arg_types = ["mp_obj_t"]
+
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        assert "mp_obj_t x = x_obj;" in c_code
+        assert "mp_obj_get_int" not in c_code
+
+    def test_emit_general_return_no_box(self):
+        func_ir = make_func(
+            params=[("x", CType.GENERAL)],
+            return_type=CType.GENERAL,
+            body=[ReturnIR(value=make_name("x", IRType.OBJ))],
+        )
+        func_ir.arg_types = ["mp_obj_t"]
+
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        assert "return x;" in c_code
+        assert "mp_obj_new_int" not in c_code
+
+    def test_emit_literal_erased_to_int(self):
+        func_ir = make_func(
+            params=[("x", CType.MP_INT_T)],
+            return_type=CType.MP_INT_T,
+            body=[ReturnIR(value=make_name("x", IRType.INT))],
+        )
+        func_ir.arg_types = ["mp_int_t"]
+
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        assert "mp_int_t x = mp_obj_get_int(x_obj);" in c_code
+
+    def test_emit_typevar_unbounded_as_obj(self):
+        func_ir = make_func(
+            params=[("x", CType.GENERAL)],
+            return_type=CType.GENERAL,
+            body=[ReturnIR(value=make_name("x", IRType.OBJ))],
+        )
+        func_ir.arg_types = ["mp_obj_t"]
+
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        assert "mp_obj_t x = x_obj;" in c_code
+        assert "mp_obj_get_int(x_obj)" not in c_code
+
+    def test_emit_typevar_bounded_int(self):
+        func_ir = make_func(
+            params=[("x", CType.MP_INT_T)],
+            return_type=CType.MP_INT_T,
+            body=[ReturnIR(value=make_name("x", IRType.INT))],
+        )
+        func_ir.arg_types = ["mp_int_t"]
+
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        assert "mp_int_t x = mp_obj_get_int(x_obj);" in c_code
+        assert "return mp_obj_new_int(x);" in c_code
+
+    def test_emit_mixed_general_and_typed(self):
+        func_ir = make_func(
+            params=[("x", CType.MP_INT_T), ("y", CType.GENERAL)],
+            return_type=CType.MP_INT_T,
+            body=[ReturnIR(value=make_name("x", IRType.INT))],
+        )
+        func_ir.arg_types = ["mp_int_t", "mp_obj_t"]
+
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        assert "mp_int_t x = mp_obj_get_int(x_obj);" in c_code
+        assert "mp_obj_t y = y_obj;" in c_code
+        assert "mp_obj_get_int(y_obj)" not in c_code

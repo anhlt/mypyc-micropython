@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `CType.GENERAL` for truly unknown/dynamic types (`object`, `Any`, unannotated parameters)
+  - Semantically distinct from `MP_OBJ_T` (known container/string types) but maps to same C type `mp_obj_t`
+  - `CType.from_c_type_str()` static method for direct C type string mapping (avoids roundtrip through Python types)
+- Literal type erasure following mypyc strategy
+  - `Literal[3]` erases to `int`, `Literal["hello"]` to `str`, `Literal[True]` to `bool`
+  - AST-level erasure via `_erase_literal_type()` and mypy string-level erasure via `_erase_mypy_literal_to_py_type()`/`_erase_mypy_literal_to_c_type()`
+- TypeVar erasure following mypyc strategy
+  - Classic syntax: `T = TypeVar("T")` erases to upper bound (`object` if unbounded, `int` if `bound=int`)
+  - PEP 695 syntax: `def f[T](x: T)` supported in IR builder (requires `--no-type-check` as mypy does not yet support PEP 695)
+  - `register_typevar()` in compiler for module-level TypeVar assignments
+  - `_scan_typevars()` and `_resolve_typevar()` in IR builder for function-level type params
+- `examples/typed_funcs.py` exercising TypeVar, Literal, and GENERAL type patterns
+- 21 unit tests for type system features (TestTypeSystemGeneral, TestTypeSystemLiteral, TestTypeSystemTypeVar, TestTypeSystemIR)
+- 6 emitter tests for type system C code generation (TestTypeSystemEmission)
+- 5 C runtime tests for type system feature execution
+- 15 device tests for typed_funcs module
+
+### Added
 - LVGL MVU widget tree diffing engine compiled to native C
   - O(N) two-pointer merge diff for sorted scalar attribute tuples
   - Positional child diffing with insert/remove/replace/update operations

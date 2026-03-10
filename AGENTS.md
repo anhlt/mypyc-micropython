@@ -19,7 +19,8 @@ make compile-all                                 # Compile all examples
 make build BOARD=ESP32_GENERIC_C6                # Build firmware for ESP32-C6
 make flash BOARD=ESP32_GENERIC_C6                # Flash to device
 make test-device BOARD=ESP32_GENERIC_C6 PORT=/dev/cu.usbmodem2101  # Full device test
-make run-device-tests PORT=/dev/cu.usbmodem2101  # Run device tests only
+make run-device-base-tests PORT=/dev/cu.usbmodem2101  # Run base language feature tests only
+make run-device-lvgl-tests PORT=/dev/cu.usbmodem2101  # Run LVGL test suite on device
 make benchmark PORT=/dev/cu.usbmodem2101         # Benchmark native vs vanilla MicroPython
 ```
 
@@ -44,22 +45,22 @@ src/mypyc_micropython/
 
 tests/
 ├── conftest.py          # compile_and_run fixture (gcc compile + execute)
-├── test_compiler.py     # Unit tests - full compilation (437 tests)
-├── test_ir_builder.py   # Unit tests - IR building (82 tests)
+├── test_compiler.py     # Unit tests - full compilation (568 tests)
+├── test_ir_builder.py   # Unit tests - IR building (119 tests)
 ├── test_ir_visualizer.py # Unit tests - IR visualization (18 tests)
-├── test_c_runtime.py    # Integration - compile generated C & run binary (91 tests)
-├── test_emitters.py     # Unit tests - emitter code generation (77 tests)
+├── test_c_runtime.py    # Integration - compile generated C & run binary (117 tests)
+├── test_emitters.py     # Unit tests - emitter code generation (85 tests)
 ├── test_type_checker.py # Unit tests - mypy type checker integration (20 tests)
 ├── mock_mp/             # Minimal C stubs for MicroPython API
 └── device/              # Device test runners (run on MicroPython via mpremote)
-    ├── run_device_tests.py          # Main device test runner (364 tests)
+    ├── run_device_tests.py          # Main device test runner (465 tests) - no LVGL required
     ├── run_benchmarks.py            # Benchmark runner (native C vs vanilla)
-    ├── run_nav_tests.py             # LVGL navigation tests
-    ├── run_lvgl_tests.py            # LVGL screen tests
+    ├── run_lvgl_tests.py            # LVGL tests: screens, MVU diff/viewnode/reconciler
+    ├── run_nav_tests.py             # LVGL navigation tests (requires display)
     ├── run_lvgl_mvu_tests.py        # LVGL MVU architecture tests
-    └── run_screen_navigation_tests.py  # Screen navigation tree tests
+    └── run_screen_navigation_tests.py  # Screen navigation tree tests (requires display)
 
-examples/                # Sample Python input files (30 modules + 1 package)
+examples/                # Sample Python input files (37 modules + 1 package)
 modules/                 # Generated C output (gitignored except committed examples)
 docs/                    # Documentation and ESP-IDF setup guides
 blogs/                   # Technical blog posts (see Blog Writing Guidelines below)
@@ -104,6 +105,33 @@ This separates "what value" from "what side effects" — critical for correct C 
 - **`IRBuilder.build_function(node) -> FuncIR`** — AST function -> IR
 - **`FunctionEmitter(func_ir).emit() -> tuple[str, str]`** — IR -> C code (native + wrapper)
 
+### Type System
+
+The compiler follows mypyc's type erasure strategy:
+
+**CType enum** (`ir.py`): Maps Python types to C types
+- `MP_OBJ_T` — boxed `mp_obj_t` for known container/string types (`str`, `list`, `dict`, `tuple`, `set`)
+- `MP_INT_T` — unboxed `mp_int_t` for `int`
+- `MP_FLOAT_T` — unboxed `mp_float_t` for `float`
+- `BOOL` — native `bool`
+- `VOID` — `void` (for `None` returns)
+- `GENERAL` — truly unknown/dynamic types (`object`, `Any`, unannotated). Maps to `mp_obj_t` in C but semantically distinct from `MP_OBJ_T`
+
+**Literal type erasure** (`ir_builder.py`): `Literal[3]` erases to `int`, `Literal["hello"]` to `str`, `Literal[True]` to `bool`. Same strategy as mypyc.
+
+**TypeVar erasure** (`ir_builder.py`, `compiler.py`): TypeVar erases to its upper bound.
+- Unbounded `T = TypeVar("T")` erases to `object` (CType.GENERAL)
+- Bounded `N = TypeVar("N", bound=int)` erases to `int` (CType.MP_INT_T)
+- PEP 695 syntax (`def f[T](...)`) supported in IR builder but requires `--no-type-check` (mypy does not yet support PEP 695)
+- Classic syntax (`T = TypeVar("T")`) works with mypy strict mode
+
+**Key methods**:
+- `CType.from_python_type(type_str)` — maps Python type strings to CType
+- `CType.from_c_type_str(c_type)` — maps C type strings directly to CType (avoids roundtrip through Python types)
+- `IRBuilder._erase_literal_type(node)` — unwraps Literal AST to underlying type
+- `IRBuilder._resolve_typevar(name)` — resolves TypeVar name to bound type
+- `IRBuilder._scan_typevars()` — scans PEP 695 function type params
+- `IRBuilder.register_typevar(node)` — registers classic TypeVar assignments
 ## IR Debugging
 
 When debugging compilation issues, use the `--dump-ir` flag to inspect intermediate representation:
@@ -312,18 +340,18 @@ def test_c_sum_range(compile_and_run):
 # Full cycle: compile all examples + build firmware + flash + run tests
 make test-device BOARD=ESP32_GENERIC_C6 PORT=/dev/cu.usbmodem2101
 
-# Run device tests only (skip compile/build/flash if already done)
-make run-device-tests PORT=/dev/cu.usbmodem2101
+# Run base language feature tests only (skip compile/build/flash if already done)
+make run-device-base-tests PORT=/dev/cu.usbmodem2101
 ```
 
-**WARNING**: When running `make run-device-tests`, NEVER pipe the output through `grep`, `tail`, or other filters. The device test output is streaming and can cause the connection to hang or miss critical output. Always capture the full output:
+**WARNING**: When running `make run-device-base-tests`, NEVER pipe the output through `grep`, `tail`, or other filters. The device test output is streaming and can cause the connection to hang or miss critical output. Always capture the full output:
 ```bash
 # CORRECT: Full output, no filtering
-make run-device-tests PORT=/dev/cu.usbmodem2101
+make run-device-base-tests PORT=/dev/cu.usbmodem2101
 
 # WRONG: Can cause hangs or missed output
-make run-device-tests PORT=/dev/cu.usbmodem2101 | tail -50    # DON'T DO THIS
-make run-device-tests PORT=/dev/cu.usbmodem2101 | grep async  # DON'T DO THIS
+make run-device-base-tests PORT=/dev/cu.usbmodem2101 | tail -50    # DON'T DO THIS
+make run-device-base-tests PORT=/dev/cu.usbmodem2101 | grep async  # DON'T DO THIS
 ```
 
 
@@ -569,6 +597,8 @@ Explain every C concept before using it.
 
 ### Device Testing Workflow
 
+**CRITICAL**: ALWAYS detect the connected board type BEFORE building firmware. Building for the wrong chip wastes time and will fail to flash.
+
 ```bash
 # 1. Detect connected device
 ls /dev/cu.usb*
@@ -586,12 +616,52 @@ make build BOARD=ESP32_GENERIC_P4               # Must match detected chip!
 # 5. Flash to device
 make flash BOARD=ESP32_GENERIC_P4 PORT=/dev/cu.usbmodem2101
 
-# 6. Run device tests (REQUIRED after implementing feature AND before PR)
-make run-device-tests PORT=/dev/cu.usbmodem2101
+# 6. Run base language feature tests (REQUIRED after implementing feature AND before PR)
+make run-device-base-tests PORT=/dev/cu.usbmodem2101
 
-# 7. Run benchmarks (optional but recommended)
+# 7. Run LVGL tests (REQUIRED for boards with display - see board table below)
+make run-device-lvgl-tests PORT=/dev/cu.usbmodem2101
+
+# 8. Run benchmarks (optional but recommended)
 make benchmark PORT=/dev/cu.usbmodem2101
 ```
+
+### Board-Specific Testing Requirements
+
+Not all boards have displays. LVGL tests require a monitor and will fail on boards without one.
+
+| Board | Chip | Display | Required Tests |
+|-------|------|---------|----------------|
+| `ESP32_GENERIC_C3` | ESP32-C3 | None | `make run-device-base-tests` only |
+| `ESP32_GENERIC_C6` | ESP32-C6 | ST7789 SPI (172x320) | `make run-device-base-tests` + `make run-device-lvgl-tests` |
+| `ESP32_GENERIC_P4` | ESP32-P4 | ST7701 MIPI-DSI (480x800) | `make run-device-base-tests` + `make run-device-lvgl-tests` |
+
+**For boards WITHOUT display (C3):**
+```bash
+make compile-all BOARD=ESP32_GENERIC_C3 LVGL=0
+make build BOARD=ESP32_GENERIC_C3 LVGL=0
+make flash BOARD=ESP32_GENERIC_C3 LVGL=0 PORT=/dev/ttyACM0
+make run-device-base-tests PORT=/dev/ttyACM0
+```
+
+**For boards WITH display (C6, P4):**
+```bash
+make compile-all BOARD=ESP32_GENERIC_C6
+make build BOARD=ESP32_GENERIC_C6
+make flash BOARD=ESP32_GENERIC_C6 PORT=/dev/cu.usbmodem2101
+make run-device-base-tests PORT=/dev/cu.usbmodem2101
+make run-device-lvgl-tests PORT=/dev/cu.usbmodem2101    # MANDATORY for display boards
+```
+
+**LVGL test files** (in `tests/device/`):
+
+| File | Description | Requires Display |
+|------|-------------|-----------------|
+| `run_device_tests.py` | Core compiler tests (465 tests) | No |
+| `run_lvgl_tests.py` | LVGL screens + MVU logic tests (diff, viewnode, reconciler) | No (but needs LVGL modules) |
+| `run_nav_tests.py` | LVGL navigation flow tests | Yes |
+| `run_lvgl_mvu_tests.py` | LVGL MVU architecture tests | No (but needs LVGL modules) |
+| `run_screen_navigation_tests.py` | Screen navigation tree tests | Yes |
 
 ### Feature Implementation Checklist
 

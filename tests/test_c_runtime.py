@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 import pytest
@@ -2905,7 +2906,7 @@ int main(void) {
 
 def test_c_isinstance_with_class_hierarchy(compile_and_run):
     """isinstance() correctly distinguishes between sibling classes."""
-    source = '''
+    source = """
 class Animal:
     name: str
     def __init__(self, name: str) -> None:
@@ -2932,7 +2933,7 @@ def check_cat(obj: object) -> int:
     if isinstance(obj, Cat):
         return 1
     return 0
-'''
+"""
     test_main_c = """
 #include <stdio.h>
 
@@ -2978,7 +2979,7 @@ int main(void) {
 
 def test_c_isinstance_with_narrowing(compile_and_run):
     """isinstance() + type narrowing via annotated assignment enables field access."""
-    source = '''
+    source = """
 class Dog:
     breed: str
     def __init__(self, breed: str) -> None:
@@ -2997,7 +2998,7 @@ def describe(obj: object) -> str:
         c: Cat = obj
         return c.color
     return "unknown"
-'''
+"""
     test_main_c = """
 #include <stdio.h>
 
@@ -3029,7 +3030,7 @@ int main(void) {
 
 def test_c_isinstance_with_dataclass_variants(compile_and_run):
     """isinstance() with dataclass variants (MVU message pattern)."""
-    source = '''
+    source = """
 from dataclasses import dataclass
 
 @dataclass(frozen=True)
@@ -3053,7 +3054,7 @@ def process(msg: object, count: int) -> int:
     elif isinstance(msg, Reset):
         return 0
     return count
-'''
+"""
     test_main_c = """
 #include <stdio.h>
 
@@ -3092,7 +3093,7 @@ int main(void) {
 
 def test_c_auto_narrow_basic(compile_and_run):
     """Auto-narrowing: isinstance + direct field access without manual annotation."""
-    source = '''
+    source = """
 class Dog:
     breed: str
     def __init__(self, breed: str) -> None:
@@ -3109,7 +3110,7 @@ def describe(obj: object) -> str:
     elif isinstance(obj, Cat):
         return obj.color
     return "unknown"
-'''
+"""
     test_main_c = """
 #include <stdio.h>
 
@@ -3137,7 +3138,7 @@ int main(void) {
 
 def test_c_auto_narrow_mvu_no_annotation(compile_and_run):
     """MVU dispatch with auto-narrowing -- no manual type annotations needed."""
-    source = '''
+    source = """
 from dataclasses import dataclass
 
 @dataclass(frozen=True)
@@ -3159,7 +3160,7 @@ def process(msg: object, count: int) -> int:
     elif isinstance(msg, Reset):
         return 0
     return count
-'''
+"""
     test_main_c = """
 #include <stdio.h>
 
@@ -3192,7 +3193,7 @@ int main(void) {
 
 def test_c_auto_narrow_negated(compile_and_run):
     """Auto-narrowing in else branch via not isinstance()."""
-    source = '''
+    source = """
 class Dog:
     breed: str
     def __init__(self, breed: str) -> None:
@@ -3203,7 +3204,7 @@ def get_breed(obj: object) -> str:
         return "not a dog"
     else:
         return obj.breed
-'''
+"""
     test_main_c = """
 #include <stdio.h>
 
@@ -3229,7 +3230,7 @@ int main(void) {
 
 def test_c_enum_member_access(compile_and_run):
     """Test that enum member access compiles to integer constants in C."""
-    source = '''
+    source = """
 from enum import IntEnum
 
 class Color(IntEnum):
@@ -3242,8 +3243,8 @@ def get_color() -> int:
 
 def check_color(c: int) -> bool:
     return c == Color.BLUE
-'''
-    test_main_c = '''
+"""
+    test_main_c = """
 #include <stdio.h>
 
 int main(void) {
@@ -3258,7 +3259,7 @@ int main(void) {
 
     return 0;
 }
-'''
+"""
 
     stdout = compile_and_run(source, "test", test_main_c)
     lines = stdout.strip().split("\n")
@@ -3269,7 +3270,7 @@ int main(void) {
 
 def test_c_enum_in_arithmetic(compile_and_run):
     """Test enum values used in arithmetic operations."""
-    source = '''
+    source = """
 from enum import IntEnum
 
 class Priority(IntEnum):
@@ -3279,8 +3280,8 @@ class Priority(IntEnum):
 
 def total_priority() -> int:
     return Priority.LOW + Priority.MEDIUM + Priority.HIGH
-'''
-    test_main_c = '''
+"""
+    test_main_c = """
 #include <stdio.h>
 
 int main(void) {
@@ -3288,7 +3289,105 @@ int main(void) {
     printf("%ld\\n", (long)mp_obj_get_int(result));
     return 0;
 }
-'''
+"""
 
     stdout = compile_and_run(source, "test", test_main_c)
     assert stdout.strip() == "16"  # 1 + 5 + 10
+
+
+def test_c_literal_int_param(compile_and_run):
+    source = """
+from typing import Literal
+
+def f(x: Literal[3]) -> int:
+    return x + 1
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result = test_f(mp_obj_new_int(3));
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "4"
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12+")
+def test_c_typevar_unbounded_identity(compile_and_run):
+    source = """
+def identity[T](x: T) -> T:
+    return x
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result = test_identity(mp_obj_new_int(7));
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "7"
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12+")
+def test_c_typevar_bounded_int_double(compile_and_run):
+    source = """
+def double[N: int](x: N) -> N:
+    return x + x
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result = test_double_(mp_obj_new_int(5));
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "10"
+
+
+def test_c_general_object_passthrough(compile_and_run):
+    source = """
+def passthrough(x: object) -> object:
+    return x
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result = test_passthrough(mp_obj_new_int(11));
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "11"
+
+
+def test_c_classic_typevar_identity(compile_and_run):
+    source = """
+from typing import TypeVar
+
+T = TypeVar(\"T\")
+
+def identity(x: T) -> T:
+    return x
+"""
+    test_main_c = """
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result = test_identity(mp_obj_new_int(9));
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+"""
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "9"
