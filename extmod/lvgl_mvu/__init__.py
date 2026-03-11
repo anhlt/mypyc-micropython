@@ -34,4 +34,9 @@ Compiles to a single MicroPython C module with namespaced submodules::
     # Factories and appliers
     lvgl_mvu.factories.register_p0_factories
     lvgl_mvu.appliers.register_p0_appliers
+
+    # Event system (Milestone 6)
+    lvgl_mvu.events.LvEvent
+    lvgl_mvu.events.EventBinder
+    lvgl_mvu.events.EventHandler
 """

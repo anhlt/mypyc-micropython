@@ -683,7 +683,7 @@ class LambdaIR(ValueIR):
     lambda_id: int  # Unique ID for this lambda (e.g., 0, 1, 2)
     c_name: str  # C function name (e.g., 'module__lambda_0')
     func_ir: "FuncIR"  # The generated FuncIR for this lambda
-    captured_vars: list[str]  # Names of captured variables (read-only closure)
+    captured_vars: list[tuple[str, CType]]  # Captured vars with types for proper boxing
 
 
 @dataclass

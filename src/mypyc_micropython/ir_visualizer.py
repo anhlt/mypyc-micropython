@@ -688,9 +688,10 @@ class IRPrinter:
             case FuncRefIR():
                 return f"<func:{value.py_name}>"
             case LambdaIR():
-                captured = (
-                    f", captures=[{', '.join(value.captured_vars)}]" if value.captured_vars else ""
-                )
+                captured = ""
+                if value.captured_vars:
+                    var_names = [name for name, _ in value.captured_vars]
+                    captured = f", captures=[{', '.join(var_names)}]"
                 return f"<lambda_{value.lambda_id}{captured}>"
             case BinOpIR():
                 left = self.print_value(value.left)

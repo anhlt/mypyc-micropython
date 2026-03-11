@@ -1,8 +1,9 @@
-"""Counter MVU - First Working Example.
+"""Counter MVU - Interactive counter with button events.
 
-Demonstrates the Model-View-Update architecture with LVGL.
-The counter auto-increments every second, proving the MVU
-loop works end-to-end with native compiled code.
+Demonstrates the Model-View-Update architecture with LVGL:
+- Increment / Decrement / Reset buttons with click events
+- Auto-increment timer subscription
+- Full MVU loop with native compiled code
 
 Usage on device::
 
@@ -15,12 +16,7 @@ Usage on device::
     lv.lv_screen_load(app.root_node.lv_obj)
 
     import time
-    tick = 0
     while True:
-        tick += 1
-        if tick >= 100:
-            app.dispatch(counter_mvu.MSG_INCREMENT)
-            tick = 0
         app.tick()
         lv.timer_handler()
         time.sleep_ms(10)
@@ -31,9 +27,10 @@ from __future__ import annotations
 from lvgl_mvu.app import App
 from lvgl_mvu.appliers import register_p0_appliers
 from lvgl_mvu.attrs import AttrRegistry
-from lvgl_mvu.dsl import Label, Screen
+from lvgl_mvu.dsl import Button, Label, Screen
+from lvgl_mvu.events import EventBinder, LvEvent_CLICKED
 from lvgl_mvu.factories import delete_lv_obj, register_p0_factories
-from lvgl_mvu.layouts import VStack
+from lvgl_mvu.layouts import HStack, VStack
 from lvgl_mvu.program import Cmd, Program
 from lvgl_mvu.reconciler import Reconciler
 from lvgl_mvu.widget import Widget
@@ -44,6 +41,8 @@ from lvgl_mvu.widget import Widget
 # ---------------------------------------------------------------------------
 
 MSG_INCREMENT: int = 1
+MSG_DECREMENT: int = 2
+MSG_RESET: int = 3
 
 
 # ---------------------------------------------------------------------------
@@ -74,40 +73,50 @@ def update(msg: int, model: Model) -> tuple[Model, Cmd]:
     """Handle messages."""
     if msg == MSG_INCREMENT:
         return (Model(model.count + 1), Cmd.none())
+    if msg == MSG_DECREMENT:
+        return (Model(model.count - 1), Cmd.none())
+    if msg == MSG_RESET:
+        return (Model(0), Cmd.none())
     return (model, Cmd.none())
 
 
 def view(model: Model) -> Widget:
-    """Render the counter UI with nice styling."""
+    """Render the counter UI with buttons."""
     count_text: str = "Count: " + str(model.count)
 
     # Title - white text
-    title: Widget = (
-        Label("MVU Counter")
-        .text_color(0xFFFFFF)
-        .build()
+    title: Widget = Label("MVU Counter").text_color(0xFFFFFF).build()
+
+    # Counter value - cyan (positive) or red (negative)
+    count_color: int = 0x00E5FF
+    if model.count < 0:
+        count_color = 0xFF6B6B
+    counter: Widget = Label(count_text).text_color(count_color).build()
+
+    # Buttons row
+    btn_dec: Widget = (
+        Button("-").size(80, 50).bg_color(0xFF6B6B).on(LvEvent_CLICKED, MSG_DECREMENT).build()
+    )
+    btn_reset: Widget = (
+        Button("0").size(80, 50).bg_color(0x4ECDC4).on(LvEvent_CLICKED, MSG_RESET).build()
+    )
+    btn_inc: Widget = (
+        Button("+").size(80, 50).bg_color(0x45B7D1).on(LvEvent_CLICKED, MSG_INCREMENT).build()
     )
 
-    # Counter value - cyan text
-    counter: Widget = (
-        Label(count_text)
-        .text_color(0x00E5FF)
-        .build()
-    )
+    buttons: Widget = HStack(10).with_children([btn_dec, btn_reset, btn_inc])
 
     # VStack container - sized, centered, styled
     stack: Widget = (
-        VStack(30)
-        .width(300)
-        .height(200)
+        VStack(20)
+        .width(340)
+        .height(280)
         .align(9, 0, 0)  # LV_ALIGN_CENTER = 9
         .bg_color(0x2D2D44)  # Dark purple-gray
         .bg_opa(255)
-        .padding(40, 40, 40, 40)
+        .padding(30, 30, 30, 30)
         .radius(16)
-        .add_child(title)
-        .add_child(counter)
-        .build()
+        .with_children([title, counter, buttons])
     )
 
     # Screen with dark background
@@ -119,13 +128,14 @@ def view(model: Model) -> Widget:
         .build()
     )
 
+
 # ---------------------------------------------------------------------------
 # App Setup
 # ---------------------------------------------------------------------------
 
 
 def create_app() -> App:
-    """Create and configure the MVU application."""
+    """Create and configure the MVU application with event support."""
     registry: AttrRegistry = AttrRegistry()
     register_p0_appliers(registry)
 
@@ -135,6 +145,10 @@ def create_app() -> App:
 
     program: Program = Program(init, update, view)
 
-    return App(program, reconciler)
+    app: App = App(program, reconciler)
 
+    # Wire up event system
+    binder: EventBinder = EventBinder(app.dispatch)
+    reconciler.set_event_binder(binder)
 
+    return app

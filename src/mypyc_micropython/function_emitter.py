@@ -628,8 +628,17 @@ class BaseEmitter:
             case LambdaIR():
                 if value.captured_vars:
                     captured_parts = [f"MP_OBJ_FROM_PTR(&{value.c_name}_obj)"]
-                    for var in value.captured_vars:
-                        captured_parts.append(var)
+                    for var_name, c_type in value.captured_vars:
+                        # Box captured variables based on their type
+                        if c_type == CType.MP_INT_T:
+                            captured_parts.append(f"mp_obj_new_int({var_name})")
+                        elif c_type == CType.MP_FLOAT_T:
+                            captured_parts.append(f"mp_obj_new_float({var_name})")
+                        elif c_type == CType.BOOL:
+                            captured_parts.append(f"mp_obj_new_bool({var_name})")
+                        else:
+                            # Already boxed (mp_obj_t)
+                            captured_parts.append(var_name)
                     n_closed = len(value.captured_vars)
                     closed_arr = ", ".join(captured_parts[1:])
                     return (
@@ -1508,7 +1517,12 @@ class FunctionEmitter(BaseEmitter):
         c_sig, obj_def = self._emit_signature()
         lines = [c_sig + ";"]
         if "_lambda_" in self.func_ir.c_name:
-            extern_decl = f"extern const mp_obj_fun_builtin_fixed_t {self.func_ir.c_name}_obj;"
+            # Determine the correct obj type based on argument count
+            num_args = len(self.func_ir.params)
+            if num_args > 3 or self.func_ir.has_defaults or self.func_ir.has_star_args:
+                extern_decl = f"extern const mp_obj_fun_builtin_var_t {self.func_ir.c_name}_obj;"
+            else:
+                extern_decl = f"extern const mp_obj_fun_builtin_fixed_t {self.func_ir.c_name}_obj;"
             lines.append(extern_decl)
         return "\n".join(lines)
 

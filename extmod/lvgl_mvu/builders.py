@@ -69,6 +69,28 @@ class WidgetBuilder:
         self._children.append(child)
         return self
 
+    def with_children(self, children: list[Widget]) -> Widget:
+        """Build the widget with the given children.
+
+        This is the primary way to compose widget trees::
+
+            VStack(spacing=10).with_children([
+                Label("Line 1").build(),
+                Label("Line 2").build(),
+            ])
+
+        Args:
+            children: List of pre-built Widget instances.
+
+        Returns:
+            A new Widget with the given children.
+        """
+        i: int = 0
+        while i < len(children):
+            self._children.append(children[i])
+            i += 1
+        return self.build()
+
     def build(self) -> Widget:
         """Build the widget (with any children added via add_child)."""
         # Sort attributes by key for efficient two-pointer diffing

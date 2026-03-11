@@ -3432,3 +3432,102 @@ int main(void) {
 '''
     stdout = compile_and_run(source, "test", test_main_c)
     assert stdout.strip() == "42"
+
+
+# ============================================================================
+# Test: Lambda Expression C Runtime
+# ============================================================================
+
+
+@pytest.mark.c_runtime
+@pytest.mark.skip(reason="Mock runtime doesn't support mp_call_function_N for closures - test on device")
+def test_c_simple_lambda(compile_and_run):
+    """Test simple lambda expression executes correctly."""
+    source = '''
+def use_lambda() -> int:
+    add = lambda x, y: x + y
+    return add(2, 3)
+'''
+    test_main_c = '''
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result = test_use_lambda();
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+'''
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "5"
+
+
+@pytest.mark.c_runtime
+@pytest.mark.skip(reason="Mock runtime doesn't support mp_call_function_N for closures - test on device")
+def test_c_lambda_closure_int(compile_and_run):
+    """Test lambda with captured int variable."""
+    source = '''
+def use_closure(n: int) -> int:
+    multiplier: int = 10
+    fn = lambda x: x * multiplier
+    return fn(n)
+'''
+    test_main_c = '''
+#include <stdio.h>
+
+int main(void) {
+    mp_obj_t result = test_use_closure(mp_obj_new_int(5));
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+'''
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "50"
+
+
+@pytest.mark.c_runtime
+@pytest.mark.skip(reason="Mock runtime doesn't support mp_call_function_N for closures - test on device")
+def test_c_lambda_closure_multiple_vars(compile_and_run):
+    """Test lambda capturing multiple variables."""
+    source = '''
+def test_multi_capture(a: int, b: int) -> int:
+    x: int = a + 1
+    y: int = b + 2
+    fn = lambda z: x + y + z
+    return fn(100)
+'''
+    test_main_c = '''
+#include <stdio.h>
+
+int main(void) {
+    // a=10, b=20 -> x=11, y=22 -> lambda(100) = 11+22+100 = 133
+    mp_obj_t result = test_test_multi_capture(mp_obj_new_int(10), mp_obj_new_int(20));
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+'''
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "133"
+
+
+@pytest.mark.c_runtime
+@pytest.mark.skip(reason="Mock runtime doesn't support mp_call_function_N for closures - test on device")
+def test_c_multiple_lambdas(compile_and_run):
+    """Test multiple lambdas in same function."""
+    source = '''
+def use_lambdas() -> int:
+    add = lambda x, y: x + y
+    sub = lambda x, y: x - y
+    return add(10, 5) + sub(10, 5)
+'''
+    test_main_c = '''
+#include <stdio.h>
+
+int main(void) {
+    // add(10,5)=15, sub(10,5)=5 -> 15+5=20
+    mp_obj_t result = test_use_lambdas();
+    printf("%ld\\n", (long)mp_obj_get_int(result));
+    return 0;
+}
+'''
+    stdout = compile_and_run(source, "test", test_main_c)
+    assert stdout.strip() == "20"

@@ -1,9 +1,11 @@
-"""P0 Widget tests for LVGL MVU framework. Runs directly on MicroPython.
+"""P0 Widget + Event System tests for LVGL MVU framework.
+
+Runs directly on MicroPython device.
 
 Usage: mpremote connect /dev/cu.usbmodem101 run run_mvu_p0_tests.py
 
-Tests the P0 widgets (Screen, Container, Label, Button) and the MVU
-architecture with declarative DSL.
+Tests the P0 widgets (Screen, Container, Label, Button), the MVU
+architecture with declarative DSL, and the event system (Milestone 6).
 """
 
 import gc
@@ -43,16 +45,16 @@ def refresh(iterations=5):
 suite("widget_module")
 
 try:
-    from lvgl_mvu.widget import ScalarAttr, Widget, WidgetKey
+    from lvgl_mvu import widget
 
-    t("WidgetKey.SCREEN", WidgetKey.SCREEN, "0")
-    t("WidgetKey.CONTAINER", WidgetKey.CONTAINER, "1")
-    t("WidgetKey.LABEL", WidgetKey.LABEL, "2")
-    t("WidgetKey.BUTTON", WidgetKey.BUTTON, "3")
+    t("WidgetKey SCREEN", widget.WidgetKey_SCREEN, "0")
+    t("WidgetKey CONTAINER", widget.WidgetKey_CONTAINER, "1")
+    t("WidgetKey LABEL", widget.WidgetKey_LABEL, "2")
+    t("WidgetKey BUTTON", widget.WidgetKey_BUTTON, "3")
 
     # Create a widget manually
-    w = Widget(
-        key=WidgetKey.LABEL,
+    w = widget.Widget(
+        key=widget.WidgetKey_LABEL,
         user_key="",
         scalar_attrs=(),
         children=(),
@@ -67,22 +69,22 @@ except ImportError as e:
 suite("attrs_module")
 
 try:
-    from lvgl_mvu.attrs import AttrDef, AttrKey, AttrRegistry
+    from lvgl_mvu import attrs
 
-    t("AttrKey.TEXT", AttrKey.TEXT, "100")
-    t("AttrKey.WIDTH", AttrKey.WIDTH, "2")
-    t("AttrKey.HEIGHT", AttrKey.HEIGHT, "3")
-    t("AttrKey.BG_COLOR", AttrKey.BG_COLOR, "40")
+    t("AttrKey TEXT", attrs.AttrKey_TEXT, "100")
+    t("AttrKey WIDTH", attrs.AttrKey_WIDTH, "2")
+    t("AttrKey HEIGHT", attrs.AttrKey_HEIGHT, "3")
+    t("AttrKey BG_COLOR", attrs.AttrKey_BG_COLOR, "40")
 
     # Test AttrRegistry
-    registry = AttrRegistry()
+    registry = attrs.AttrRegistry()
 
     def dummy_apply(obj, val):
         pass
 
-    attr_def = AttrDef(AttrKey.TEXT, "text", "", dummy_apply)
+    attr_def = attrs.AttrDef(attrs.AttrKey_TEXT, "text", "", dummy_apply)
     registry.add(attr_def)
-    t("AttrRegistry add", registry.get(AttrKey.TEXT) is not None, "True")
+    t("AttrRegistry add", registry.get(attrs.AttrKey_TEXT) is not None, "True")
     t("AttrRegistry get missing", registry.get(999) is None, "True")
 except ImportError as e:
     print("  SKIP: attrs module not available - " + str(e))
@@ -92,26 +94,36 @@ except ImportError as e:
 suite("builders_module")
 
 try:
-    from lvgl_mvu.attrs import AttrKey
-    from lvgl_mvu.builders import WidgetBuilder
-    from lvgl_mvu.widget import WidgetKey
+    from lvgl_mvu import attrs, builders, widget
 
     # Test basic builder
-    builder = WidgetBuilder(WidgetKey.LABEL)
-    builder = builder.set_attr(AttrKey.TEXT, "Hello")
-    widget = builder.build()
-    t("Builder creates widget", widget.key, "2")
-    t("Builder sets attr", len(widget.scalar_attrs), "1")
+    builder = builders.WidgetBuilder(widget.WidgetKey_LABEL)
+    builder = builder.set_attr(attrs.AttrKey_TEXT, "Hello")
+    w = builder.build()
+    t("Builder creates widget", w.key, "2")
+    t("Builder sets attr", len(w.scalar_attrs), "1")
 
     # Test fluent API
-    widget2 = WidgetBuilder(WidgetKey.CONTAINER).width(100).height(50).bg_color(0xFF0000).build()
+    widget2 = (
+        builders.WidgetBuilder(widget.WidgetKey_CONTAINER)
+        .width(100)
+        .height(50)
+        .bg_color(0xFF0000)
+        .build()
+    )
     t("Fluent width/height/bg_color", len(widget2.scalar_attrs), "3")
 
-    # Test children
-    parent = WidgetBuilder(WidgetKey.CONTAINER)
-    parent = parent.add_child(widget)
-    parent_widget = parent.build()
-    t("Builder add_child", len(parent_widget.children), "1")
+    # Test add_child + build
+    child_w = builders.WidgetBuilder(widget.WidgetKey_LABEL).build()
+    parent_w = builders.WidgetBuilder(widget.WidgetKey_CONTAINER).add_child(child_w).build()
+    t("Builder add_child", len(parent_w.children), "1")
+
+    # Test with_children
+    c1 = builders.WidgetBuilder(widget.WidgetKey_LABEL).build()
+    c2 = builders.WidgetBuilder(widget.WidgetKey_BUTTON).build()
+    parent_wc = builders.WidgetBuilder(widget.WidgetKey_CONTAINER).with_children([c1, c2])
+    t("Builder with_children", len(parent_wc.children), "2")
+    t("with_children returns Widget", type(parent_wc).__name__, "Widget")
 except ImportError as e:
     print("  SKIP: builders module not available - " + str(e))
 
@@ -120,40 +132,40 @@ except ImportError as e:
 suite("dsl_module")
 
 try:
-    from lvgl_mvu.attrs import AttrKey
-    from lvgl_mvu.dsl import Button, Container, Label, Screen
-    from lvgl_mvu.widget import WidgetKey
+    from lvgl_mvu import attrs, dsl, widget
 
     # Test Screen
-    screen = Screen().build()
+    screen = dsl.Screen().build()
     t("Screen widget key", screen.key, "0")
 
     # Test Container
-    container = Container().size(200, 100).build()
+    container = dsl.Container().size(200, 100).build()
     t("Container widget key", container.key, "1")
     t("Container has attrs", len(container.scalar_attrs), "2")
 
     # Test Label
-    label = Label("Hello World").build()
+    label = dsl.Label("Hello World").build()
     t("Label widget key", label.key, "2")
     t("Label has text attr", len(label.scalar_attrs), "1")
     t("Label text value", label.scalar_attrs[0].value, "Hello World")
 
     # Test Button
-    button = Button("Click").build()
+    button = dsl.Button("Click").build()
     t("Button widget key", button.key, "3")
     t("Button has text attr", len(button.scalar_attrs), "1")
 
-    # Test event handler
-    button_with_event = Button("Test").on(7, "MSG_CLICKED").build()
+    # Test event handler via builder
+    button_with_event = dsl.Button("Test").on(10, "MSG_CLICKED").build()
     t("Button event handler", len(button_with_event.event_handlers), "1")
 
-    # Test nested widgets
-    screen_with_children = Screen()(
-        Label("Title").build(),
-        Button("OK").build(),
+    # Test with_children composition
+    screen_with_children = dsl.Screen().with_children(
+        [
+            dsl.Label("Title").build(),
+            dsl.Button("OK").build(),
+        ]
     )
-    t("Screen with children", len(screen_with_children.children), "2")
+    t("Screen with_children", len(screen_with_children.children), "2")
 except ImportError as e:
     print("  SKIP: dsl module not available - " + str(e))
 
@@ -162,41 +174,40 @@ except ImportError as e:
 suite("layouts_module")
 
 try:
-    from lvgl_mvu.attrs import AttrKey
-    from lvgl_mvu.layouts import LV_FLEX_FLOW_COLUMN, LV_FLEX_FLOW_ROW, HStack, VStack
-    from lvgl_mvu.widget import WidgetKey
+    from lvgl_mvu import attrs, layouts, widget
 
     # Test VStack
-    vstack = VStack(spacing=10).build()
+    vstack = layouts.VStack(spacing=10).build()
     t("VStack widget key", vstack.key, "1")  # Container
     t("VStack has flex attrs", len(vstack.scalar_attrs) >= 3, "True")
 
     # Check flex flow attribute
     flex_flow_found = False
-    for attr in vstack.scalar_attrs:
-        if attr.key == AttrKey.FLEX_FLOW and attr.value == LV_FLEX_FLOW_COLUMN:
+    for a in vstack.scalar_attrs:
+        if a.key == attrs.AttrKey_FLEX_FLOW and a.value == layouts.LV_FLEX_FLOW_COLUMN:
             flex_flow_found = True
             break
     t("VStack flex_flow column", flex_flow_found, "True")
 
     # Test HStack
-    hstack = HStack(spacing=5).build()
+    hstack = layouts.HStack(spacing=5).build()
     t("HStack widget key", hstack.key, "1")  # Container
 
-    # Check flex flow attribute
     flex_flow_row = False
-    for attr in hstack.scalar_attrs:
-        if attr.key == AttrKey.FLEX_FLOW and attr.value == LV_FLEX_FLOW_ROW:
+    for a in hstack.scalar_attrs:
+        if a.key == attrs.AttrKey_FLEX_FLOW and a.value == layouts.LV_FLEX_FLOW_ROW:
             flex_flow_row = True
             break
     t("HStack flex_flow row", flex_flow_row, "True")
 
-    # Test VStack with children
-    vstack_with_kids = VStack(spacing=10)(
-        Label("Item 1").build(),
-        Label("Item 2").build(),
+    # Test with_children
+    vstack_wc = layouts.VStack(spacing=10).with_children(
+        [
+            dsl.Label("Item 1").build(),
+            dsl.Label("Item 2").build(),
+        ]
     )
-    t("VStack children", len(vstack_with_kids.children), "2")
+    t("VStack with_children", len(vstack_wc.children), "2")
 except ImportError as e:
     print("  SKIP: layouts module not available - " + str(e))
 
@@ -205,36 +216,46 @@ except ImportError as e:
 suite("diff_module")
 
 try:
-    from lvgl_mvu.attrs import AttrKey
-    from lvgl_mvu.diff import can_reuse, diff_scalars, diff_widgets
-    from lvgl_mvu.widget import ScalarAttr, Widget, WidgetKey
+    from lvgl_mvu import attrs, diff, widget
 
     # Test can_reuse
-    w1 = Widget(WidgetKey.LABEL, "", (), (), ())
-    w2 = Widget(WidgetKey.LABEL, "", (), (), ())
-    w3 = Widget(WidgetKey.BUTTON, "", (), (), ())
-    t("can_reuse same type", can_reuse(w1, w2), "True")
-    t("can_reuse diff type", can_reuse(w1, w3), "False")
+    w1 = widget.Widget(widget.WidgetKey_LABEL, "", (), (), ())
+    w2 = widget.Widget(widget.WidgetKey_LABEL, "", (), (), ())
+    w3 = widget.Widget(widget.WidgetKey_BUTTON, "", (), (), ())
+    t("can_reuse same type", diff.can_reuse(w1, w2), "True")
+    t("can_reuse diff type", diff.can_reuse(w1, w3), "False")
 
     # Test user_key
-    w4 = Widget(WidgetKey.LABEL, "key1", (), (), ())
-    w5 = Widget(WidgetKey.LABEL, "key1", (), (), ())
-    w6 = Widget(WidgetKey.LABEL, "key2", (), (), ())
-    t("can_reuse same user_key", can_reuse(w4, w5), "True")
-    t("can_reuse diff user_key", can_reuse(w4, w6), "False")
+    w4 = widget.Widget(widget.WidgetKey_LABEL, "key1", (), (), ())
+    w5 = widget.Widget(widget.WidgetKey_LABEL, "key1", (), (), ())
+    w6 = widget.Widget(widget.WidgetKey_LABEL, "key2", (), (), ())
+    t("can_reuse same user_key", diff.can_reuse(w4, w5), "True")
+    t("can_reuse diff user_key", diff.can_reuse(w4, w6), "False")
 
     # Test diff_scalars
-    attrs1 = (ScalarAttr(AttrKey.TEXT, "Hello"),)
-    attrs2 = (ScalarAttr(AttrKey.TEXT, "World"),)
-    changes = diff_scalars(attrs1, attrs2)
+    attrs1 = (widget.ScalarAttr(attrs.AttrKey_TEXT, "Hello"),)
+    attrs2 = (widget.ScalarAttr(attrs.AttrKey_TEXT, "World"),)
+    changes = diff.diff_scalars(attrs1, attrs2)
     t("diff_scalars updated", len(changes), "1")
     t("diff_scalars change kind", changes[0].kind, "updated")
 
     # Test diff_widgets
-    prev = Widget(WidgetKey.LABEL, "", attrs1, (), ())
-    next_w = Widget(WidgetKey.LABEL, "", attrs2, (), ())
-    diff = diff_widgets(prev, next_w)
-    t("diff_widgets scalar_changes", len(diff.scalar_changes), "1")
+    prev = widget.Widget(widget.WidgetKey_LABEL, "", attrs1, (), ())
+    next_w = widget.Widget(widget.WidgetKey_LABEL, "", attrs2, (), ())
+    d = diff.diff_widgets(prev, next_w)
+    t("diff_widgets scalar_changes", len(d.scalar_changes), "1")
+
+    # Test event_changes detection
+    eh1 = ((10, "MSG_A"),)
+    eh2 = ((10, "MSG_B"),)
+    w_ev1 = widget.Widget(widget.WidgetKey_BUTTON, "", (), (), eh1)
+    w_ev2 = widget.Widget(widget.WidgetKey_BUTTON, "", (), (), eh2)
+    d_ev = diff.diff_widgets(w_ev1, w_ev2)
+    t("diff event_changes detected", d_ev.event_changes, "True")
+
+    w_ev3 = widget.Widget(widget.WidgetKey_BUTTON, "", (), (), eh1)
+    d_ev_same = diff.diff_widgets(w_ev1, w_ev3)
+    t("diff event_changes same", d_ev_same.event_changes, "False")
 except ImportError as e:
     print("  SKIP: diff module not available - " + str(e))
 
@@ -243,47 +264,47 @@ except ImportError as e:
 suite("program_module")
 
 try:
-    from lvgl_mvu.program import EFFECT_MSG, Cmd, Program, Sub
+    from lvgl_mvu import program
 
     # Test Cmd.none()
-    cmd_none = Cmd.none()
+    cmd_none = program.Cmd.none()
     t("Cmd.none", len(cmd_none.effects), "0")
 
     # Test Cmd.of_msg
-    cmd_msg = Cmd.of_msg(42)
+    cmd_msg = program.Cmd.of_msg(42)
     t("Cmd.of_msg", len(cmd_msg.effects), "1")
-    t("Cmd.of_msg effect kind", cmd_msg.effects[0].kind, str(EFFECT_MSG))
+    t("Cmd.of_msg effect kind", cmd_msg.effects[0].kind, str(program.EFFECT_MSG))
     t("Cmd.of_msg effect data", cmd_msg.effects[0].data, "42")
 
     # Test Cmd.batch
-    cmd1 = Cmd.of_msg(1)
-    cmd2 = Cmd.of_msg(2)
-    batched = Cmd.batch([cmd1, cmd2])
+    cmd1 = program.Cmd.of_msg(1)
+    cmd2 = program.Cmd.of_msg(2)
+    batched = program.Cmd.batch([cmd1, cmd2])
     t("Cmd.batch", len(batched.effects), "2")
 
     # Test Sub.none()
-    sub_none = Sub.none()
+    sub_none = program.Sub.none()
     t("Sub.none", len(sub_none.defs), "0")
 
     # Test Sub.timer
-    sub_timer = Sub.timer(1000, "TICK")
+    sub_timer = program.Sub.timer(1000, "TICK")
     t("Sub.timer", len(sub_timer.defs), "1")
     t("Sub.timer key", sub_timer.defs[0].key, "timer_1000")
 
     # Test Program
     def test_init():
-        return (0, Cmd.none())
+        return (0, program.Cmd.none())
 
     def test_update(msg, model):
-        return (model + 1, Cmd.none())
+        return (model + 1, program.Cmd.none())
 
     def test_view(model):
         return None
 
-    program = Program(test_init, test_update, test_view)
-    t("Program init_fn", program.init_fn is not None, "True")
-    t("Program update_fn", program.update_fn is not None, "True")
-    t("Program view_fn", program.view_fn is not None, "True")
+    prog = program.Program(test_init, test_update, test_view)
+    t("Program init_fn", prog.init_fn is not None, "True")
+    t("Program update_fn", prog.update_fn is not None, "True")
+    t("Program view_fn", prog.view_fn is not None, "True")
 except ImportError as e:
     print("  SKIP: program module not available - " + str(e))
 
@@ -292,27 +313,25 @@ except ImportError as e:
 suite("viewnode_module")
 
 try:
-    from lvgl_mvu.attrs import AttrRegistry
-    from lvgl_mvu.viewnode import ViewNode
-    from lvgl_mvu.widget import Widget, WidgetKey
+    from lvgl_mvu import attrs, viewnode, widget
 
     # Create a mock lv_obj
     mock_obj = {"type": "mock"}
 
     # Create widget and registry
-    w = Widget(WidgetKey.LABEL, "", (), (), ())
-    registry = AttrRegistry()
+    w = widget.Widget(widget.WidgetKey_LABEL, "", (), (), ())
+    registry = attrs.AttrRegistry()
 
     # Create ViewNode
-    node = ViewNode(mock_obj, w, registry)
+    node = viewnode.ViewNode(mock_obj, w, registry)
     t("ViewNode lv_obj", node.lv_obj is mock_obj, "True")
     t("ViewNode widget", node.widget.key, "2")
     t("ViewNode children empty", len(node.children), "0")
     t("ViewNode not disposed", node.is_disposed(), "False")
 
     # Test add_child
-    child_w = Widget(WidgetKey.BUTTON, "", (), (), ())
-    child_node = ViewNode({"type": "child"}, child_w, registry)
+    child_w = widget.Widget(widget.WidgetKey_BUTTON, "", (), (), ())
+    child_node = viewnode.ViewNode({"type": "child"}, child_w, registry)
     node.add_child(child_node)
     t("ViewNode add_child", len(node.children), "1")
 
@@ -320,8 +339,51 @@ try:
     removed = node.remove_child(0)
     t("ViewNode remove_child", removed is child_node, "True")
     t("ViewNode children after remove", len(node.children), "0")
+
+    # Test handler registration
+    node.register_handler(10, "handler_obj")
+    t("ViewNode register_handler", 10 in node.handlers, "True")
+    t("ViewNode handler value", node.handlers[10], "handler_obj")
+
+    # Test unregister_handler
+    old_h = node.unregister_handler(10)
+    t("ViewNode unregister_handler", old_h, "handler_obj")
+    t("ViewNode handlers empty", len(node.handlers), "0")
 except ImportError as e:
     print("  SKIP: viewnode module not available - " + str(e))
+
+
+# ---- Events Module Tests ----
+suite("events_module")
+
+try:
+    from lvgl_mvu import events
+
+    # Test LvEvent constants
+    t("LvEvent CLICKED", events.LvEvent.CLICKED, "10")
+    t("LvEvent VALUE_CHANGED", events.LvEvent.VALUE_CHANGED, "35")
+    t("LvEvent PRESSED", events.LvEvent.PRESSED, "1")
+    t("LvEvent RELEASED", events.LvEvent.RELEASED, "11")
+
+    # Test EventHandler
+    handler = events.EventHandler(events.HANDLER_MSG, "test_msg")
+    t("EventHandler active", handler.active, "True")
+    t("EventHandler kind", handler.kind, str(events.HANDLER_MSG))
+    t("EventHandler payload", handler.payload, "test_msg")
+
+    handler.deactivate()
+    t("EventHandler deactivated", handler.active, "False")
+
+    # Test EventBinder creation
+    dispatched = []
+
+    def mock_dispatch(msg):
+        dispatched.append(msg)
+
+    binder = events.EventBinder(mock_dispatch)
+    t("EventBinder created", binder is not None, "True")
+except ImportError as e:
+    print("  SKIP: events module not available - " + str(e))
 
 
 # ---- Counter MVU App Tests ----
@@ -356,6 +418,20 @@ try:
     t("counter view widget", widget is not None, "True")
     t("counter view widget key", widget.key, "0")  # Screen
     t("counter view children", len(widget.children) >= 1, "True")
+
+    # Check view has buttons with event handlers
+    stack = widget.children[0]  # VStack
+    has_events = False
+    for child in stack.children:
+        if len(child.event_handlers) > 0:
+            has_events = True
+            break
+        # Check nested children (HStack with buttons)
+        for grandchild in child.children:
+            if len(grandchild.event_handlers) > 0:
+                has_events = True
+                break
+    t("counter has event handlers", has_events, "True")
 except ImportError as e:
     print("  SKIP: counter_mvu not available - " + str(e))
 
@@ -372,35 +448,30 @@ try:
     print("  LVGL initialized")
 
     # Test factories
-    from lvgl_mvu.factories import (
-        create_button,
-        create_container,
-        create_label,
-        create_screen,
-    )
+    from lvgl_mvu import factories
 
-    screen = create_screen(None)
+    screen = factories.create_screen(None)
     t("create_screen", screen is not None, "True")
 
-    container = create_container(screen)
+    container = factories.create_container(screen)
     t("create_container", container is not None, "True")
 
-    label = create_label(container)
+    label = factories.create_label(container)
     t("create_label", label is not None, "True")
 
-    button = create_button(container)
+    button = factories.create_button(container)
     t("create_button", button is not None, "True")
 
     # Test appliers
-    from lvgl_mvu.appliers import apply_text, apply_text_color, apply_width
+    from lvgl_mvu import appliers
 
-    apply_text(label, "Test Label")
+    appliers.apply_text(label, "Test Label")
     t("apply_text label", True, "True")
 
-    apply_text_color(label, 0xFF0000)
+    appliers.apply_text_color(label, 0xFF0000)
     t("apply_text_color", True, "True")
 
-    apply_width(container, 200)
+    appliers.apply_width(container, 200)
     t("apply_width", True, "True")
 
     # Cleanup
@@ -415,10 +486,92 @@ except Exception as e:
     t("lvgl_integration_exception", False, "True")
 
 
+# ---- Event System LVGL Integration ----
+suite("event_lvgl_integration")
+
+try:
+    import lvgl as lv
+    from lvgl_mvu import events
+
+    screen = lv.lv_obj_create(None)
+    btn = lv.lv_button_create(screen)
+
+    # Test EventBinder.bind with real LVGL objects
+    dispatched_msgs = []
+
+    def test_dispatch(msg):
+        dispatched_msgs.append(msg)
+
+    binder = events.EventBinder(test_dispatch)
+    handler = binder.bind(btn, events.LvEvent.CLICKED, "BTN_CLICKED")
+    t("bind returns handler", handler is not None, "True")
+    t("handler is active", handler.active, "True")
+
+    # Test unbind (deactivate)
+    binder.unbind(btn, events.LvEvent.CLICKED, handler)
+    t("handler deactivated", handler.active, "False")
+
+    lv.lv_obj_delete(screen)
+    refresh(5)
+    t("event cleanup", True, "True")
+
+except ImportError as e:
+    print("  SKIP: event LVGL integration not available - " + str(e))
+except Exception as e:
+    print("  ERROR: event LVGL integration failed - " + str(e))
+    t("event_lvgl_exception", False, "True")
+
+
+# ---- Counter App Full Integration (create + tick) ----
+suite("counter_full_integration")
+
+try:
+    import counter_mvu
+    import lvgl as lv
+
+    app = counter_mvu.create_app()
+    t("create_app", app is not None, "True")
+
+    # First tick creates the view tree
+    app.tick()
+    t("first tick", app.root_node is not None, "True")
+
+    # Load screen
+    lv.lv_screen_load(app.root_node.lv_obj)
+    refresh(10)
+    t("screen loaded", True, "True")
+
+    # Dispatch increment and tick
+    app.dispatch(counter_mvu.MSG_INCREMENT)
+    app.tick()
+    t("increment dispatch", app.model.count, "1")
+    refresh(5)
+
+    # Dispatch decrement
+    app.dispatch(counter_mvu.MSG_DECREMENT)
+    app.tick()
+    t("decrement dispatch", app.model.count, "0")
+    refresh(5)
+
+    # Cleanup
+    app.dispose()
+    refresh(5)
+    t("app disposed", app.is_disposed(), "True")
+
+except ImportError as e:
+    print("  SKIP: counter full integration not available - " + str(e))
+except Exception as e:
+    print("  ERROR: counter full integration failed - " + str(e))
+    import sys
+
+    sys.print_exception(e)
+    t("counter_full_exception", False, "True")
+
+
 # ---- Summary ----
 print("")
 print("=" * 40)
-print("P0 WIDGET TEST RESULTS")
+print("P0 WIDGET + EVENT TEST RESULTS")
 print("=" * 40)
 print("Total:  " + str(_total))
 print("Passed: " + str(_passed))
