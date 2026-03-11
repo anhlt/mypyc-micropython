@@ -7179,3 +7179,269 @@ def sort_key(x: int) -> int:
         assert "MP_OBJ_FROM_PTR(&test_sort_key_obj)" in result
         assert "mp_obj_new_int(sort_key)" not in result
 
+    def test_func_ref_passed_to_method_call(self):
+        """Function reference passed to obj.method() - MVU pattern.
+
+        This is the pattern used in lvgl_mvu/factories.py:
+            reconciler.register_factory(WidgetKey.LABEL, create_label)
+
+        Bug fixed: container_emitter.py didn't handle FuncRefIR,
+        producing `/* unknown value */` instead of the function pointer.
+        """
+        source = """
+class Reconciler:
+    def register_factory(self, key: int, factory: object) -> None:
+        pass
+
+def create_screen(parent: object) -> object:
+    return parent
+
+def create_label(parent: object) -> object:
+    return parent
+
+def register_factories(reconciler: Reconciler) -> None:
+    reconciler.register_factory(0, create_screen)
+    reconciler.register_factory(1, create_label)
+"""
+        result = compile_source(source, "test", type_check=False)
+        # Both function references should be emitted correctly
+        assert "MP_OBJ_FROM_PTR(&test_create_screen_obj)" in result
+        assert "MP_OBJ_FROM_PTR(&test_create_label_obj)" in result
+        # Should NOT have unknown value placeholder
+        assert "/* unknown value */" not in result
+
+    def test_func_ref_with_enum_style_constant(self):
+        """Function reference with IntEnum-style constant as first arg.
+
+        Pattern from factories.py:
+            reconciler.register_factory(WidgetKey.SCREEN, create_screen)
+        """
+        source = """
+SCREEN: int = 0
+LABEL: int = 1
+
+class Registry:
+    def add(self, key: int, fn: object) -> None:
+        pass
+
+def handler_a() -> None:
+    pass
+
+def handler_b() -> None:
+    pass
+
+def setup(reg: Registry) -> None:
+    reg.add(SCREEN, handler_a)
+    reg.add(LABEL, handler_b)
+"""
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_OBJ_FROM_PTR(&test_handler_a_obj)" in result
+        assert "MP_OBJ_FROM_PTR(&test_handler_b_obj)" in result
+        assert "/* unknown value */" not in result
+        assert "mp_obj_new_int(sort_key)" not in result
+
+
+class TestCustomClassMethodDispatch:
+    """Test that method calls on custom classes use generic dispatch.
+
+    Regression tests for the bug where container_emitter used builtin method
+    handlers (e.g., set.add -> mp_obj_set_store) even for custom class methods
+    with the same name.
+    """
+
+    def test_custom_class_add_method(self):
+        """Custom class with .add() method should NOT use set.add dispatch.
+
+        Bug: reg.add(x) was being emitted as mp_obj_set_store(reg, x)
+        instead of mp_load_method + mp_call_method_n_kw.
+        """
+        source = '''
+class Registry:
+    def add(self, key: int) -> None:
+        pass
+
+def setup(reg: Registry) -> None:
+    reg.add(42)
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should use generic method dispatch
+        assert "mp_load_method(" in result
+        assert "MP_QSTR_add" in result
+        assert "mp_call_method_n_kw" in result
+        # Should NOT use set.add optimization
+        assert "mp_obj_set_store" not in result
+
+    def test_custom_class_pop_method(self):
+        """Custom class with .pop() method should NOT use list.pop dispatch."""
+        source = '''
+class Stack:
+    def pop(self) -> int:
+        return 0
+
+def use_stack(stack: Stack) -> int:
+    return stack.pop()
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should use generic method dispatch
+        assert "mp_load_method(" in result
+        assert "MP_QSTR_pop" in result
+        # Should NOT use list.pop optimization (mp_obj_list_pop)
+        assert "mp_obj_list_pop" not in result
+
+    def test_custom_class_get_method(self):
+        """Custom class with .get() method should NOT use dict.get dispatch."""
+        source = '''
+class Cache:
+    def get(self, key: str) -> object:
+        return None
+
+def lookup(cache: Cache, key: str) -> object:
+    return cache.get(key)
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should use generic method dispatch
+        assert "mp_load_method(" in result
+        assert "MP_QSTR_get" in result
+
+    def test_builtin_list_still_uses_optimized_dispatch(self):
+        """list.append should still use optimized dispatch."""
+        source = '''
+def add_item(lst: list, x: int) -> None:
+    lst.append(x)
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should use optimized list append
+        assert "mp_obj_list_append(" in result
+
+
+# ============================================================================
+# Test: Bug A - from-import name resolution
+# ============================================================================
+
+
+class TestFromImportNameResolutionCompiler:
+    """Test that from-import names resolve to runtime imports in generated C.
+
+    Bug fixed: `from module import Name` fell through to NameIR instead of
+    ModuleAttrIR, generating incorrect C that referenced undefined variables.
+    """
+
+    def test_from_import_generates_load_attr(self):
+        """from math import sqrt; sqrt(x) -> mp_load_attr(mp_import_name(math), sqrt)."""
+        source = '''
+from math import sqrt
+
+def f(x: float) -> float:
+    return sqrt(x)
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_load_attr(" in result
+        assert "mp_import_name(MP_QSTR_math" in result
+        assert "MP_QSTR_sqrt" in result
+
+
+# ============================================================================
+# Test: Bug B - Callable-call-result pattern
+# ============================================================================
+
+
+class TestCallableCallResultCompiler:
+    """Test that callable-call-result pattern (g()(args)) compiles correctly.
+
+    Bug fixed: When expr.func is ast.Call, old code returned ConstIR(None).
+    Fix: TempAssignIR + DynamicCallIR to properly evaluate and call.
+    """
+
+    def test_callable_call_result_no_unknown_value(self):
+        """g()(1) should not produce /* unknown value */."""
+        source = '''
+from typing import Callable
+
+def f(g: Callable[..., Callable[..., object]]) -> object:
+    return g()(1)
+'''
+        result = compile_source(source, "test")
+        assert "/* unknown value */" not in result
+        assert "mp_call_function" in result
+
+    def test_callable_call_result_with_kwargs(self):
+        """factory()(key=val) should work with keyword arguments."""
+        source = '''
+from typing import Callable
+
+def f(factory: Callable[..., Callable[..., object]]) -> object:
+    return factory()(name="test")
+'''
+        result = compile_source(source, "test")
+        assert "/* unknown value */" not in result
+        assert "mp_call_function" in result or "mp_call_kw" in result
+
+
+# ============================================================================
+# Test: Bug C - Dotted module imports (chained mp_load_attr)
+# ============================================================================
+
+
+class TestDottedModuleImportsCompiler:
+    """Test that dotted module names generate chained mp_load_attr.
+
+    Bug fixed: `from pkg.sub import func` generated flat
+    `mp_import_name(MP_QSTR_pkg_sub)` instead of chained
+    `mp_load_attr(mp_import_name(MP_QSTR_pkg), MP_QSTR_sub)`.
+    """
+
+    def test_dotted_import_chained(self):
+        """from pkg.sub import func -> chained import."""
+        source = '''
+from pkg.sub import func
+
+def f() -> object:
+    return func()
+'''
+        # type_check=False because pkg.sub is fictional
+        result = compile_source(source, "test", type_check=False)
+        # Should have chained import
+        assert "mp_import_name(MP_QSTR_pkg" in result
+        assert "MP_QSTR_sub" in result
+        assert "mp_load_attr(" in result
+
+    def test_three_level_dotted_import(self):
+        """from a.b.c import func -> double chained."""
+        source = '''
+from a.b.c import func
+
+def f() -> object:
+    return func()
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "mp_import_name(MP_QSTR_a" in result
+        assert "MP_QSTR_b" in result
+        assert "MP_QSTR_c" in result
+
+
+# ============================================================================
+# Test: Bug D - ModuleCallIR as method call receiver
+# ============================================================================
+
+
+class TestModuleCallAsReceiverCompiler:
+    """Test that module function calls can be method receivers.
+
+    Bug fixed: container_emitter._value_to_c didn't handle ModuleCallIR,
+    returning '/* unknown value */' when used as receiver in method chains
+    like Button('-').size(60, 40).
+    """
+
+    def test_module_call_method_chain_no_unknown(self):
+        """import mod; mod.func().method() should not produce unknown value."""
+        source = '''
+import ui
+
+def f() -> object:
+    return ui.Button("-").size(60, 40)
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "/* unknown value */" not in result
+        assert "mp_import_name(MP_QSTR_ui" in result
+        assert "MP_QSTR_Button" in result
+        assert "MP_QSTR_size" in result

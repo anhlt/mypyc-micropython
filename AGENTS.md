@@ -72,6 +72,40 @@ scripts/                 # Build and setup scripts
 Makefile                 # Build commands for firmware compilation and flashing
 ```
 
+## LVGL MVU Framework (Proof of Concept)
+
+The `extmod/lvgl_mvu/` package is a **proof of concept** that demonstrates the compiler can handle complex, real-world application patterns. It implements a Model-View-Update architecture for LVGL UI development.
+
+**CRITICAL: Never work around compiler limitations for MVU code. Fix the compiler instead.**
+
+The MVU framework tests the compiler's ability to handle:
+- Module-level imports (`import lvgl as lv`)
+- Function references as first-class values (`reconciler.register_factory(WidgetKey.LABEL, create_label)`)
+- Complex class hierarchies and method dispatch
+- Callback registration patterns
+- Cross-module dependencies within a package
+
+When MVU compilation fails, it indicates a compiler bug that must be fixed in:
+- `ir_builder.py` - IR generation for the problematic pattern
+- `function_emitter.py` - C code emission for function-level IR
+- `container_emitter.py` - C code emission for container/expression IR
+- `class_emitter.py` - C code emission for class-level IR
+
+**Example of what NOT to do:**
+```python
+# WRONG: Working around by excluding from compilation
+# Instead, fix the compiler to handle the pattern
+```
+
+**Example of what TO do:**
+```python
+# RIGHT: Add FuncRefIR handling to container_emitter.py
+elif isinstance(value, FuncRefIR):
+    return f"MP_OBJ_FROM_PTR(&{value.c_name}_obj)"
+```
+
+## Architecture
+
 ## Architecture
 
 Pipeline: `Python source → ast.parse() → IRBuilder → FuncIR/ClassIR → Emitters → C code`
@@ -415,6 +449,35 @@ TOTAL                             9060383us   33422565us      3.69x
 
 Average speedup: 10.90x
 ```
+
+### Bug Fix Testing Requirements
+
+**CRITICAL: Every bug fix MUST include tests.** When fixing a compiler bug:
+
+1. **Add IR builder test** (`tests/test_ir_builder.py`) - Verify the IR is generated correctly
+2. **Add emitter test** (`tests/test_emitters.py`) - Verify the C code is emitted correctly
+3. **Add compiler test** (`tests/test_compiler.py`) - End-to-end test of the full compilation
+4. **Add C runtime test** (`tests/test_c_runtime.py`) - Only if the bug can be tested with mock runtime
+
+**Example: Custom class method dispatch bug**
+
+Bug: `Registry.add()` method was incorrectly using `set.add` dispatch (emitting `mp_obj_set_store`).
+
+Tests added:
+- `test_emitters.py::TestEmitMethodCall::test_custom_class_method_with_builtin_name`
+- `test_compiler.py::TestCustomClassMethodDispatch::test_custom_class_add_method`
+
+**Why all test levels?**
+- **IR builder tests**: Catch bugs in AST to IR translation
+- **Emitter tests**: Catch bugs in IR to C code generation (isolated, fast)
+- **Compiler tests**: Catch integration issues between IR builder and emitters
+- **C runtime tests**: Verify generated code actually executes correctly
+
+**Test naming convention for bug fixes:**
+- Class: `TestFeatureNameBugFix` or existing feature test class
+- Method: `test_<specific_scenario_that_was_broken>`
+- Include a docstring explaining: the bug, the fix, and why this test catches it
+
 ## ESP-IDF / Firmware
 
 For building firmware and flashing to ESP32, see platform-specific guides:
@@ -459,6 +522,26 @@ Always run `source ~/esp/esp-idf/export.sh` before firmware builds.
 | `PORT` | `/dev/ttyACM0` | Serial port (macOS: `/dev/cu.usbmodem2101`) |
 | `ESP_IDF_DIR` | `~/esp/esp-idf` | ESP-IDF installation path |
 | `BAUD` | `460800` | Serial baud rate for flashing |
+
+### Build Output Best Practice
+
+**NEVER** use `tail`, `head`, or pipe build output through truncation commands. Firmware builds produce thousands of lines — errors can appear anywhere.
+
+**ALWAYS** grep for errors to catch build failures:
+
+```bash
+# CORRECT: Grep for errors and undefined references
+make build BOARD=ESP32_GENERIC_P4 2>&1 | grep -E '(error:|undefined refer)'
+
+# CORRECT: Full output (when you need all details)
+make build BOARD=ESP32_GENERIC_P4
+
+# WRONG: Tail misses errors in the middle of output
+make build BOARD=ESP32_GENERIC_P4 2>&1 | tail -50    # DON'T DO THIS
+make build BOARD=ESP32_GENERIC_P4 2>&1 | tail -100   # DON'T DO THIS
+```
+
+**Why this matters**: Linker errors (`undefined reference`) and compilation errors can appear hundreds of lines before the end of build output. Using `tail` will show "build succeeded" boilerplate while hiding critical errors.
 
 ## MicroPython C API Internals
 

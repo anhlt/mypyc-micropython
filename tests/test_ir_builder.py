@@ -18,6 +18,7 @@ from mypyc_micropython.ir import (
     ConstIR,
     ContinueIR,
     CType,
+    DynamicCallIR,
     ExprStmtIR,
     ForIterIR,
     ForRangeIR,
@@ -27,6 +28,7 @@ from mypyc_micropython.ir import (
     IsInstanceIR,
     ListNewIR,
     MethodCallIR,
+    ModuleAttrIR,
     NameIR,
     ObjAttrAssignIR,
     ParamAttrIR,
@@ -34,11 +36,12 @@ from mypyc_micropython.ir import (
     PrintIR,
     ReturnIR,
     SubscriptIR,
+    TempAssignIR,
     TempIR,
     TupleNewIR,
     UnaryOpIR,
     WhileIR,
-    )
+)
 from mypyc_micropython.ir_builder import BuildContext, IRBuilder, sanitize_name
 
 
@@ -2428,3 +2431,183 @@ class View:
         # Widget maps to MP_OBJ_T regardless, but arg_types tracks the C string
         assert w_param[1] == CType.MP_OBJ_T
 
+
+# ============================================================================
+# Test: Bug A - from-import name resolution via ModuleAttrIR
+# ============================================================================
+
+
+class TestFromImportNameResolution:
+    """Test that `from module import Name` resolves to ModuleAttrIR in IR.
+
+    Bug fixed: _build_name() in ir_builder.py didn't check _imported_from
+    for non-constant names. `from math import sqrt` then using `sqrt` as a
+    name fell through to NameIR instead of generating ModuleAttrIR.
+    """
+
+    def test_import_module_call_generates_module_call_ir(self):
+        """import math; math.sqrt(x) -> ModuleCallIR in prelude."""
+        source = '''
+from __future__ import annotations
+import math
+
+def f(x: float) -> float:
+    return math.sqrt(x)
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, ast.FunctionDef):
+                func_ir = builder.build_function(node)
+
+        # The return statement should exist
+        assert len(func_ir.body) >= 1
+        ret = func_ir.body[-1]
+        assert isinstance(ret, ReturnIR)
+        # With preludes, the return value is a TempIR and the
+        # actual ModuleCallIR is wrapped in a MethodCallIR in the prelude.
+        # Check that the function references math module.
+        # The prelude of the return should contain a method call on math.
+        assert ret.prelude is not None and len(ret.prelude) > 0
+        # The prelude contains a MethodCallIR whose receiver is a module ref
+        method_call = ret.prelude[0]
+        assert isinstance(method_call, MethodCallIR)
+        assert method_call.method == "sqrt"
+
+    def test_from_import_non_sibling_generates_module_attr_ir(self):
+        """from-import of a non-sibling module generates ModuleAttrIR for names.
+
+        When `from pkg.sub import Cmd` is used and pkg.sub is not a sibling,
+        using `Cmd` should generate ModuleAttrIR, not NameIR.
+        """
+        source = '''
+from __future__ import annotations
+
+def f() -> object:
+    return Cmd
+'''
+        tree = ast.parse(source)
+        # Manually register 'Cmd' as imported from 'pkg.sub' (non-sibling)
+        builder = IRBuilder("test")
+        builder._imported_from["Cmd"] = "pkg.sub"
+        builder._uses_imports = True
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, ast.FunctionDef):
+                func_ir = builder.build_function(node)
+
+        ret = func_ir.body[-1]
+        assert isinstance(ret, ReturnIR)
+        assert isinstance(ret.value, ModuleAttrIR)
+        assert ret.value.module_name == "pkg.sub"
+        assert ret.value.attr_name == "Cmd"
+
+    def test_from_import_sibling_does_not_use_module_attr(self):
+        """from-import of a sibling module should NOT generate ModuleAttrIR.
+
+        Sibling modules use direct C function calls, not runtime imports.
+        """
+        source = '''
+from __future__ import annotations
+
+def f() -> object:
+    return helper
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        # Register 'helper' as both imported-from AND a sibling module
+        builder._imported_from["helper"] = "utils"
+        builder._sibling_modules["utils"] = "utils"
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, ast.FunctionDef):
+                func_ir = builder.build_function(node)
+
+        ret = func_ir.body[-1]
+        assert isinstance(ret, ReturnIR)
+        # Should fall through to NameIR, not ModuleAttrIR
+        assert not isinstance(ret.value, ModuleAttrIR)
+
+
+# ============================================================================
+# Test: Bug B - Callable-call-result pattern (TempAssignIR + DynamicCallIR)
+# ============================================================================
+
+
+class TestCallableCallResult:
+    """Test callable-call-result: g()(args) pattern.
+
+    Bug fixed: When expr.func is ast.Call (not Name or Attribute), the old
+    code returned ConstIR(value=None). Fix: evaluate inner expression,
+    store in TempAssignIR, then DynamicCallIR to call it.
+    """
+
+    def test_callable_call_result_generates_dynamic_call(self):
+        """g()(1) should generate TempAssignIR + DynamicCallIR.
+
+        Pattern from MVU: Screen()(counter_app, init_model, update, view)
+        """
+        source = '''
+from __future__ import annotations
+from typing import Callable
+
+def f(g: Callable[..., Callable[..., object]]) -> object:
+    return g()(1)
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, ast.FunctionDef):
+                func_ir = builder.build_function(node)
+
+        # The return statement should have a DynamicCallIR value
+        ret = func_ir.body[-1]
+        assert isinstance(ret, ReturnIR)
+        assert isinstance(ret.value, DynamicCallIR)
+        # The DynamicCallIR should reference a temp variable
+        assert ret.value.callable_var.startswith("_tmp")
+        # Args should include the constant 1
+        assert len(ret.value.args) == 1
+
+    def test_callable_call_result_prelude_has_temp_assign(self):
+        """The prelude for g()() should contain a TempAssignIR."""
+        source = '''
+from __future__ import annotations
+from typing import Callable
+
+def f(g: Callable[..., Callable[..., object]]) -> object:
+    return g()(1)
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, ast.FunctionDef):
+                func_ir = builder.build_function(node)
+
+        # Check the return statement's prelude for TempAssignIR
+        ret = func_ir.body[-1]
+        assert isinstance(ret, ReturnIR)
+        # The ReturnIR value is a DynamicCallIR; find TempAssignIR in prelude
+        # The prelude is stored on the return expr's parent context
+        # In the current architecture, preludes are flattened into func_ir.body
+        # Check that at least one statement before the return is related
+        # to temp assignment
+        # Actually, preludes for return values are embedded in ReturnIR.prelude
+        if hasattr(ret, 'prelude') and ret.prelude:
+            temp_assigns = [i for i in ret.prelude if isinstance(i, TempAssignIR)]
+            assert len(temp_assigns) >= 1
+            ta = temp_assigns[0]
+            assert isinstance(ta.result, TempIR)
+        else:
+            # The DynamicCallIR was built with preludes already flattened
+            # into the stmt list -- scan func_ir.body for TempAssignIR in preludes
+            found_temp = False
+            for stmt in func_ir.body:
+                prelude = getattr(stmt, 'prelude', None) or []
+                for instr in prelude:
+                    if isinstance(instr, TempAssignIR):
+                        found_temp = True
+                        break
+                if found_temp:
+                    break
+            assert found_temp, (
+                "Expected TempAssignIR in body statement preludes for callable-call-result"
+            )

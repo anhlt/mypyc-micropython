@@ -16,13 +16,14 @@ from typing import Callable
 
 from lvgl_mvu.attrs import AttrDef, AttrRegistry
 from lvgl_mvu.diff import (
-    AttrChange,
     CHANGE_ADDED,
     CHANGE_REMOVED,
     CHANGE_UPDATED,
+    AttrChange,
     WidgetDiff,
 )
 from lvgl_mvu.widget import Widget
+
 
 class ViewNode:
     """Persistent wrapper for an LVGL object.

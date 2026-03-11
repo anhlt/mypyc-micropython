@@ -77,6 +77,7 @@ from .ir import (
     SubscriptAssignIR,
     SubscriptIR,
     SuperCallIR,
+    TempAssignIR,
     TempIR,
     TryIR,
     TupleNewIR,
@@ -658,6 +659,8 @@ class IRPrinter:
             return f"{self._i()}{instr.result.name} = [{self.print_value(instr.element)} for {instr.loop_var} in {self.print_value(instr.iterable)}{filter_str}]"
         elif isinstance(instr, ModuleImportIR):
             return f"{self._i()}{instr.result.name} = import {instr.module_name}"
+        elif isinstance(instr, TempAssignIR):
+            return f"{self._i()}{instr.result.name} = {self.print_value(instr.value)}"
         else:
             return f"{self._i()}/* unknown instr: {type(instr).__name__} */"
 

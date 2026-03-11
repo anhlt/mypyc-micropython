@@ -10,16 +10,16 @@ The App class is the main runtime that:
 
 from __future__ import annotations
 
-from typing import Callable, TypeVar
+from typing import Callable
 
 from lvgl_mvu.program import (
     EFFECT_FN,
     EFFECT_MSG,
-    Model,
-    Msg,
     SUB_TIMER,
     Cmd,
     Effect,
+    Model,
+    Msg,
     Program,
     Sub,
     SubDef,

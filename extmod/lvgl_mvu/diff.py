@@ -11,7 +11,6 @@ from dataclasses import dataclass
 
 from lvgl_mvu.widget import ScalarAttr, Widget
 
-
 # ---------------------------------------------------------------------------
 # Change descriptors
 # ---------------------------------------------------------------------------

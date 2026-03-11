@@ -38,6 +38,7 @@ from mypyc_micropython.ir import (
     ListNewIR,
     MethodCallIR,
     MethodIR,
+    ModuleCallIR,
     NameIR,
     ObjAttrAssignIR,
     PassIR,
@@ -1299,6 +1300,42 @@ class TestEmitMethodCall:
         assert "mp_call_method_n_kw(0, 1," in c_code
         assert "MP_QSTR_value" in c_code
 
+    def test_custom_class_method_with_builtin_name(self):
+        """Method on custom class with builtin method name uses generic dispatch.
+
+        When calling reg.add(x) where reg is a Registry (custom class),
+        should use mp_load_method, NOT mp_obj_set_store (set.add).
+        This is a regression test for the bug where method dispatch was
+        based purely on method name without checking receiver_py_type.
+        """
+        temp = make_temp("_tmp0")
+        func_ir = make_func(
+            params=[("reg", CType.MP_OBJ_T), ("key", CType.MP_INT_T)],
+            return_type=CType.VOID,
+            max_temp=1,
+            body=[
+                ExprStmtIR(
+                    expr=temp,
+                    prelude=[
+                        MethodCallIR(
+                            result=None,
+                            receiver=make_name("reg", IRType.OBJ),
+                            method="add",  # Same name as set.add!
+                            args=[make_name("key")],
+                            receiver_py_type="Registry",  # Custom class, not set
+                        )
+                    ],
+                ),
+                ReturnIR(value=None),
+            ],
+        )
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        # Should use generic mp_load_method dispatch
+        assert "mp_load_method(" in c_code
+        assert "MP_QSTR_add" in c_code
+        assert "mp_call_method_n_kw" in c_code
+        # Should NOT use set.add optimization
+        assert "mp_obj_set_store" not in c_code
 
 # ============================================================================
 # Test: Edge Cases
@@ -2052,3 +2089,266 @@ class Container:
         # 'object' typed field: cannot do chained native access
         # self.item access should still work but won't chain natively
         assert "self->item" in c_code
+
+
+class TestFuncRefIREmission:
+    """Test that FuncRefIR is correctly emitted by container_emitter.
+
+    Bug fixed: container_emitter.py did not handle FuncRefIR, causing
+    `/* unknown value */` to be emitted when passing function references
+    as method arguments (e.g., reconciler.register_factory(KEY, create_fn)).
+    """
+
+    def test_func_ref_emitted_as_ptr(self):
+        """FuncRefIR should emit MP_OBJ_FROM_PTR(&func_name_obj)."""
+        from mypyc_micropython.container_emitter import ContainerEmitter
+        from mypyc_micropython.ir import FuncRefIR, IRType
+
+        emitter = ContainerEmitter()
+        func_ref = FuncRefIR(
+            ir_type=IRType.OBJ,
+            py_name="create_label",
+            c_name="factories_create_label",
+        )
+        result = emitter._value_to_c(func_ref)
+        assert result == "MP_OBJ_FROM_PTR(&factories_create_label_obj)"
+
+    def test_func_ref_in_method_call_arg(self):
+        """Function reference passed as method argument should not produce 'unknown value'."""
+        from mypyc_micropython.compiler import compile_source
+
+        source = '''
+class Registry:
+    def register(self, key: int, handler: object) -> None:
+        pass
+
+def my_handler(x: int) -> int:
+    return x
+
+def setup(reg: Registry) -> None:
+    reg.register(1, my_handler)
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should have the function pointer reference, not /* unknown value */
+        assert "MP_OBJ_FROM_PTR(&test_my_handler_obj)" in result
+        assert "/* unknown value */" not in result
+
+    def test_func_ref_multiple_args_to_method(self):
+        """Multiple function references passed to same method call."""
+        from mypyc_micropython.compiler import compile_source
+
+        source = '''
+class Dispatcher:
+    def register(self, success_cb: object, error_cb: object) -> None:
+        pass
+
+def on_success(x: int) -> int:
+    return x
+
+def on_error(x: int) -> int:
+    return -x
+
+def init(d: Dispatcher) -> None:
+    d.register(on_success, on_error)
+'''
+        result = compile_source(source, "test", type_check=False)
+        assert "MP_OBJ_FROM_PTR(&test_on_success_obj)" in result
+        assert "MP_OBJ_FROM_PTR(&test_on_error_obj)" in result
+        assert "/* unknown value */" not in result
+
+
+# ============================================================================
+# Test: Bug C - Dotted module imports (chained mp_load_attr)
+# ============================================================================
+
+
+class TestDottedModuleImport:
+    """Test that dotted module names emit chained mp_load_attr calls.
+
+    Bug fixed: `from pkg.sub import func` emitted flat
+    `mp_import_name(MP_QSTR_pkg_sub, ...)` instead of chained
+    `mp_load_attr(mp_import_name(MP_QSTR_pkg, ...), MP_QSTR_sub)`.
+    """
+
+    def test_dotted_module_call_emits_chained_attr(self):
+        """ModuleCallIR with 'pkg.sub' module_name -> chained mp_load_attr."""
+        func_ir = make_func(
+            params=[("x", CType.MP_OBJ_T)],
+            return_type=CType.MP_OBJ_T,
+            max_temp=1,
+            body=[
+                ReturnIR(
+                    value=ModuleCallIR(
+                        ir_type=IRType.OBJ,
+                        module_name="pkg.sub",
+                        func_name="func",
+                        args=[make_name("x", IRType.OBJ)],
+                    ),
+                    prelude=[],
+                ),
+            ],
+        )
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        # Should have chained import: mp_load_attr(mp_import_name(pkg), sub)
+        assert "mp_import_name(MP_QSTR_pkg" in c_code
+        assert "mp_load_attr(" in c_code
+        assert "MP_QSTR_sub" in c_code
+        # Should NOT have flat import with underscore-joined name
+        assert "MP_QSTR_pkg_sub" not in c_code
+
+    def test_single_module_call_no_chaining(self):
+        """ModuleCallIR with non-dotted name -> simple mp_import_name."""
+        func_ir = make_func(
+            params=[("x", CType.MP_OBJ_T)],
+            return_type=CType.MP_OBJ_T,
+            max_temp=1,
+            body=[
+                ReturnIR(
+                    value=ModuleCallIR(
+                        ir_type=IRType.OBJ,
+                        module_name="math",
+                        func_name="sqrt",
+                        args=[make_name("x", IRType.OBJ)],
+                    ),
+                    prelude=[],
+                ),
+            ],
+        )
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        # Simple single-component module
+        assert "mp_import_name(MP_QSTR_math" in c_code
+        assert "MP_QSTR_sqrt" in c_code
+
+    def test_three_level_dotted_module(self):
+        """ModuleCallIR with 'a.b.c' -> double chained mp_load_attr."""
+        func_ir = make_func(
+            return_type=CType.MP_OBJ_T,
+            max_temp=1,
+            body=[
+                ReturnIR(
+                    value=ModuleCallIR(
+                        ir_type=IRType.OBJ,
+                        module_name="a.b.c",
+                        func_name="func",
+                        args=[],
+                    ),
+                    prelude=[],
+                ),
+            ],
+        )
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        # Should chain: mp_load_attr(mp_load_attr(mp_import_name(a), b), c)
+        assert "mp_import_name(MP_QSTR_a" in c_code
+        assert "MP_QSTR_b" in c_code
+        assert "MP_QSTR_c" in c_code
+
+
+# ============================================================================
+# Test: Bug D - ModuleCallIR in container_emitter _value_to_c
+# ============================================================================
+
+
+class TestModuleCallIRInValueToC:
+    """Test that ModuleCallIR is handled in container_emitter._value_to_c.
+
+    Bug fixed: When ModuleCallIR appears as receiver inside MethodCallIR
+    in a prelude (e.g., Button(\"-\").size(60, 40)), _value_to_c returned
+    '/* unknown value */' instead of emitting the call properly.
+    """
+
+    def test_module_call_as_method_receiver(self):
+        """Button('-').size(60, 40) - ModuleCallIR as method receiver."""
+        temp = make_temp("_tmp0")
+        func_ir = make_func(
+            return_type=CType.MP_OBJ_T,
+            max_temp=1,
+            body=[
+                ExprStmtIR(
+                    expr=temp,
+                    prelude=[
+                        MethodCallIR(
+                            result=temp,
+                            receiver=ModuleCallIR(
+                                ir_type=IRType.OBJ,
+                                module_name="ui",
+                                func_name="Button",
+                                args=[make_const_str("-")],
+                            ),
+                            method="size",
+                            args=[make_const_int(60), make_const_int(40)],
+                            receiver_py_type=None,
+                        )
+                    ],
+                ),
+                ReturnIR(value=temp, prelude=[]),
+            ],
+        )
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        # The ModuleCallIR should be emitted as a call, not /* unknown value */
+        assert "/* unknown value */" not in c_code
+        assert "mp_import_name(MP_QSTR_ui" in c_code
+        assert "MP_QSTR_Button" in c_code
+        assert "MP_QSTR_size" in c_code
+
+    def test_module_call_with_kwargs_as_receiver(self):
+        """VStack(spacing=20).children(...) - ModuleCallIR with kwargs."""
+        temp = make_temp("_tmp0")
+        func_ir = make_func(
+            return_type=CType.MP_OBJ_T,
+            max_temp=1,
+            body=[
+                ExprStmtIR(
+                    expr=temp,
+                    prelude=[
+                        MethodCallIR(
+                            result=temp,
+                            receiver=ModuleCallIR(
+                                ir_type=IRType.OBJ,
+                                module_name="layouts",
+                                func_name="VStack",
+                                args=[],
+                                kwargs=[("spacing", make_const_int(20))],
+                            ),
+                            method="children",
+                            args=[],
+                            receiver_py_type=None,
+                        )
+                    ],
+                ),
+                ReturnIR(value=temp, prelude=[]),
+            ],
+        )
+        c_code = FunctionEmitter(func_ir).emit()[0]
+        assert "/* unknown value */" not in c_code
+        assert "mp_import_name(MP_QSTR_layouts" in c_code
+        assert "MP_QSTR_VStack" in c_code
+        # kwargs should produce kw call
+        assert "MP_QSTR_spacing" in c_code
+
+
+# ============================================================================
+# Test: Bug B - TempAssignIR emission
+# ============================================================================
+
+
+class TestTempAssignIREmission:
+    """Test that TempAssignIR is correctly emitted as C temp assignment.
+
+    Bug fixed: Created TempAssignIR(InstrIR) for callable-call-result
+    pattern where a complex expression must be stored in temp before use.
+    """
+
+    def test_temp_assign_basic(self):
+        """TempAssignIR should emit mp_obj_t _tmpN = <value>."""
+        from mypyc_micropython.container_emitter import ContainerEmitter
+        from mypyc_micropython.ir import TempAssignIR
+
+        emitter = ContainerEmitter()
+        temp = TempIR(ir_type=IRType.OBJ, name="_tmp0")
+        value = ConstIR(ir_type=IRType.OBJ, value="hello")
+        instr = TempAssignIR(result=temp, value=value)
+        c_lines = emitter.emit_instr(instr)
+        c_line = "\n".join(c_lines)
+        assert "_tmp0" in c_line
+        # Should assign the string constant to the temp
+        assert "mp_obj_new_str" in c_line or "MP_OBJ_NEW_QSTR" in c_line

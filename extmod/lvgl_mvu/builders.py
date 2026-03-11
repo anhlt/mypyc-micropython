@@ -16,8 +16,8 @@ Usage::
 
 from __future__ import annotations
 
-from lvgl_mvu.widget import ScalarAttr, Widget, WidgetKey
 from lvgl_mvu.attrs import AttrKey
+from lvgl_mvu.widget import ScalarAttr, Widget
 
 
 class WidgetBuilder:

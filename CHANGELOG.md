@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `from X import Y` names not resolved as imports in IR builder when used as values
+  - `_build_name()` now checks `_imported_from` for `ModuleAttrIR` resolution
+- Callable-call-result pattern `Screen()(...)` silently returning `None`
+  - New `TempAssignIR(InstrIR)` for prelude-compatible temp assignments
+  - `_build_call()` now evaluates arbitrary callables via `TempAssignIR` + `DynamicCallIR`
+- Dotted module names (`from lvgl_mvu.program import Cmd`) generating flat import instead of chained `mp_load_attr`
+  - New `_emit_dotted_module_import()` helper splits on `.` and chains `mp_load_attr` calls
+- `ModuleCallIR` not handled in `container_emitter._value_to_c()` dispatch
+  - Module function calls as method chain receivers (e.g., `Button("-").size(60, 40)`) now emit correct C
+- `DynamicCallIR` not handled in `container_emitter._value_to_c()` dispatch
+  - Dynamic callable invocations in prelude contexts now emit correct C
+
 ### Added
+- `TempAssignIR` IR node for prelude-compatible temporary variable assignments
+- `_emit_dotted_module_import()` helper in both `function_emitter.py` and `container_emitter.py`
+- `examples/counter_mvu.py`: MVU counter app exercising all five bug fixes (194 lines clean C)
+- 17 new tests across IR builder, emitter, and compiler test suites
+- Blog 43: `_value_to_c` central dispatch walkthrough
 - `CType.GENERAL` for truly unknown/dynamic types (`object`, `Any`, unannotated parameters)
   - Semantically distinct from `MP_OBJ_T` (known container/string types) but maps to same C type `mp_obj_t`
   - `CType.from_c_type_str()` static method for direct C type string mapping (avoids roundtrip through Python types)

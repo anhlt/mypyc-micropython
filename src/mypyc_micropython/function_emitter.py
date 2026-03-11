@@ -40,6 +40,7 @@ from .ir import (
     MethodIR,
     ModuleAttrIR,
     ModuleCallIR,
+    ModuleRefIR,
     NameIR,
     ObjAttrAssignIR,
     ParamAttrIR,
@@ -115,6 +116,26 @@ def sanitize_name(name: str) -> str:
     if result in C_RESERVED_WORDS:
         result = result + "_"
     return result
+
+
+def _emit_dotted_module_import(module_name: str) -> str:
+    """Generate C code for importing a (possibly dotted) module name.
+
+    For simple names like 'math', generates:
+        mp_import_name(MP_QSTR_math, mp_const_none, MP_OBJ_NEW_SMALL_INT(0))
+
+    For dotted names like 'lvgl_mvu.program', generates chained mp_load_attr:
+        mp_load_attr(
+            mp_import_name(MP_QSTR_lvgl_mvu, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)),
+            MP_QSTR_program)
+    """
+    parts = module_name.split('.')
+    # Import the root module
+    expr = f"mp_import_name(MP_QSTR_{parts[0]}, mp_const_none, MP_OBJ_NEW_SMALL_INT(0))"
+    # Chain mp_load_attr for each subsequent part
+    for part in parts[1:]:
+        expr = f"mp_load_attr({expr}, MP_QSTR_{part})"
+    return expr
 
 
 class BaseEmitter:
@@ -633,6 +654,8 @@ class BaseEmitter:
             return self._emit_sibling_class_instantiation(value, native)
         elif isinstance(value, DynamicCallIR):
             return self._emit_dynamic_call(value, native)
+        elif isinstance(value, ModuleRefIR):
+            return _emit_dotted_module_import(value.module_name), "mp_obj_t"
 
     def _emit_const(self, const: ConstIR) -> tuple[str, str]:
         val = const.value
@@ -816,8 +839,25 @@ class BaseEmitter:
             arg_expr, arg_type = self._emit_expr(arg, False)
             args.append(self._box_value(arg_expr, arg_type))
 
+        # Build kwargs (interleaved: key, value, key, value, ...)
+        boxed_kwargs = []
+        for kw_name, kw_val in call.kwargs:
+            boxed_kwargs.append(f"MP_OBJ_NEW_QSTR(MP_QSTR_{kw_name})")
+            kw_expr, kw_type = self._emit_expr(kw_val, False)
+            boxed_kwargs.append(self._box_value(kw_expr, kw_type))
+
         n_args = len(args)
+        n_kw = len(call.kwargs)
         callable_var = call.callable_var
+
+        # If we have kwargs, must use mp_call_function_n_kw
+        if n_kw > 0:
+            all_args = args + boxed_kwargs
+            args_str = ", ".join(all_args)
+            return (
+                f"mp_call_function_n_kw({callable_var}, "
+                f"{n_args}, {n_kw}, (const mp_obj_t[]){{{args_str}}})"
+            ), "mp_obj_t"
 
         if n_args == 0:
             return f"mp_call_function_0({callable_var})", "mp_obj_t"
@@ -830,9 +870,8 @@ class BaseEmitter:
             args_str = ", ".join(args)
             return (
                 f"mp_call_function_n_kw({callable_var}, {n_args}, 0, "
-                f"(const mp_obj_t[]){{{args_str}}})",
-                "mp_obj_t",
-            )
+                f"(const mp_obj_t[]){{{args_str}}})"
+            ), "mp_obj_t"
 
     def _emit_clib_call(self, call: CLibCallIR, native: bool = False) -> tuple[str, str]:
         args = []
@@ -1217,13 +1256,22 @@ class BaseEmitter:
     def _emit_module_call(self, call: ModuleCallIR, native: bool = False) -> tuple[str, str]:
         """Emit C code for calling a function on an imported module.
 
-        Generated C pattern:
-            mp_obj_t _mod = mp_import_name(MP_QSTR_math, mp_const_none, MP_OBJ_NEW_SMALL_INT(0));
-            mp_obj_t _fn = mp_load_attr(_mod, MP_QSTR_sqrt);
+        Generated C pattern (simple module):
+            mp_obj_t _fn = mp_load_attr(
+                mp_import_name(MP_QSTR_math, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)),
+                MP_QSTR_sqrt);
             mp_obj_t result = mp_call_function_1(_fn, arg);
+
+        Generated C pattern (dotted module like lvgl_mvu.program):
+            mp_obj_t _fn = mp_load_attr(
+                mp_load_attr(
+                    mp_import_name(MP_QSTR_lvgl_mvu, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)),
+                    MP_QSTR_program),
+                MP_QSTR_func_name);
         """
-        mod_name = call.module_name
+        mod_import = _emit_dotted_module_import(call.module_name)
         func_name = call.func_name
+        fn_expr = f"mp_load_attr({mod_import}, MP_QSTR_{func_name})"
 
         # Build boxed positional args
         boxed_args = []
@@ -1246,60 +1294,43 @@ class BaseEmitter:
             all_args = boxed_args + boxed_kwargs
             args_str = ", ".join(all_args)
             return (
-                f"mp_call_function_n_kw("
-                f"mp_load_attr("
-                f"mp_import_name(MP_QSTR_{mod_name}, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)), "
-                f"MP_QSTR_{func_name}), "
+                f"mp_call_function_n_kw({fn_expr}, "
                 f"{n_args}, {n_kw}, (const mp_obj_t[]){{{args_str}}})"
             ), "mp_obj_t"
 
         # No kwargs - use optimized paths
         if n_args == 0:
-            return (
-                f"mp_call_function_0("
-                f"mp_load_attr("
-                f"mp_import_name(MP_QSTR_{mod_name}, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)), "
-                f"MP_QSTR_{func_name}))"
-            ), "mp_obj_t"
+            return f"mp_call_function_0({fn_expr})", "mp_obj_t"
         elif n_args == 1:
-            return (
-                f"mp_call_function_1("
-                f"mp_load_attr("
-                f"mp_import_name(MP_QSTR_{mod_name}, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)), "
-                f"MP_QSTR_{func_name}), "
-                f"{boxed_args[0]})"
-            ), "mp_obj_t"
+            return f"mp_call_function_1({fn_expr}, {boxed_args[0]})", "mp_obj_t"
         elif n_args == 2:
             return (
-                f"mp_call_function_2("
-                f"mp_load_attr("
-                f"mp_import_name(MP_QSTR_{mod_name}, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)), "
-                f"MP_QSTR_{func_name}), "
-                f"{boxed_args[0]}, {boxed_args[1]})"
+                f"mp_call_function_2({fn_expr}, {boxed_args[0]}, {boxed_args[1]})"
             ), "mp_obj_t"
         else:
             args_str = ", ".join(boxed_args)
             return (
-                f"mp_call_function_n_kw("
-                f"mp_load_attr("
-                f"mp_import_name(MP_QSTR_{mod_name}, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)), "
-                f"MP_QSTR_{func_name}), "
+                f"mp_call_function_n_kw({fn_expr}, "
                 f"{n_args}, 0, (const mp_obj_t[]){{{args_str}}})"
             ), "mp_obj_t"
 
     def _emit_module_attr(self, attr: ModuleAttrIR) -> tuple[str, str]:
         """Emit C code for accessing an attribute on an imported module.
 
-        Generated C pattern:
-            mp_obj_t result = mp_load_attr(
+        Generated C pattern (simple):
+            mp_load_attr(
                 mp_import_name(MP_QSTR_math, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)),
-                MP_QSTR_pi);
+                MP_QSTR_pi)
+
+        Generated C pattern (dotted module like lvgl_mvu.program):
+            mp_load_attr(
+                mp_load_attr(
+                    mp_import_name(MP_QSTR_lvgl_mvu, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)),
+                    MP_QSTR_program),
+                MP_QSTR_Cmd)
         """
-        return (
-            f"mp_load_attr("
-            f"mp_import_name(MP_QSTR_{attr.module_name}, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)), "
-            f"MP_QSTR_{attr.attr_name})"
-        ), "mp_obj_t"
+        mod_import = _emit_dotted_module_import(attr.module_name)
+        return f"mp_load_attr({mod_import}, MP_QSTR_{attr.attr_name})", "mp_obj_t"
 
     def _emit_sibling_module_call(
         self, call: SiblingModuleCallIR, native: bool = False
