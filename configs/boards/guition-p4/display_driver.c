@@ -14,6 +14,7 @@
 #include "py/runtime.h"
 #include "py/obj.h"
 
+#include <string.h>
 #include "lvgl.h"
 
 #include "driver/gpio.h"
@@ -112,17 +113,15 @@ static uint32_t tick_cb(void) {
     return (uint32_t)(esp_timer_get_time() / 1000);
 }
 
-// LVGL flush callback for MIPI-DSI (DIRECT mode)
-// In DIRECT mode, LVGL writes directly to the DPI framebuffer.
-// The DPI panel continuously refreshes from the framebuffer, so we just signal ready.
+// LVGL flush callback for MIPI-DSI (PARTIAL mode)
+// Copies the draw buffer to the DPI panel framebuffer via DMA.
+// lv_display_flush_ready() is called by on_color_trans_done when DMA completes.
 static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
-    // For DIRECT mode with DPI panel, LVGL already wrote to the framebuffer.
-    // No byte swap needed - MIPI-DSI handles the pixel format correctly.
-    // Signal flush complete - the DPI panel continuously refreshes from the framebuffer
-    lv_display_flush_ready(disp);
+    esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t)lv_display_get_user_data(disp);
+    esp_lcd_panel_draw_bitmap(panel_handle, area->x1, area->y1, area->x2 + 1, area->y2 + 1, px_map);
 }
 
-// Flush ready callback (called by MIPI-DSI driver when DMA transfer completes)
+// DMA transfer done callback - signals LVGL that flush is complete.
 static bool IRAM_ATTR on_color_trans_done(esp_lcd_panel_handle_t panel,
                                           esp_lcd_dpi_panel_event_data_t *edata,
                                           void *user_ctx) {
@@ -269,15 +268,16 @@ static void st7701_driver_init(void) {
     lv_display_set_user_data(s_disp, s_panel);
     lv_display_set_flush_cb(s_disp, flush_cb);
 
-    // Step 11: Use DPI panel's framebuffers directly for best performance
-    // The DPI panel (num_fbs=2) already allocates double-buffered framebuffers in PSRAM.
-    // Using DIRECT mode lets LVGL write directly to these buffers, avoiding extra copies.
-    void *fb1 = NULL;
-    void *fb2 = NULL;
-    ESP_ERROR_CHECK(esp_lcd_dpi_panel_get_frame_buffer(s_panel, 2, &fb1, &fb2));
-    size_t fb_size = LCD_H_RES * LCD_V_RES * sizeof(uint16_t);
-    ESP_LOGI(TAG, "Using DPI framebuffers: fb1=%p, fb2=%p, size=%zu", fb1, fb2, fb_size);
-    lv_display_set_buffers(s_disp, fb1, fb2, fb_size, LV_DISPLAY_RENDER_MODE_DIRECT);
+    // Step 11: Allocate separate draw buffers for PARTIAL mode
+    // PARTIAL mode uses its own buffers (not DPI framebuffers). LVGL renders into
+    // these, then flush_cb copies dirty regions to the panel framebuffer via DMA.
+    // This avoids tearing because LVGL never writes directly into the scanning buffer.
+    size_t draw_buf_size = LCD_H_RES * 100 * sizeof(uint16_t);  // 100-line draw buffer
+    void *buf1 = heap_caps_malloc(draw_buf_size, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    void *buf2 = heap_caps_malloc(draw_buf_size, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    assert(buf1 && buf2);
+    ESP_LOGI(TAG, "Using PARTIAL mode: buf1=%p, buf2=%p, size=%zu", buf1, buf2, draw_buf_size);
+    lv_display_set_buffers(s_disp, buf1, buf2, draw_buf_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
 
     // Step 12: Register DPI event callbacks
     esp_lcd_dpi_panel_event_callbacks_t cbs = {
@@ -285,7 +285,21 @@ static void st7701_driver_init(void) {
     };
     ESP_ERROR_CHECK(esp_lcd_dpi_panel_register_event_callbacks(s_panel, &cbs, s_disp));
 
-    // Step 13: Turn on backlight
+    // Step 13: Clear DPI framebuffers to black before turning on backlight
+    // The DPI panel starts scanning immediately after init, but the framebuffers
+    // contain random PSRAM data. Clear both to prevent garbage on first display.
+    void *fb0 = NULL;
+    void *fb1_dpi = NULL;
+    ESP_ERROR_CHECK(esp_lcd_dpi_panel_get_frame_buffer(s_panel, 2, &fb0, &fb1_dpi));
+    size_t fb_size = LCD_H_RES * LCD_V_RES * sizeof(uint16_t);
+    memset(fb0, 0, fb_size);
+    memset(fb1_dpi, 0, fb_size);
+
+    // Step 14: Force initial LVGL render to flush clean screen
+    lv_obj_invalidate(lv_screen_active());
+    lv_timer_handler();
+
+    // Step 15: Turn on backlight
     set_backlight(true);
     
     s_initialized = true;

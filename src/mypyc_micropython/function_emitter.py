@@ -1205,12 +1205,32 @@ class BaseEmitter:
         for arg in inst.args:
             arg_expr, arg_type = self._emit_expr(arg, native)
             args.append(self._box_value(arg_expr, arg_type))
-        args_str = ", ".join(args)
+
+        # Build kwargs (interleaved: key, value, key, value, ...)
+        boxed_kwargs: list[str] = []
+        for kw_name, kw_val in inst.kwargs:
+            kw_expr, kw_type = self._emit_expr(kw_val, native)
+            boxed_kwargs.append(f"MP_OBJ_NEW_QSTR(MP_QSTR_{kw_name})")
+            boxed_kwargs.append(self._box_value(kw_expr, kw_type))
+
         n_args = len(args)
-        return (
-            f"{inst.c_class_name}_make_new(&{inst.c_class_name}_type, {n_args}, 0, (const mp_obj_t[]){{{args_str}}})",
-            "mp_obj_t",
-        )
+        n_kw = len(inst.kwargs)
+
+        if n_kw > 0:
+            # With kwargs: interleave args and kwargs in the array
+            all_args = args + boxed_kwargs
+            all_args_str = ", ".join(all_args)
+            return (
+                f"{inst.c_class_name}_make_new(&{inst.c_class_name}_type, {n_args}, {n_kw}, (const mp_obj_t[]){{{all_args_str}}})",
+                "mp_obj_t",
+            )
+        else:
+            # No kwargs - original optimized path
+            args_str = ", ".join(args)
+            return (
+                f"{inst.c_class_name}_make_new(&{inst.c_class_name}_type, {n_args}, 0, (const mp_obj_t[]){{{args_str}}})",
+                "mp_obj_t",
+            )
 
     def _emit_self_attr(self, attr: SelfAttrIR) -> tuple[str, str]:
         return f"self->{attr.attr_path}", attr.result_type.to_c_type_str()

@@ -1272,14 +1272,14 @@ class IfExprIR(ExprIR):
 
 @dataclass
 class ClassInstantiationIR(ExprIR):
-    """Class instantiation: ClassName(args)."""
+    """Class instantiation: ClassName(args, **kwargs)."""
 
     class_name: str
     c_class_name: str
     args: list[ValueNode]
+    kwargs: list[tuple[str, ValueNode]] = field(default_factory=list)
     # Preludes for args
     arg_preludes: list[list[InstrNode]] = field(default_factory=list)
-
 
 @dataclass
 class SelfAttrIR(ExprIR):

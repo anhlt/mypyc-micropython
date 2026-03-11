@@ -758,12 +758,26 @@ class ContainerEmitter:
                 return f"{value.c_func_name}({args_str})"
             case ClassInstantiationIR():
                 boxed_args = [self._box_value_ir(a) for a in value.args]
-                args_str = ", ".join(boxed_args)
-                n = len(boxed_args)
-                return (
-                    f"{value.c_class_name}_make_new(&{value.c_class_name}_type, "
-                    f"{n}, 0, (const mp_obj_t[]){{{args_str}}})"
-                )
+                # Build kwargs (interleaved: key, value, key, value, ...)
+                boxed_kwargs: list[str] = []
+                for kw_name, kw_val in value.kwargs:
+                    boxed_kwargs.append(f"MP_OBJ_NEW_QSTR(MP_QSTR_{kw_name})")
+                    boxed_kwargs.append(self._box_value_ir(kw_val))
+                n_args = len(boxed_args)
+                n_kw = len(value.kwargs)
+                if n_kw > 0:
+                    all_args = boxed_args + boxed_kwargs
+                    all_args_str = ", ".join(all_args)
+                    return (
+                        f"{value.c_class_name}_make_new(&{value.c_class_name}_type, "
+                        f"{n_args}, {n_kw}, (const mp_obj_t[]){{{all_args_str}}})"
+                    )
+                else:
+                    args_str = ", ".join(boxed_args)
+                    return (
+                        f"{value.c_class_name}_make_new(&{value.c_class_name}_type, "
+                        f"{n_args}, 0, (const mp_obj_t[]){{{args_str}}})"
+                    )
             case SiblingClassInstantiationIR():
                 c_name = f"{value.c_prefix}_{value.class_name}"
                 boxed_args = [self._box_value_ir(a) for a in value.args]

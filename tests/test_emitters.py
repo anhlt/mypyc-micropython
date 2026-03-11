@@ -1603,6 +1603,250 @@ class TestClassEmitterTypeDefinition:
         assert "test_Widget_type" in type_code
         assert "MP_QSTR_Widget" in type_code
 
+class TestClassEmitterMakeNew:
+    """Tests for make_new emission with kwargs support."""
+
+    def test_emit_make_new_no_init(self):
+        """make_new for class without __init__."""
+        from mypyc_micropython.class_emitter import ClassEmitter
+
+        class_ir = ClassIR(
+            name="Empty",
+            c_name="test_Empty",
+            module_name="test",
+            fields=[],
+        )
+        emitter = ClassEmitter(class_ir, "test")
+        make_new_code = "\n".join(emitter.emit_make_new())
+        # Should just create instance without arg parsing
+        assert "test_Empty_make_new" in make_new_code
+        assert "mp_arg_parse_all_kw_array" not in make_new_code
+
+    def test_emit_make_new_init_no_params(self):
+        """make_new for class with __init__(self) only."""
+        import ast
+
+        from mypyc_micropython.class_emitter import ClassEmitter
+        from mypyc_micropython.ir import MethodIR
+
+        # Create a minimal __init__ with no params
+        init_ast = ast.parse("def __init__(self): pass").body[0]
+        init_method = MethodIR(
+            name="__init__",
+            c_name="test_Point___init__",
+            params=[],  # No params besides self
+            return_type=CType.VOID,
+            body_ast=init_ast,
+            is_special=True,
+        )
+
+        class_ir = ClassIR(
+            name="Point",
+            c_name="test_Point",
+            module_name="test",
+            fields=[],
+            methods={"__init__": init_method},
+        )
+        emitter = ClassEmitter(class_ir, "test")
+        make_new_code = "\n".join(emitter.emit_make_new())
+        # No params = no arg parsing needed
+        assert "test_Point_make_new" in make_new_code
+        assert "mp_arg_parse_all_kw_array" not in make_new_code
+        assert "allowed_args" not in make_new_code
+
+    def test_emit_make_new_with_required_params(self):
+        """make_new for class with required params uses mp_arg_parse_all_kw_array."""
+        import ast
+
+        from mypyc_micropython.class_emitter import ClassEmitter
+        from mypyc_micropython.ir import FieldIR, MethodIR
+
+        init_ast = ast.parse("def __init__(self, x, y): pass").body[0]
+        init_method = MethodIR(
+            name="__init__",
+            c_name="test_Point___init__",
+            params=[("x", CType.MP_INT_T), ("y", CType.MP_INT_T)],
+            return_type=CType.VOID,
+            body_ast=init_ast,
+            is_special=True,
+        )
+
+        class_ir = ClassIR(
+            name="Point",
+            c_name="test_Point",
+            module_name="test",
+            fields=[
+                FieldIR(name="x", py_type="int", c_type=CType.MP_INT_T),
+                FieldIR(name="y", py_type="int", c_type=CType.MP_INT_T),
+            ],
+            methods={"__init__": init_method},
+        )
+        emitter = ClassEmitter(class_ir, "test")
+        make_new_code = "\n".join(emitter.emit_make_new())
+
+        # Should use mp_arg_parse_all_kw_array for kwargs support
+        assert "mp_arg_parse_all_kw_array" in make_new_code
+        # Should have allowed_args table
+        assert "allowed_args" in make_new_code
+        # Should have enum for arg indices
+        assert "ARG_x" in make_new_code
+        assert "ARG_y" in make_new_code
+        # Should have QSTR entries
+        assert "MP_QSTR_x" in make_new_code
+        assert "MP_QSTR_y" in make_new_code
+        # Required params should have MP_ARG_REQUIRED
+        assert "MP_ARG_REQUIRED" in make_new_code
+
+    def test_emit_make_new_with_default_int_params(self):
+        """make_new with int default values."""
+        import ast
+
+        from mypyc_micropython.class_emitter import ClassEmitter
+        from mypyc_micropython.ir import DefaultArg, FieldIR, MethodIR
+
+        init_ast = ast.parse("def __init__(self, x, y=10): pass").body[0]
+        init_method = MethodIR(
+            name="__init__",
+            c_name="test_Point___init__",
+            params=[("x", CType.MP_INT_T), ("y", CType.MP_INT_T)],
+            return_type=CType.VOID,
+            body_ast=init_ast,
+            is_special=True,
+            defaults={1: DefaultArg(value=10, c_expr="mp_obj_new_int(10)")},
+        )
+
+        class_ir = ClassIR(
+            name="Point",
+            c_name="test_Point",
+            module_name="test",
+            fields=[
+                FieldIR(name="x", py_type="int", c_type=CType.MP_INT_T),
+                FieldIR(name="y", py_type="int", c_type=CType.MP_INT_T),
+            ],
+            methods={"__init__": init_method},
+        )
+        emitter = ClassEmitter(class_ir, "test")
+        make_new_code = "\n".join(emitter.emit_make_new())
+
+        # Should use mp_arg_parse_all_kw_array
+        assert "mp_arg_parse_all_kw_array" in make_new_code
+        # x is required
+        assert "MP_QSTR_x, MP_ARG_REQUIRED | MP_ARG_INT" in make_new_code
+        # y has default value 10
+        assert ".u_int = 10" in make_new_code
+
+    def test_emit_make_new_with_default_bool_params(self):
+        """make_new with bool default values."""
+        import ast
+
+        from mypyc_micropython.class_emitter import ClassEmitter
+        from mypyc_micropython.ir import DefaultArg, FieldIR, MethodIR
+
+        init_ast = ast.parse("def __init__(self, enabled=True): pass").body[0]
+        init_method = MethodIR(
+            name="__init__",
+            c_name="test_Flag___init__",
+            params=[("enabled", CType.BOOL)],
+            return_type=CType.VOID,
+            body_ast=init_ast,
+            is_special=True,
+            defaults={0: DefaultArg(value=True, c_expr="mp_const_true")},
+        )
+
+        class_ir = ClassIR(
+            name="Flag",
+            c_name="test_Flag",
+            module_name="test",
+            fields=[
+                FieldIR(name="enabled", py_type="bool", c_type=CType.BOOL),
+            ],
+            methods={"__init__": init_method},
+        )
+        emitter = ClassEmitter(class_ir, "test")
+        make_new_code = "\n".join(emitter.emit_make_new())
+
+        # Should have bool default
+        assert "MP_ARG_BOOL" in make_new_code
+        assert ".u_bool = true" in make_new_code
+
+    def test_emit_make_new_with_obj_params(self):
+        """make_new with object (list, dict, str) params."""
+        import ast
+
+        from mypyc_micropython.class_emitter import ClassEmitter
+        from mypyc_micropython.ir import DefaultArg, FieldIR, MethodIR
+
+        init_ast = ast.parse("def __init__(self, name, items=None): pass").body[0]
+        init_method = MethodIR(
+            name="__init__",
+            c_name="test_Container___init__",
+            params=[("name", CType.MP_OBJ_T), ("items", CType.MP_OBJ_T)],
+            return_type=CType.VOID,
+            body_ast=init_ast,
+            is_special=True,
+            defaults={1: DefaultArg(value=None, c_expr="mp_const_none")},
+        )
+
+        class_ir = ClassIR(
+            name="Container",
+            c_name="test_Container",
+            module_name="test",
+            fields=[
+                FieldIR(name="name", py_type="str", c_type=CType.MP_OBJ_T),
+                FieldIR(name="items", py_type="list", c_type=CType.MP_OBJ_T),
+            ],
+            methods={"__init__": init_method},
+        )
+        emitter = ClassEmitter(class_ir, "test")
+        make_new_code = "\n".join(emitter.emit_make_new())
+
+        # name is required object
+        assert "MP_QSTR_name, MP_ARG_REQUIRED | MP_ARG_OBJ" in make_new_code
+        # items has default None
+        assert "MP_QSTR_items, MP_ARG_OBJ" in make_new_code
+        assert "mp_const_none" in make_new_code
+
+    def test_emit_make_new_parsed_args_passed_to_init(self):
+        """Verify parsed args are passed to __init__ call."""
+        import ast
+
+        from mypyc_micropython.class_emitter import ClassEmitter
+        from mypyc_micropython.ir import FieldIR, MethodIR
+
+        init_ast = ast.parse("def __init__(self, a, b, c): pass").body[0]
+        init_method = MethodIR(
+            name="__init__",
+            c_name="test_Multi___init__",
+            params=[
+                ("a", CType.MP_INT_T),
+                ("b", CType.MP_INT_T),
+                ("c", CType.MP_INT_T),
+            ],
+            return_type=CType.VOID,
+            body_ast=init_ast,
+            is_special=True,
+        )
+
+        class_ir = ClassIR(
+            name="Multi",
+            c_name="test_Multi",
+            module_name="test",
+            fields=[
+                FieldIR(name="a", py_type="int", c_type=CType.MP_INT_T),
+                FieldIR(name="b", py_type="int", c_type=CType.MP_INT_T),
+                FieldIR(name="c", py_type="int", c_type=CType.MP_INT_T),
+            ],
+            methods={"__init__": init_method},
+        )
+        emitter = ClassEmitter(class_ir, "test")
+        make_new_code = "\n".join(emitter.emit_make_new())
+
+        # Should access parsed args by index
+        assert "parsed[ARG_a]" in make_new_code
+        assert "parsed[ARG_b]" in make_new_code
+        assert "parsed[ARG_c]" in make_new_code
+
+
 
 class TestGeneratorEmitter:
     def test_emit_generator_while_yield_state_machine(self):

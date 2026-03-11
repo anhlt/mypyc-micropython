@@ -2292,13 +2292,25 @@ class IRBuilder:
             args.append(val)
             arg_preludes.append(prelude)
 
+        # Process keyword arguments
+        kwargs: list[tuple[str, ValueNode]] = []
+        kwarg_preludes: list[list[InstrNode]] = []
+        for kw in expr.keywords:
+            if kw.arg is None:
+                continue
+            val, prelude = self._build_expr(kw.value, locals_)
+            kwargs.append((kw.arg, val))
+            kwarg_preludes.append(prelude)
+
         all_preludes = [p for pl in arg_preludes for p in pl]
+        all_preludes.extend(p for pl in kwarg_preludes for p in pl)
 
         return ClassInstantiationIR(
             ir_type=IRType.OBJ,
             class_name=class_name,
             c_class_name=class_ir.c_name,
             args=args,
+            kwargs=kwargs,
             arg_preludes=arg_preludes,
         ), all_preludes
 

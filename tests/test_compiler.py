@@ -2262,17 +2262,22 @@ class App:
         self.capacity = capacity
 """
         result = compile_source(source, "test", type_check=False)
-        # Check mp_arg_check_num allows 1-3 args (model0 required, modulo/capacity optional)
-        assert "mp_arg_check_num(n_args, n_kw, 1, 3, false)" in result
-        # Check default args are handled in make_new
-        assert "(n_args > 1) ? args[1]" in result or "init_args[2] = (n_args > 1)" in result
-        assert "(n_args > 2) ? args[2]" in result or "init_args[3] = (n_args > 2)" in result
+        # Check mp_arg_parse_all_kw_array is used for kwargs support
+        assert "mp_arg_parse_all_kw_array" in result
+        # Check allowed_args table is generated
+        assert "allowed_args" in result
+        # Check parameter names are in allowed_args
+        assert "MP_QSTR_model0" in result
+        assert "MP_QSTR_modulo" in result
+        assert "MP_QSTR_capacity" in result
+        # Check defaults are specified
+        assert ".u_int = 8" in result  # modulo default
+        assert ".u_int = 32" in result  # capacity default
         # Check __init__ wrapper uses VAR_BETWEEN with min/max
         assert "MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN" in result
         assert (
             "test_App___init___obj, 2, 4" in result
         )  # 2 min (self + model0), 4 max (self + 3 params)
-
 
 class TestStaticMethod:
     def test_basic_static_method(self):
@@ -2777,6 +2782,75 @@ class ObjectHolder:
 """
         result = compile_source(source, "test", type_check=False)
         assert "mp_obj_t data;" in result
+
+
+class TestClassInstantiationKwargs:
+    """Tests for class instantiation with keyword arguments."""
+
+    def test_class_instantiation_with_kwargs(self):
+        """Test that class instantiation passes kwargs correctly."""
+        source = '''
+from __future__ import annotations
+
+class Point:
+    x: int
+    y: int
+
+    def __init__(self, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+
+def create_point() -> Point:
+    return Point(x=10, y=20)
+'''
+        result = compile_source(source, "test")
+        # Should generate make_new with kwargs (n_args=0, n_kw=2)
+        assert "make_new(&test_Point_type, 0, 2," in result
+        # Should have interleaved kwargs: key, value, key, value
+        assert "MP_QSTR_x" in result
+        assert "MP_QSTR_y" in result
+
+    def test_class_instantiation_mixed_args_kwargs(self):
+        """Test class instantiation with both positional and keyword args."""
+        source = '''
+from __future__ import annotations
+
+class Point3D:
+    x: int
+    y: int
+    z: int
+
+    def __init__(self, x: int, y: int, z: int) -> None:
+        self.x = x
+        self.y = y
+        self.z = z
+
+def create_point() -> Point3D:
+    return Point3D(1, y=2, z=3)
+'''
+        result = compile_source(source, "test")
+        # Should generate make_new with 1 positional and 2 kwargs
+        assert "make_new(&test_Point3D_type, 1, 2," in result
+
+    def test_dataclass_instantiation_with_kwargs(self):
+        """Test dataclass instantiation with keyword arguments."""
+        source = '''
+from __future__ import annotations
+from dataclasses import dataclass
+
+@dataclass
+class Widget:
+    key: int
+    name: str
+
+def make_widget() -> Widget:
+    return Widget(key=42, name="test")
+'''
+        result = compile_source(source, "test")
+        # Should generate make_new with kwargs
+        assert "make_new(&test_Widget_type, 0, 2," in result
+        assert "MP_QSTR_key" in result
+        assert "MP_QSTR_name" in result
 
 
 class TestClassAttrHandler:

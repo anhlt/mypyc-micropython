@@ -732,7 +732,9 @@ class IRPrinter:
                 return f"super().{value.method_name}({args})"
             case ClassInstantiationIR():
                 args = ", ".join(self.print_value(a) for a in value.args)
-                return f"{value.class_name}({args})"
+                kwargs_str = ", ".join(f"{k}={self.print_value(v)}" for k, v in value.kwargs)
+                all_args = args + (", " + kwargs_str if args and kwargs_str else kwargs_str)
+                return f"{value.class_name}({all_args})"
             case SliceIR():
                 lower = self.print_value(value.lower) if value.lower else ""
                 upper = self.print_value(value.upper) if value.upper else ""

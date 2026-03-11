@@ -636,6 +636,16 @@ static inline mp_obj_t mp_binary_op(mp_binary_op_t op, mp_obj_t lhs, mp_obj_t rh
 #define MP_QSTR_sorted  ((qstr)0x2019)
 #define MP_QSTR_items   ((qstr)0x201A)
 #define MP_QSTR_config  ((qstr)0x201B)
+#define MP_QSTR_start   ((qstr)0x201C)
+#define MP_QSTR_step    ((qstr)0x201D)
+#define MP_QSTR_model0  ((qstr)0x201E)
+#define MP_QSTR_modulo  ((qstr)0x201F)
+#define MP_QSTR_capacity ((qstr)0x2020)
+#define MP_QSTR_bonus   ((qstr)0x2021)
+#define MP_QSTR_c       ((qstr)0x2022)
+#define MP_QSTR_f       ((qstr)0x2023)
+#define MP_QSTR_r       ((qstr)0x2024)
+#define MP_QSTR_v       ((qstr)0x2025)
 #define MP_MOCK_TAG_ITER (0x173A)
 
 typedef struct {
