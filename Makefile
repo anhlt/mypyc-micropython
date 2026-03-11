@@ -213,7 +213,6 @@ compile-all: check-board
 			mpy-compile "$(EXTMOD_DIR)/lvui/" -o "$(MODULES_DIR)/usermod_lvui" || exit 1; \
 		fi; \
 		echo ""; \
-		echo ""; \
 		echo "Compiling extmod/lvgl_mvu package..."; \
 		if [ -f "$(EXTMOD_DIR)/lvgl_mvu/__init__.py" ]; then \
 			echo "Compiling package $(EXTMOD_DIR)/lvgl_mvu/ -> $(MODULES_DIR)/usermod_lvgl_mvu/"; \
