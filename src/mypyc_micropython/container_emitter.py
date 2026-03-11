@@ -881,8 +881,12 @@ class ContainerEmitter:
                     f"{", " if args_str else ""}{args_str})"
                 )
             case SiblingModuleRefIR():
-                # Sibling module ref - not importable at runtime, used for direct C calls
-                return f"/* sibling module ref: {value.c_prefix} */"
+                raise ValueError(
+                    f"SiblingModuleRefIR(c_prefix='{value.c_prefix}') cannot be emitted "
+                    "as a standalone expression value. Sibling module references should "
+                    "only appear as receivers in SiblingModuleCallIR or "
+                    "SiblingClassInstantiationIR, not as first-class values."
+                )
             case SiblingModuleCallIR():
                 # Direct C call to sibling module function
                 c_func_name = f"{value.c_prefix}_{value.func_name}"

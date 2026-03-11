@@ -675,7 +675,12 @@ class BaseEmitter:
             case ModuleRefIR():
                 return _emit_dotted_module_import(value.module_name), "mp_obj_t"
             case SiblingModuleRefIR():
-                return f"/* sibling module ref: {value.c_prefix} */", "mp_obj_t"
+                raise ValueError(
+                    f"SiblingModuleRefIR(c_prefix='{value.c_prefix}') cannot be emitted "
+                    "as a standalone expression value. Sibling module references should "
+                    "only appear as receivers in SiblingModuleCallIR or "
+                    "SiblingClassInstantiationIR, not as first-class values."
+                )
             case _:
                 assert_never(value)
 
