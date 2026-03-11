@@ -46,9 +46,12 @@ def apply_height(lv_obj: object, value: object) -> None:
 
 
 def apply_align(lv_obj: object, value: object) -> None:
-    """Set alignment of an LVGL object."""
-    lv.lv_obj_set_align(lv_obj, value)
+    """Set alignment of an LVGL object.
 
+    Uses lv_obj_align with 0 offsets. To apply offsets, use ALIGN_X_OFS
+    and ALIGN_Y_OFS attributes which are handled together.
+    """
+    lv.lv_obj_align(lv_obj, value, 0, 0)
 
 def apply_align_x_ofs(lv_obj: object, value: object) -> None:
     """Set X offset for alignment (requires re-alignment)."""
@@ -149,33 +152,32 @@ def apply_radius(lv_obj: object, value: object) -> None:
 def apply_text(lv_obj: object, value: object) -> None:
     """Set text content of a label or button.
 
-    For buttons, this creates/updates a child label.
-    For labels, this sets the text directly.
+    For labels, sets text directly via lv_label_set_text.
+    For buttons, creates/updates a child label.
     """
-    # Check if this is a button by trying to get a label child
-    # LVGL buttons need a child label for text
+    # Try setting as label first (most common case)
+    try:
+        lv.lv_label_set_text(lv_obj, value)
+        return
+    except Exception:
+        pass
+
+    # For buttons, need a child label
     child_cnt: int = lv.lv_obj_get_child_count(lv_obj)
     label: object
     if child_cnt > 0:
-        # Assume first child is the label (for buttons)
+        # Update existing child label
         label = lv.lv_obj_get_child(lv_obj, 0)
-        # Check if child is a label by setting text
         try:
             lv.lv_label_set_text(label, value)
             return
         except Exception:
             pass
 
-    # Try setting directly (for label widgets)
-    try:
-        lv.lv_label_set_text(lv_obj, value)
-    except Exception:
-        # For buttons without a label, create one
-        label = lv.lv_label_create(lv_obj)
-        lv.lv_label_set_text(label, value)
-        lv.lv_obj_center(label)
-
-
+    # Create new label for button
+    label = lv.lv_label_create(lv_obj)
+    lv.lv_label_set_text(label, value)
+    lv.lv_obj_center(label)
 def apply_text_color(lv_obj: object, value: object) -> None:
     """Set text color."""
     color: object = lv.lv_color_hex(value)
@@ -198,9 +200,16 @@ def apply_text_align(lv_obj: object, value: object) -> None:
 
 
 def apply_flex_flow(lv_obj: object, value: object) -> None:
-    """Set flex layout flow direction."""
-    lv.lv_obj_set_flex_flow(lv_obj, value)
+    """Set flex layout flow direction.
 
+    Also sets default CENTER alignment for all three axes.
+    This ensures flex layouts work out-of-the-box without requiring
+    separate alignment calls.
+    """
+    lv.lv_obj_set_flex_flow(lv_obj, value)
+    # Set default CENTER alignment (2, 2, 2)
+    # This will be called first since FLEX_FLOW (120) < FLEX_*_PLACE (121-123)
+    lv.lv_obj_set_flex_align(lv_obj, 2, 2, 2)
 
 def apply_flex_main_place(lv_obj: object, value: object) -> None:
     """Set flex main axis placement."""

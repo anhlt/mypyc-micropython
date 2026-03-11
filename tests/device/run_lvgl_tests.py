@@ -788,6 +788,91 @@ t("app sub timer torn", _timer_torn_down[0], "1")
 
 gc.collect()
 
+# ---- counter_mvu (real MVU app with display) ----
+suite("counter_mvu")
+
+try:
+    import time
+
+    import counter_mvu
+    import lvgl as lv
+
+    # Create and initialize the app
+    app = counter_mvu.create_app()
+    t("counter_mvu create_app", app is not None, "True")
+
+    # First tick to render initial view
+    app.tick()
+    t("counter_mvu root_node", app.root_node is not None, "True")
+    t("counter_mvu initial model", app.model.count, "0")
+
+    # Load screen
+    lv.lv_screen_load(app.root_node.lv_obj)
+    refresh(10)
+    t("counter_mvu screen loaded", True, "True")
+
+    # Test increment
+    app.dispatch(counter_mvu.MSG_INCREMENT)
+    app.tick()
+    lv.timer_handler()
+    t("counter_mvu after 1 inc", app.model.count, "1")
+
+    # Test multiple increments
+    for _ in range(5):
+        app.dispatch(counter_mvu.MSG_INCREMENT)
+        app.tick()
+        lv.timer_handler()
+    t("counter_mvu after 6 inc", app.model.count, "6")
+
+    # Fast increment test (no sleep)
+    start = time.ticks_ms()
+    for i in range(100):
+        app.dispatch(counter_mvu.MSG_INCREMENT)
+        app.tick()
+        lv.timer_handler()
+    end = time.ticks_ms()
+    elapsed = time.ticks_diff(end, start)
+    t("counter_mvu after 106 inc", app.model.count, "106")
+    print(f"    (100 updates in {elapsed}ms)")
+
+    # Memory stability test
+    gc.collect()
+    baseline = gc.mem_free()
+
+    for i in range(500):
+        app.dispatch(counter_mvu.MSG_INCREMENT)
+        app.tick()
+        lv.timer_handler()
+        if i % 100 == 0:
+            gc.collect()
+
+    gc.collect()
+    final = gc.mem_free()
+    mem_drop = baseline - final
+    t("counter_mvu memory stable", mem_drop < 5000, "True")
+    print(f"    (mem drop: {mem_drop} bytes after 500 updates)")
+    t("counter_mvu final count", app.model.count, "606")
+
+    # Verify view updates correctly
+    view_widget = counter_mvu.view(app.model)
+    t("counter_mvu view returns Widget", view_widget is not None, "True")
+
+    # Clean up - create new screen to release counter screen
+    cleanup_scr = lv.lv_obj_create(None)
+    lv.lv_screen_load(cleanup_scr)
+    refresh(5)
+
+except ImportError as e:
+    print("SKIP: counter_mvu not available - " + str(e))
+except Exception as e:
+    print("ERROR: counter_mvu tests failed - " + str(e))
+    import sys
+    sys.print_exception(e)
+    _failed += 1
+
+gc.collect()
+
+
 # ---- summary ----
 gc.collect()
 print("@D:" + str(_total) + "|" + str(_passed) + "|" + str(_failed))

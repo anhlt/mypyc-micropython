@@ -2779,6 +2779,75 @@ class ObjectHolder:
         assert "mp_obj_t data;" in result
 
 
+class TestClassInstantiationKwargs:
+    """Tests for class instantiation with keyword arguments."""
+
+    def test_class_instantiation_with_kwargs(self):
+        """Test that class instantiation passes kwargs correctly."""
+        source = '''
+from __future__ import annotations
+
+class Point:
+    x: int
+    y: int
+
+    def __init__(self, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+
+def create_point() -> Point:
+    return Point(x=10, y=20)
+'''
+        result = compile_source(source, "test")
+        # Should generate make_new with kwargs (n_args=0, n_kw=2)
+        assert "make_new(&test_Point_type, 0, 2," in result
+        # Should have interleaved kwargs: key, value, key, value
+        assert "MP_QSTR_x" in result
+        assert "MP_QSTR_y" in result
+
+    def test_class_instantiation_mixed_args_kwargs(self):
+        """Test class instantiation with both positional and keyword args."""
+        source = '''
+from __future__ import annotations
+
+class Point3D:
+    x: int
+    y: int
+    z: int
+
+    def __init__(self, x: int, y: int, z: int) -> None:
+        self.x = x
+        self.y = y
+        self.z = z
+
+def create_point() -> Point3D:
+    return Point3D(1, y=2, z=3)
+'''
+        result = compile_source(source, "test")
+        # Should generate make_new with 1 positional and 2 kwargs
+        assert "make_new(&test_Point3D_type, 1, 2," in result
+
+    def test_dataclass_instantiation_with_kwargs(self):
+        """Test dataclass instantiation with keyword arguments."""
+        source = '''
+from __future__ import annotations
+from dataclasses import dataclass
+
+@dataclass
+class Widget:
+    key: int
+    name: str
+
+def make_widget() -> Widget:
+    return Widget(key=42, name="test")
+'''
+        result = compile_source(source, "test")
+        # Should generate make_new with kwargs
+        assert "make_new(&test_Widget_type, 0, 2," in result
+        assert "MP_QSTR_key" in result
+        assert "MP_QSTR_name" in result
+
+
 class TestClassAttrHandler:
     """Tests for attribute access handler generation."""
 
