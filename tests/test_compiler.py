@@ -7329,10 +7329,10 @@ class TestFromImportNameResolutionCompiler:
     def test_from_import_generates_load_attr(self):
         """from math import sqrt; sqrt(x) -> mp_load_attr(mp_import_name(math), sqrt)."""
         source = '''
-import math
+from math import sqrt
 
 def f(x: float) -> float:
-    return math.sqrt(x)
+    return sqrt(x)
 '''
         result = compile_source(source, "test", type_check=False)
         assert "mp_load_attr(" in result

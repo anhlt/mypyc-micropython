@@ -26,8 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `examples/counter_mvu.py`: MVU counter app exercising all five bug fixes (194 lines clean C)
 - 17 new tests across IR builder, emitter, and compiler test suites
 - Blog 43: `_value_to_c` central dispatch walkthrough
-
-### Added
 - `CType.GENERAL` for truly unknown/dynamic types (`object`, `Any`, unannotated parameters)
   - Semantically distinct from `MP_OBJ_T` (known container/string types) but maps to same C type `mp_obj_t`
   - `CType.from_c_type_str()` static method for direct C type string mapping (avoids roundtrip through Python types)

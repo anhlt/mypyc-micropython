@@ -412,6 +412,7 @@ except ImportError as e:
     print("  SKIP: LVGL integration not available - " + str(e))
 except Exception as e:
     print("  ERROR: LVGL integration failed - " + str(e))
+    t("lvgl_integration_exception", False, "True")
 
 
 # ---- Summary ----

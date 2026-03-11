@@ -188,11 +188,17 @@ class ContainerEmitter:
         receiver_c = self._value_to_c(instr.receiver)
 
         # Check if receiver is a builtin type that should use optimized handlers
-        builtin_types = {None, "list", "dict", "set", "str", "bytes"}
+        builtin_types = {"list", "dict", "set", "str", "bytes"}
         receiver_type = instr.receiver_py_type
 
-        # Only use table dispatch for builtin types
-        if receiver_type in builtin_types:
+        # Use table dispatch for known builtin types, and also when receiver
+        # type is unknown (None). The None fallback handles local variables
+        # where the IR builder hasn't propagated the container annotation
+        # (e.g., `result: list = []; result.append(x)`).
+        # Custom class methods are safe because the IR builder sets
+        # receiver_py_type to the class name, which won't be in builtin_types.
+        # See TestCustomClassMethodDispatch for regression coverage.
+        if receiver_type is None or receiver_type in builtin_types:
             handler = _METHOD_TABLE.get(method)
             if handler is not None:
                 return handler(self, instr, receiver_c)

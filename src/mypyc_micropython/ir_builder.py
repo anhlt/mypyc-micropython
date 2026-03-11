@@ -1645,7 +1645,7 @@ class IRBuilder:
 
         # Check for imported names that are not sibling constants (runtime import needed)
         # e.g., `from lvgl_mvu.program import Cmd` -> Cmd resolves to
-        # mp_load_attr(mp_import_name(MP_QSTR_lvgl_mvu_program, ...), MP_QSTR_Cmd)
+        # mp_load_attr(mp_load_attr(mp_import_name(..., lvgl_mvu), program), Cmd)
         if name in self._imported_from:
             source_module = self._imported_from[name]
             # Skip if this is a sibling module (handled by direct C calls)

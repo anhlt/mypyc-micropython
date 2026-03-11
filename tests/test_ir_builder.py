@@ -2598,6 +2598,16 @@ def f(g: Callable[..., Callable[..., object]]) -> object:
             assert isinstance(ta.result, TempIR)
         else:
             # The DynamicCallIR was built with preludes already flattened
-            # into the stmt list — check func_ir.body for ExprStmtIR with
-            # TempAssignIR in prelude
-            pass  # Prelude handling varies; main test is DynamicCallIR exists
+            # into the stmt list -- scan func_ir.body for TempAssignIR in preludes
+            found_temp = False
+            for stmt in func_ir.body:
+                prelude = getattr(stmt, 'prelude', None) or []
+                for instr in prelude:
+                    if isinstance(instr, TempAssignIR):
+                        found_temp = True
+                        break
+                if found_temp:
+                    break
+            assert found_temp, (
+                "Expected TempAssignIR in body statement preludes for callable-call-result"
+            )
