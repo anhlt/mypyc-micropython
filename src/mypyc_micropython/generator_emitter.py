@@ -13,7 +13,7 @@ from .ir import (
     NameIR,
     ReturnIR,
     StmtIR,
-    ValueIR,
+    ValueNode,
     YieldFromIR,
     YieldIR,
 )
@@ -167,13 +167,15 @@ class GeneratorEmitter(BaseEmitter):
 
     def _emit_statement(self, stmt: StmtIR, native: bool = False) -> list[str]:
         del native
-        if isinstance(stmt, YieldIR):
-            return self._emit_yield(stmt)
-        if isinstance(stmt, YieldFromIR):
-            return self._emit_yield_from(stmt)
-        if isinstance(stmt, ReturnIR):
-            return self._emit_return(stmt)
-        return super()._emit_statement(stmt, native=False)
+        match stmt:
+            case YieldIR():
+                return self._emit_yield(stmt)
+            case YieldFromIR():
+                return self._emit_yield_from(stmt)
+            case ReturnIR():
+                return self._emit_return(stmt)
+            case _:
+                return super()._emit_statement(stmt, native=False)
 
     def _emit_yield(self, stmt: YieldIR) -> list[str]:
         lines = ["    {"]
@@ -323,10 +325,12 @@ class GeneratorEmitter(BaseEmitter):
         lines.append(f"    self->{target} = {expr};")
         return lines
 
-    def _emit_expr(self, value: ValueIR, native: bool = False) -> tuple[str, str]:
-        if isinstance(value, NameIR):
-            return f"self->{sanitize_name(value.c_name)}", value.ir_type.to_c_type_str()
-        return super()._emit_expr(value, native)
+    def _emit_expr(self, value: ValueNode, native: bool = False) -> tuple[str, str]:
+        match value:
+            case NameIR():
+                return f"self->{sanitize_name(value.c_name)}", value.ir_type.to_c_type_str()
+            case _:
+                return super()._emit_expr(value, native)
 
     def _collect_yield_state_ids(self, body: list[StmtIR]) -> list[int]:
         state_ids: set[int] = set()

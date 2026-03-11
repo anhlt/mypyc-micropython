@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from dataclasses import fields, is_dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, assert_never
 
 from .ir import (
     AnnAssignIR,
@@ -34,6 +34,7 @@ from .ir import (
     ConstIR,
     ContinueIR,
     DictNewIR,
+    DynamicCallIR,
     EnumIR,
     ExceptHandlerIR,
     ExprStmtIR,
@@ -46,6 +47,7 @@ from .ir import (
     IfExprIR,
     IfIR,
     InstrIR,
+    InstrNode,
     IsInstanceIR,
     LambdaIR,
     ListCompIR,
@@ -56,6 +58,7 @@ from .ir import (
     ModuleCallIR,
     ModuleImportIR,
     ModuleIR,
+    ModuleRefIR,
     NameIR,
     ObjAttrAssignIR,
     ParamAttrIR,
@@ -74,6 +77,7 @@ from .ir import (
     SiblingModuleRefIR,
     SliceIR,
     StmtIR,
+    StmtNode,
     SubscriptAssignIR,
     SubscriptIR,
     SuperCallIR,
@@ -85,6 +89,7 @@ from .ir import (
     UnaryOpIR,
     UnboxIR,
     ValueIR,
+    ValueNode,
     WhileIR,
     YieldFromIR,
     YieldIR,
@@ -265,57 +270,58 @@ class IRPrinter:
 
         return "\n".join(lines)
 
-    def print_stmt(self, stmt: StmtIR) -> str:
-        if isinstance(stmt, ReturnIR):
-            return self._print_return(stmt)
-        elif isinstance(stmt, YieldIR):
-            return self._print_yield(stmt)
-        elif isinstance(stmt, YieldFromIR):
-            return self._print_yield_from(stmt)
-        elif isinstance(stmt, AwaitIR):
-            return self._print_await(stmt)
-        elif isinstance(stmt, AwaitModuleCallIR):
-            return self._print_await_module_call(stmt)
-        elif isinstance(stmt, IfIR):
-            return self._print_if(stmt)
-        elif isinstance(stmt, WhileIR):
-            return self._print_while(stmt)
-        elif isinstance(stmt, ForRangeIR):
-            return self._print_for_range(stmt)
-        elif isinstance(stmt, ForIterIR):
-            return self._print_for_iter(stmt)
-        elif isinstance(stmt, TryIR):
-            return self._print_try(stmt)
-        elif isinstance(stmt, RaiseIR):
-            return self._print_raise(stmt)
-        elif isinstance(stmt, AssignIR):
-            return self._print_assign(stmt)
-        elif isinstance(stmt, AnnAssignIR):
-            return self._print_ann_assign(stmt)
-        elif isinstance(stmt, AugAssignIR):
-            return self._print_aug_assign(stmt)
-        elif isinstance(stmt, SubscriptAssignIR):
-            return self._print_subscript_assign(stmt)
-        elif isinstance(stmt, AttrAssignIR):
-            return self._print_attr_assign(stmt)
-        elif isinstance(stmt, ObjAttrAssignIR):
-            return self._print_obj_attr_assign(stmt)
-        elif isinstance(stmt, TupleUnpackIR):
-            return self._print_tuple_unpack(stmt)
-        elif isinstance(stmt, ExprStmtIR):
-            return self._print_expr_stmt(stmt)
-        elif isinstance(stmt, PrintIR):
-            return self._print_print(stmt)
-        elif isinstance(stmt, BreakIR):
-            return f"{self._i()}break"
-        elif isinstance(stmt, ContinueIR):
-            return f"{self._i()}continue"
-        elif isinstance(stmt, PassIR):
-            return f"{self._i()}pass"
-        elif isinstance(stmt, SelfAugAssignIR):
-            return self._print_self_aug_assign(stmt)
-        else:
-            return f"{self._i()}/* unknown stmt: {type(stmt).__name__} */"
+    def print_stmt(self, stmt: StmtNode) -> str:
+        match stmt:
+            case ReturnIR():
+                return self._print_return(stmt)
+            case YieldIR():
+                return self._print_yield(stmt)
+            case YieldFromIR():
+                return self._print_yield_from(stmt)
+            case AwaitIR():
+                return self._print_await(stmt)
+            case AwaitModuleCallIR():
+                return self._print_await_module_call(stmt)
+            case IfIR():
+                return self._print_if(stmt)
+            case WhileIR():
+                return self._print_while(stmt)
+            case ForRangeIR():
+                return self._print_for_range(stmt)
+            case ForIterIR():
+                return self._print_for_iter(stmt)
+            case TryIR():
+                return self._print_try(stmt)
+            case RaiseIR():
+                return self._print_raise(stmt)
+            case AssignIR():
+                return self._print_assign(stmt)
+            case AnnAssignIR():
+                return self._print_ann_assign(stmt)
+            case AugAssignIR():
+                return self._print_aug_assign(stmt)
+            case SubscriptAssignIR():
+                return self._print_subscript_assign(stmt)
+            case AttrAssignIR():
+                return self._print_attr_assign(stmt)
+            case ObjAttrAssignIR():
+                return self._print_obj_attr_assign(stmt)
+            case TupleUnpackIR():
+                return self._print_tuple_unpack(stmt)
+            case ExprStmtIR():
+                return self._print_expr_stmt(stmt)
+            case PrintIR():
+                return self._print_print(stmt)
+            case BreakIR():
+                return f"{self._i()}break"
+            case ContinueIR():
+                return f"{self._i()}continue"
+            case PassIR():
+                return f"{self._i()}pass"
+            case SelfAugAssignIR():
+                return self._print_self_aug_assign(stmt)
+            case _:
+                assert_never(stmt)
 
     def _print_return(self, stmt: ReturnIR) -> str:
         lines = []
@@ -621,132 +627,139 @@ class IRPrinter:
         lines.append(f"{self._i()}self.{stmt.attr_name} {stmt.op} {self.print_value(stmt.value)}")
         return "\n".join(lines)
 
-    def print_instr(self, instr: InstrIR) -> str:
-        if isinstance(instr, ListNewIR):
-            items = ", ".join(self.print_value(i) for i in instr.items)
-            return f"{self._i()}{instr.result.name} = ListNew([{items}])"
-        elif isinstance(instr, TupleNewIR):
-            items = ", ".join(self.print_value(i) for i in instr.items)
-            return f"{self._i()}{instr.result.name} = TupleNew(({items}))"
-        elif isinstance(instr, SetNewIR):
-            items = ", ".join(self.print_value(i) for i in instr.items)
-            return f"{self._i()}{instr.result.name} = SetNew({{{items}}})"
-        elif isinstance(instr, DictNewIR):
-            entries = ", ".join(
-                f"{self.print_value(k)}: {self.print_value(v)}" for k, v in instr.entries
-            )
-            return f"{self._i()}{instr.result.name} = DictNew({{{entries}}})"
-        elif isinstance(instr, MethodCallIR):
-            args = ", ".join(self.print_value(a) for a in instr.args)
-            kwargs_str = ", ".join(f"{k}={self.print_value(v)}" for k, v in instr.kwargs)
-            all_args = args + (", " + kwargs_str if args and kwargs_str else kwargs_str)
-            result_str = f"{instr.result.name} = " if instr.result else ""
-            return f"{self._i()}{result_str}{self.print_value(instr.receiver)}.{instr.method}({all_args})"
-        elif isinstance(instr, GetItemIR):
-            return f"{self._i()}{instr.result.name} = {self.print_value(instr.container)}[{self.print_value(instr.key)}]"
-        elif isinstance(instr, SetItemIR):
-            return f"{self._i()}{self.print_value(instr.container)}[{self.print_value(instr.key)}] = {self.print_value(instr.value)}"
-        elif isinstance(instr, BoxIR):
-            return f"{self._i()}{instr.result.name} = Box({self.print_value(instr.value)})"
-        elif isinstance(instr, UnboxIR):
-            return f"{self._i()}{instr.result.name} = Unbox({self.print_value(instr.value)}, {instr.target_type.name})"
-        elif isinstance(instr, AttrAccessIR):
-            return (
-                f"{self._i()}{instr.result.name} = {self.print_value(instr.obj)}.{instr.attr_name}"
-            )
-        elif isinstance(instr, ListCompIR):
-            filter_str = f" if {self.print_value(instr.condition)}" if instr.condition else ""
-            return f"{self._i()}{instr.result.name} = [{self.print_value(instr.element)} for {instr.loop_var} in {self.print_value(instr.iterable)}{filter_str}]"
-        elif isinstance(instr, ModuleImportIR):
-            return f"{self._i()}{instr.result.name} = import {instr.module_name}"
-        elif isinstance(instr, TempAssignIR):
-            return f"{self._i()}{instr.result.name} = {self.print_value(instr.value)}"
-        else:
-            return f"{self._i()}/* unknown instr: {type(instr).__name__} */"
+    def print_instr(self, instr: InstrNode) -> str:
+        match instr:
+            case ListNewIR():
+                items = ", ".join(self.print_value(i) for i in instr.items)
+                return f"{self._i()}{instr.result.name} = ListNew([{items}])"
+            case TupleNewIR():
+                items = ", ".join(self.print_value(i) for i in instr.items)
+                return f"{self._i()}{instr.result.name} = TupleNew(({items}))"
+            case SetNewIR():
+                items = ", ".join(self.print_value(i) for i in instr.items)
+                return f"{self._i()}{instr.result.name} = SetNew({{{items}}})"
+            case DictNewIR():
+                entries = ", ".join(
+                    f"{self.print_value(k)}: {self.print_value(v)}" for k, v in instr.entries
+                )
+                return f"{self._i()}{instr.result.name} = DictNew({{{entries}}})"
+            case MethodCallIR():
+                args = ", ".join(self.print_value(a) for a in instr.args)
+                kwargs_str = ", ".join(f"{k}={self.print_value(v)}" for k, v in instr.kwargs)
+                all_args = args + (", " + kwargs_str if args and kwargs_str else kwargs_str)
+                result_str = f"{instr.result.name} = " if instr.result else ""
+                return f"{self._i()}{result_str}{self.print_value(instr.receiver)}.{instr.method}({all_args})"
+            case GetItemIR():
+                return f"{self._i()}{instr.result.name} = {self.print_value(instr.container)}[{self.print_value(instr.key)}]"
+            case SetItemIR():
+                return f"{self._i()}{self.print_value(instr.container)}[{self.print_value(instr.key)}] = {self.print_value(instr.value)}"
+            case BoxIR():
+                return f"{self._i()}{instr.result.name} = Box({self.print_value(instr.value)})"
+            case UnboxIR():
+                return f"{self._i()}{instr.result.name} = Unbox({self.print_value(instr.value)}, {instr.target_type.name})"
+            case AttrAccessIR():
+                return (
+                    f"{self._i()}{instr.result.name} = {self.print_value(instr.obj)}.{instr.attr_name}"
+                )
+            case ListCompIR():
+                filter_str = f" if {self.print_value(instr.condition)}" if instr.condition else ""
+                return f"{self._i()}{instr.result.name} = [{self.print_value(instr.element)} for {instr.loop_var} in {self.print_value(instr.iterable)}{filter_str}]"
+            case ModuleImportIR():
+                return f"{self._i()}{instr.result.name} = import {instr.module_name}"
+            case TempAssignIR():
+                return f"{self._i()}{instr.result.name} = {self.print_value(instr.value)}"
+            case _:
+                assert_never(instr)
 
-    def print_value(self, value: ValueIR | None) -> str:
+    def print_value(self, value: ValueNode | None) -> str:
         if value is None:
             return "None"
-        elif isinstance(value, TempIR):
-            return value.name
-        elif isinstance(value, ConstIR):
-            if isinstance(value.value, str):
-                return f'"{value.value}"'
-            return repr(value.value)
-        elif isinstance(value, NameIR):
-            return value.py_name
-        elif isinstance(value, FuncRefIR):
-            return f"<func:{value.py_name}>"
-        elif isinstance(value, LambdaIR):
-            captured = (
-                f", captures=[{', '.join(value.captured_vars)}]" if value.captured_vars else ""
-            )
-            return f"<lambda_{value.lambda_id}{captured}>"
-        elif isinstance(value, BinOpIR):
-            left = self.print_value(value.left)
-            right = self.print_value(value.right)
-            return f"({left} {value.op} {right})"
-        elif isinstance(value, UnaryOpIR):
-            operand = self.print_value(value.operand)
-            return f"({value.op}{operand})"
-        elif isinstance(value, CompareIR):
-            parts = [self.print_value(value.left)]
-            for op, comp in zip(value.ops, value.comparators):
-                parts.append(op)
-                parts.append(self.print_value(comp))
-            return f"({' '.join(parts)})"
-        elif isinstance(value, CallIR):
-            args = ", ".join(self.print_value(a) for a in value.args)
-            return f"{value.func_name}({args})"
-        elif isinstance(value, CLibCallIR):
-            args = ", ".join(self.print_value(a) for a in value.args)
-            return f"{value.lib_name}.{value.func_name}({args})"
-        elif isinstance(value, CLibEnumIR):
-            return f"{value.lib_name}.{value.enum_class}.{value.member_name} = {value.c_enum_value}"
-        elif isinstance(value, IsInstanceIR):
-            return f"isinstance({self.print_value(value.obj)}, {value.class_name})"
-        elif isinstance(value, SubscriptIR):
-            return f"{self.print_value(value.value)}[{self.print_value(value.slice_)}]"
-        elif isinstance(value, IfExprIR):
-            return f"({self.print_value(value.body)} if {self.print_value(value.test)} else {self.print_value(value.orelse)})"
-        elif isinstance(value, SelfAttrIR):
-            return f"self.{value.attr_name}"
-        elif isinstance(value, SelfMethodRefIR):
-            return f"self.{value.method_name}  # bound method ref"
-        elif isinstance(value, ParamAttrIR):
-            trait_marker = " # trait" if value.is_trait_type else ""
-            return f"{value.param_name}.{value.attr_name}{trait_marker}"
-        elif isinstance(value, SelfMethodCallIR):
-            args = ", ".join(self.print_value(a) for a in value.args)
-            return f"self.{value.method_name}({args})"
-        elif isinstance(value, SuperCallIR):
-            args = ", ".join(self.print_value(a) for a in value.args)
-            return f"super().{value.method_name}({args})"
-        elif isinstance(value, ClassInstantiationIR):
-            args = ", ".join(self.print_value(a) for a in value.args)
-            return f"{value.class_name}({args})"
-        elif isinstance(value, SliceIR):
-            lower = self.print_value(value.lower) if value.lower else ""
-            upper = self.print_value(value.upper) if value.upper else ""
-            step = f":{self.print_value(value.step)}" if value.step else ""
-            return f"{lower}:{upper}{step}"
-        elif isinstance(value, ModuleCallIR):
-            args = ", ".join(self.print_value(a) for a in value.args)
-            kwargs_str = ", ".join(f"{k}={self.print_value(v)}" for k, v in value.kwargs)
-            all_args = args + (", " + kwargs_str if args and kwargs_str else kwargs_str)
-            return f"{value.module_name}.{value.func_name}({all_args})"
-        elif isinstance(value, ModuleAttrIR):
-            return f"{value.module_name}.{value.attr_name}"
-        elif isinstance(value, SiblingModuleCallIR):
-            args = ", ".join(self.print_value(a) for a in value.args)
-            return f"{value.c_prefix}.{value.func_name}({args})"
-        elif isinstance(value, SiblingClassInstantiationIR):
-            args = ", ".join(self.print_value(a) for a in value.args)
-            return f"{value.c_prefix}.{value.class_name}({args})"
-        elif isinstance(value, SiblingModuleRefIR):
-            return f"<sibling:{value.c_prefix}>"
-        else:
-            return f"<{type(value).__name__}>"
+        match value:
+            case TempIR():
+                return value.name
+            case ConstIR():
+                if isinstance(value.value, str):
+                    return f'"{value.value}"'
+                return repr(value.value)
+            case NameIR():
+                return value.py_name
+            case FuncRefIR():
+                return f"<func:{value.py_name}>"
+            case LambdaIR():
+                captured = (
+                    f", captures=[{', '.join(value.captured_vars)}]" if value.captured_vars else ""
+                )
+                return f"<lambda_{value.lambda_id}{captured}>"
+            case BinOpIR():
+                left = self.print_value(value.left)
+                right = self.print_value(value.right)
+                return f"({left} {value.op} {right})"
+            case UnaryOpIR():
+                operand = self.print_value(value.operand)
+                return f"({value.op}{operand})"
+            case CompareIR():
+                parts = [self.print_value(value.left)]
+                for op, comp in zip(value.ops, value.comparators):
+                    parts.append(op)
+                    parts.append(self.print_value(comp))
+                return f"({' '.join(parts)})"
+            case CallIR():
+                args = ", ".join(self.print_value(a) for a in value.args)
+                return f"{value.func_name}({args})"
+            case CLibCallIR():
+                args = ", ".join(self.print_value(a) for a in value.args)
+                return f"{value.lib_name}.{value.func_name}({args})"
+            case CLibEnumIR():
+                return f"{value.lib_name}.{value.enum_class}.{value.member_name} = {value.c_enum_value}"
+            case IsInstanceIR():
+                return f"isinstance({self.print_value(value.obj)}, {value.class_name})"
+            case SubscriptIR():
+                return f"{self.print_value(value.value)}[{self.print_value(value.slice_)}]"
+            case IfExprIR():
+                return f"({self.print_value(value.body)} if {self.print_value(value.test)} else {self.print_value(value.orelse)})"
+            case SelfAttrIR():
+                return f"self.{value.attr_name}"
+            case SelfMethodRefIR():
+                return f"self.{value.method_name}  # bound method ref"
+            case ParamAttrIR():
+                trait_marker = " # trait" if value.is_trait_type else ""
+                return f"{value.param_name}.{value.attr_name}{trait_marker}"
+            case SelfMethodCallIR():
+                args = ", ".join(self.print_value(a) for a in value.args)
+                return f"self.{value.method_name}({args})"
+            case SuperCallIR():
+                args = ", ".join(self.print_value(a) for a in value.args)
+                return f"super().{value.method_name}({args})"
+            case ClassInstantiationIR():
+                args = ", ".join(self.print_value(a) for a in value.args)
+                return f"{value.class_name}({args})"
+            case SliceIR():
+                lower = self.print_value(value.lower) if value.lower else ""
+                upper = self.print_value(value.upper) if value.upper else ""
+                step = f":{self.print_value(value.step)}" if value.step else ""
+                return f"{lower}:{upper}{step}"
+            case ModuleCallIR():
+                args = ", ".join(self.print_value(a) for a in value.args)
+                kwargs_str = ", ".join(f"{k}={self.print_value(v)}" for k, v in value.kwargs)
+                all_args = args + (", " + kwargs_str if args and kwargs_str else kwargs_str)
+                return f"{value.module_name}.{value.func_name}({all_args})"
+            case ModuleAttrIR():
+                return f"{value.module_name}.{value.attr_name}"
+            case SiblingModuleCallIR():
+                args = ", ".join(self.print_value(a) for a in value.args)
+                return f"{value.c_prefix}.{value.func_name}({args})"
+            case SiblingClassInstantiationIR():
+                args = ", ".join(self.print_value(a) for a in value.args)
+                return f"{value.c_prefix}.{value.class_name}({args})"
+            case DynamicCallIR():
+                args = ", ".join(self.print_value(a) for a in value.args)
+                return f"{value.callable_var}({args})"
+            case ModuleRefIR():
+                return f"<module:{value.module_name}>"
+            case SiblingModuleRefIR():
+                return f"<sibling:{value.c_prefix}>"
+            case _:
+                assert_never(value)
 
 
 class IRTreePrinter:

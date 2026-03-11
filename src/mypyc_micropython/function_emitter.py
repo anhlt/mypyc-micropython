@@ -7,6 +7,7 @@ This module generates MicroPython-compatible C code from function IR.
 from __future__ import annotations
 
 import re
+from typing import assert_never
 
 from .container_emitter import ContainerEmitter
 from .ir import (
@@ -54,6 +55,7 @@ from .ir import (
     SelfMethodRefIR,
     SiblingClassInstantiationIR,
     SiblingModuleCallIR,
+    SiblingModuleRefIR,
     SliceIR,
     StmtIR,
     SubscriptAssignIR,
@@ -65,6 +67,7 @@ from .ir import (
     TupleUnpackIR,
     UnaryOpIR,
     ValueIR,
+    ValueNode,
     WhileIR,
 )
 
@@ -162,51 +165,53 @@ class BaseEmitter:
         return call.return_type in (IRType.INT, IRType.FLOAT, IRType.BOOL)
 
     def _emit_statement(self, stmt: StmtIR, native: bool = False) -> list[str]:
-        if isinstance(stmt, ReturnIR):
-            return self._emit_return(stmt, native)
-        elif isinstance(stmt, IfIR):
-            return self._emit_if(stmt, native)
-        elif isinstance(stmt, WhileIR):
-            return self._emit_while(stmt, native)
-        elif isinstance(stmt, ForRangeIR):
-            return self._emit_for_range(stmt, native)
-        elif isinstance(stmt, ForIterIR):
-            return self._emit_for_iter(stmt, native)
-        elif isinstance(stmt, TryIR):
-            return self._emit_try(stmt, native)
-        elif isinstance(stmt, RaiseIR):
-            return self._emit_raise(stmt, native)
-        elif isinstance(stmt, AssignIR):
-            return self._emit_assign(stmt, native)
-        elif isinstance(stmt, AnnAssignIR):
-            return self._emit_ann_assign(stmt, native)
-        elif isinstance(stmt, AugAssignIR):
-            return self._emit_aug_assign(stmt, native)
-        elif isinstance(stmt, SelfAugAssignIR):
-            return self._emit_self_aug_assign(stmt, native)
-        elif isinstance(stmt, SubscriptAssignIR):
-            return self._emit_subscript_assign(stmt, native)
-        elif isinstance(stmt, TupleUnpackIR):
-            return self._emit_tuple_unpack(stmt, native)
-        elif isinstance(stmt, AttrAssignIR):
-            return self._emit_attr_assign(stmt, native)
-        elif isinstance(stmt, ObjAttrAssignIR):
-            return self._emit_obj_attr_assign(stmt, native)
-        elif isinstance(stmt, ExprStmtIR):
-            return self._emit_expr_stmt(stmt, native)
-        elif isinstance(stmt, PrintIR):
-            return self._emit_print(stmt, native)
-        elif isinstance(stmt, BreakIR):
-            if self._loop_depth > 0:
-                return ["    break;"]
-            return ["    /* ERROR: break outside loop */"]
-        elif isinstance(stmt, ContinueIR):
-            if self._loop_depth > 0:
-                return ["    continue;"]
-            return ["    /* ERROR: continue outside loop */"]
-        elif isinstance(stmt, PassIR):
-            return []
-        return []
+        match stmt:
+            case ReturnIR():
+                return self._emit_return(stmt, native)
+            case IfIR():
+                return self._emit_if(stmt, native)
+            case WhileIR():
+                return self._emit_while(stmt, native)
+            case ForRangeIR():
+                return self._emit_for_range(stmt, native)
+            case ForIterIR():
+                return self._emit_for_iter(stmt, native)
+            case TryIR():
+                return self._emit_try(stmt, native)
+            case RaiseIR():
+                return self._emit_raise(stmt, native)
+            case AssignIR():
+                return self._emit_assign(stmt, native)
+            case AnnAssignIR():
+                return self._emit_ann_assign(stmt, native)
+            case AugAssignIR():
+                return self._emit_aug_assign(stmt, native)
+            case SelfAugAssignIR():
+                return self._emit_self_aug_assign(stmt, native)
+            case SubscriptAssignIR():
+                return self._emit_subscript_assign(stmt, native)
+            case TupleUnpackIR():
+                return self._emit_tuple_unpack(stmt, native)
+            case AttrAssignIR():
+                return self._emit_attr_assign(stmt, native)
+            case ObjAttrAssignIR():
+                return self._emit_obj_attr_assign(stmt, native)
+            case ExprStmtIR():
+                return self._emit_expr_stmt(stmt, native)
+            case PrintIR():
+                return self._emit_print(stmt, native)
+            case BreakIR():
+                if self._loop_depth > 0:
+                    return ["    break;"]
+                return ["    /* ERROR: break outside loop */"]
+            case ContinueIR():
+                if self._loop_depth > 0:
+                    return ["    continue;"]
+                return ["    /* ERROR: continue outside loop */"]
+            case PassIR():
+                return []
+            case _:
+                raise ValueError(f"Unhandled statement type in BaseEmitter: {type(stmt).__name__}")
 
     def _emit_if(self, stmt: IfIR, native: bool = False) -> list[str]:
         lines = self._emit_prelude(stmt.test_prelude)
@@ -590,72 +595,76 @@ class BaseEmitter:
     def _emit_prelude(self, prelude: list[InstrIR]) -> list[str]:
         return self._container_emitter.emit_prelude(prelude)
 
-    def _emit_expr(self, value: ValueIR, native: bool = False) -> tuple[str, str]:
-        if isinstance(value, ConstIR):
-            return self._emit_const(value)
-        elif isinstance(value, NameIR):
-            return value.c_name, value.ir_type.to_c_type_str()
-        elif isinstance(value, FuncRefIR):
-            return f"MP_OBJ_FROM_PTR(&{value.c_name}_obj)", "mp_obj_t"
-        elif isinstance(value, LambdaIR):
-            if value.captured_vars:
-                captured_parts = [f"MP_OBJ_FROM_PTR(&{value.c_name}_obj)"]
-                for var in value.captured_vars:
-                    captured_parts.append(var)
-                n_closed = len(value.captured_vars)
-                closed_arr = ", ".join(captured_parts[1:])
-                return (
-                    f"mp_obj_new_closure(MP_OBJ_FROM_PTR(&{value.c_name}_obj), "
-                    f"{n_closed}, (mp_obj_t[]){{ {closed_arr} }})"
-                ), "mp_obj_t"
-            return f"MP_OBJ_FROM_PTR(&{value.c_name}_obj)", "mp_obj_t"
-        elif isinstance(value, TempIR):
-            return value.name, value.ir_type.to_c_type_str()
-        elif isinstance(value, BinOpIR):
-            return self._emit_binop(value, native)
-        elif isinstance(value, UnaryOpIR):
-            return self._emit_unaryop(value, native)
-        elif isinstance(value, CompareIR):
-            return self._emit_compare(value, native)
-        elif isinstance(value, IsInstanceIR):
-            return self._emit_isinstance(value)
-        elif isinstance(value, CallIR):
-            return self._emit_call(value, native)
-        elif isinstance(value, IfExprIR):
-            return self._emit_ifexp(value, native)
-        elif isinstance(value, SubscriptIR):
-            return self._emit_subscript(value, native)
-        elif isinstance(value, SliceIR):
-            return self._emit_slice(value, native)
-        elif isinstance(value, ClassInstantiationIR):
-            return self._emit_class_instantiation(value, native)
-        elif isinstance(value, SelfAttrIR):
-            return self._emit_self_attr(value)
-        elif isinstance(value, SelfMethodRefIR):
-            return self._emit_self_method_ref(value)
-            return self._emit_self_attr(value)
-        elif isinstance(value, ParamAttrIR):
-            return self._emit_param_attr(value)
-        elif isinstance(value, SelfMethodCallIR):
-            return self._emit_self_method_call(value, native)
-        elif isinstance(value, SuperCallIR):
-            return self._emit_super_call(value, native)
-        elif isinstance(value, CLibCallIR):
-            return self._emit_clib_call(value, native)
-        elif isinstance(value, CLibEnumIR):
-            return str(value.c_enum_value), "mp_int_t"
-        elif isinstance(value, ModuleCallIR):
-            return self._emit_module_call(value, native)
-        elif isinstance(value, ModuleAttrIR):
-            return self._emit_module_attr(value)
-        elif isinstance(value, SiblingModuleCallIR):
-            return self._emit_sibling_module_call(value, native)
-        elif isinstance(value, SiblingClassInstantiationIR):
-            return self._emit_sibling_class_instantiation(value, native)
-        elif isinstance(value, DynamicCallIR):
-            return self._emit_dynamic_call(value, native)
-        elif isinstance(value, ModuleRefIR):
-            return _emit_dotted_module_import(value.module_name), "mp_obj_t"
+    def _emit_expr(self, value: ValueNode, native: bool = False) -> tuple[str, str]:
+        match value:
+            case ConstIR():
+                return self._emit_const(value)
+            case NameIR():
+                return value.c_name, value.ir_type.to_c_type_str()
+            case FuncRefIR():
+                return f"MP_OBJ_FROM_PTR(&{value.c_name}_obj)", "mp_obj_t"
+            case LambdaIR():
+                if value.captured_vars:
+                    captured_parts = [f"MP_OBJ_FROM_PTR(&{value.c_name}_obj)"]
+                    for var in value.captured_vars:
+                        captured_parts.append(var)
+                    n_closed = len(value.captured_vars)
+                    closed_arr = ", ".join(captured_parts[1:])
+                    return (
+                        f"mp_obj_new_closure(MP_OBJ_FROM_PTR(&{value.c_name}_obj), "
+                        f"{n_closed}, (mp_obj_t[]){{ {closed_arr} }})"
+                    ), "mp_obj_t"
+                return f"MP_OBJ_FROM_PTR(&{value.c_name}_obj)", "mp_obj_t"
+            case TempIR():
+                return value.name, value.ir_type.to_c_type_str()
+            case BinOpIR():
+                return self._emit_binop(value, native)
+            case UnaryOpIR():
+                return self._emit_unaryop(value, native)
+            case CompareIR():
+                return self._emit_compare(value, native)
+            case IsInstanceIR():
+                return self._emit_isinstance(value)
+            case CallIR():
+                return self._emit_call(value, native)
+            case IfExprIR():
+                return self._emit_ifexp(value, native)
+            case SubscriptIR():
+                return self._emit_subscript(value, native)
+            case SliceIR():
+                return self._emit_slice(value, native)
+            case ClassInstantiationIR():
+                return self._emit_class_instantiation(value, native)
+            case SelfAttrIR():
+                return self._emit_self_attr(value)
+            case SelfMethodRefIR():
+                return self._emit_self_method_ref(value)
+            case ParamAttrIR():
+                return self._emit_param_attr(value)
+            case SelfMethodCallIR():
+                return self._emit_self_method_call(value, native)
+            case SuperCallIR():
+                return self._emit_super_call(value, native)
+            case CLibCallIR():
+                return self._emit_clib_call(value, native)
+            case CLibEnumIR():
+                return str(value.c_enum_value), "mp_int_t"
+            case ModuleCallIR():
+                return self._emit_module_call(value, native)
+            case ModuleAttrIR():
+                return self._emit_module_attr(value)
+            case SiblingModuleCallIR():
+                return self._emit_sibling_module_call(value, native)
+            case SiblingClassInstantiationIR():
+                return self._emit_sibling_class_instantiation(value, native)
+            case DynamicCallIR():
+                return self._emit_dynamic_call(value, native)
+            case ModuleRefIR():
+                return _emit_dotted_module_import(value.module_name), "mp_obj_t"
+            case SiblingModuleRefIR():
+                return f"/* sibling module ref: {value.c_prefix} */", "mp_obj_t"
+            case _:
+                assert_never(value)
 
     def _emit_const(self, const: ConstIR) -> tuple[str, str]:
         val = const.value

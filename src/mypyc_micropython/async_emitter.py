@@ -204,11 +204,13 @@ class AsyncEmitter(GeneratorEmitter):
     def _emit_statement(self, stmt: StmtIR, native: bool = False) -> list[str]:
         """Handle AwaitIR and AwaitModuleCallIR in addition to normal statements."""
         del native
-        if isinstance(stmt, AwaitIR):
-            return self._emit_await(stmt)
-        if isinstance(stmt, AwaitModuleCallIR):
-            return self._emit_await_module_call(stmt)
-        return super()._emit_statement(stmt, native=False)
+        match stmt:
+            case AwaitIR():
+                return self._emit_await(stmt)
+            case AwaitModuleCallIR():
+                return self._emit_await_module_call(stmt)
+            case _:
+                return super()._emit_statement(stmt, native=False)
 
     def _emit_return(self, stmt: ReturnIR, native: bool = False) -> list[str]:
         """Emit return statement for async function.

@@ -16,7 +16,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any
+from typing import Any, TypeAlias, Union
 
 
 class ArgKind(Enum):
@@ -1707,3 +1707,84 @@ class ModuleIR:
             visit(name)
 
         return result
+
+
+# ---------------------------------------------------------------------------
+# Union type aliases for exhaustive dispatch (assert_never)
+# ---------------------------------------------------------------------------
+
+ValueNode: TypeAlias = Union[
+    # Direct ValueIR subclasses
+    TempIR,
+    ConstIR,
+    NameIR,
+    FuncRefIR,
+    LambdaIR,
+    # ExprIR subclasses
+    BinOpIR,
+    UnaryOpIR,
+    CompareIR,
+    IsInstanceIR,
+    CallIR,
+    DynamicCallIR,
+    SubscriptIR,
+    SliceIR,
+    IfExprIR,
+    ClassInstantiationIR,
+    SelfAttrIR,
+    SelfMethodRefIR,
+    ParamAttrIR,
+    SelfMethodCallIR,
+    SuperCallIR,
+    ModuleCallIR,
+    ModuleAttrIR,
+    ModuleRefIR,
+    SiblingModuleRefIR,
+    SiblingModuleCallIR,
+    SiblingClassInstantiationIR,
+    CLibCallIR,
+    CLibEnumIR,
+]
+
+StmtNode: TypeAlias = Union[
+    ReturnIR,
+    YieldIR,
+    YieldFromIR,
+    AwaitIR,
+    AwaitModuleCallIR,
+    IfIR,
+    WhileIR,
+    ForRangeIR,
+    ForIterIR,
+    AssignIR,
+    AnnAssignIR,
+    AugAssignIR,
+    SubscriptAssignIR,
+    AttrAssignIR,
+    ObjAttrAssignIR,
+    TupleUnpackIR,
+    ExprStmtIR,
+    PrintIR,
+    BreakIR,
+    ContinueIR,
+    PassIR,
+    SelfAugAssignIR,
+    TryIR,
+    RaiseIR,
+]
+
+InstrNode: TypeAlias = Union[
+    ListNewIR,
+    TupleNewIR,
+    SetNewIR,
+    DictNewIR,
+    GetItemIR,
+    SetItemIR,
+    MethodCallIR,
+    BoxIR,
+    UnboxIR,
+    AttrAccessIR,
+    ListCompIR,
+    TempAssignIR,
+    ModuleImportIR,
+]
