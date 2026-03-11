@@ -14,6 +14,7 @@
 #include "py/runtime.h"
 #include "py/obj.h"
 
+#include <string.h>
 #include "lvgl.h"
 
 #include "driver/gpio.h"
@@ -284,7 +285,21 @@ static void st7701_driver_init(void) {
     };
     ESP_ERROR_CHECK(esp_lcd_dpi_panel_register_event_callbacks(s_panel, &cbs, s_disp));
 
-    // Step 13: Turn on backlight
+    // Step 13: Clear DPI framebuffers to black before turning on backlight
+    // The DPI panel starts scanning immediately after init, but the framebuffers
+    // contain random PSRAM data. Clear both to prevent garbage on first display.
+    void *fb0 = NULL;
+    void *fb1_dpi = NULL;
+    ESP_ERROR_CHECK(esp_lcd_dpi_panel_get_frame_buffer(s_panel, 2, &fb0, &fb1_dpi));
+    size_t fb_size = LCD_H_RES * LCD_V_RES * sizeof(uint16_t);
+    memset(fb0, 0, fb_size);
+    memset(fb1_dpi, 0, fb_size);
+
+    // Step 14: Force initial LVGL render to flush clean screen
+    lv_obj_invalidate(lv_screen_active());
+    lv_timer_handler();
+
+    // Step 15: Turn on backlight
     set_backlight(true);
     
     s_initialized = true;
