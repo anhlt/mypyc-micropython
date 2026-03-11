@@ -360,10 +360,57 @@ class ClassEmitter:
 
         if init_method:
             num_params = len(init_method.params)
-            min_params = init_method.num_required_args
-            lines.append(f"    mp_arg_check_num(n_args, n_kw, {min_params}, {num_params}, false);")
-        else:
-            lines.append("    mp_arg_check_num(n_args, n_kw, 0, 0, false);")
+            has_defaults = init_method.has_defaults
+
+            if num_params > 0:
+                # Use mp_arg_parse_all_kw_array to handle both positional and keyword args
+                lines.append("    enum {")
+                for i, (param_name, _) in enumerate(init_method.params):
+                    lines.append(f"        ARG_{param_name},")
+                lines.append("    };")
+
+                lines.append("    static const mp_arg_t allowed_args[] = {")
+                for i, (param_name, param_type) in enumerate(init_method.params):
+                    default_arg = init_method.defaults.get(i)
+                    if param_type == CType.MP_INT_T:
+                        if default_arg is not None and default_arg.value is not None:
+                            lines.append(
+                                f"        {{ MP_QSTR_{param_name}, MP_ARG_INT, {{.u_int = {default_arg.value}}} }},"
+                            )
+                        else:
+                            lines.append(f"        {{ MP_QSTR_{param_name}, MP_ARG_REQUIRED | MP_ARG_INT }},")
+                    elif param_type == CType.MP_FLOAT_T:
+                        if default_arg is not None:
+                            lines.append(
+                                f"        {{ MP_QSTR_{param_name}, MP_ARG_OBJ, {{.u_obj = mp_const_none}} }},"
+                            )
+                        else:
+                            lines.append(f"        {{ MP_QSTR_{param_name}, MP_ARG_REQUIRED | MP_ARG_OBJ }},")
+                    elif param_type == CType.BOOL:
+                        if default_arg is not None and default_arg.value is not None:
+                            default_val = "true" if default_arg.value else "false"
+                            lines.append(
+                                f"        {{ MP_QSTR_{param_name}, MP_ARG_BOOL, {{.u_bool = {default_val}}} }},"
+                            )
+                        else:
+                            lines.append(f"        {{ MP_QSTR_{param_name}, MP_ARG_REQUIRED | MP_ARG_BOOL }},")
+                    else:
+                        if default_arg is not None and default_arg.c_expr is not None:
+                            lines.append(
+                                f"        {{ MP_QSTR_{param_name}, MP_ARG_OBJ, {{.u_obj = {default_arg.c_expr}}} }},"
+                            )
+                        else:
+                            lines.append(f"        {{ MP_QSTR_{param_name}, MP_ARG_REQUIRED | MP_ARG_OBJ }},")
+                lines.append("    };")
+                lines.append("")
+
+                lines.append(f"    mp_arg_val_t parsed[{num_params}];")
+                lines.append(
+                    f"    mp_arg_parse_all_kw_array(n_args, n_kw, args, {num_params}, allowed_args, parsed);"
+                )
+            else:
+                # No params to __init__ (just self)
+                lines.append("    mp_arg_check_num(n_args, n_kw, 0, 0, false);")
 
         lines.append("")
         lines.append(f"    {self.c_name}_obj_t *self = mp_obj_malloc({self.c_name}_obj_t, type);")
@@ -393,25 +440,36 @@ class ClassEmitter:
             total_args = num_params + 1  # +1 for self
             has_defaults = init_method.has_defaults
             lines.append("")
-            if total_args > 3 or has_defaults:
+
+            if num_params == 0:
+                # __init__ takes only self
+                lines.append(f"    {self.c_name}___init___mp(MP_OBJ_FROM_PTR(self));")
+            elif total_args > 3 or has_defaults:
                 # VAR_BETWEEN calling convention: (size_t n_args, const mp_obj_t *args)
                 lines.append(f"    mp_obj_t init_args[{total_args}];")
                 lines.append("    init_args[0] = MP_OBJ_FROM_PTR(self);")
-                for i in range(num_params):
-                    default_arg = init_method.defaults.get(i)
-                    if default_arg is not None and default_arg.c_expr is not None:
-                        # Parameter has a default value
-                        lines.append(
-                            f"    init_args[{i + 1}] = (n_args > {i}) ? args[{i}] : {default_arg.c_expr};"
-                        )
+                for i, (param_name, param_type) in enumerate(init_method.params):
+                    if param_type == CType.MP_INT_T:
+                        lines.append(f"    init_args[{i + 1}] = mp_obj_new_int(parsed[ARG_{param_name}].u_int);")
+                    elif param_type == CType.MP_FLOAT_T:
+                        lines.append(f"    init_args[{i + 1}] = parsed[ARG_{param_name}].u_obj;")
+                    elif param_type == CType.BOOL:
+                        lines.append(f"    init_args[{i + 1}] = parsed[ARG_{param_name}].u_bool ? mp_const_true : mp_const_false;")
                     else:
-                        # Required parameter
-                        lines.append(f"    init_args[{i + 1}] = args[{i}];")
+                        lines.append(f"    init_args[{i + 1}] = parsed[ARG_{param_name}].u_obj;")
                 lines.append(f"    {self.c_name}___init___mp({total_args}, init_args);")
             else:
+                # Fixed args calling convention: (self, arg0, arg1, ...)
                 args_list = ["MP_OBJ_FROM_PTR(self)"]
-                for i in range(num_params):
-                    args_list.append(f"args[{i}]")
+                for i, (param_name, param_type) in enumerate(init_method.params):
+                    if param_type == CType.MP_INT_T:
+                        args_list.append(f"mp_obj_new_int(parsed[ARG_{param_name}].u_int)")
+                    elif param_type == CType.MP_FLOAT_T:
+                        args_list.append(f"parsed[ARG_{param_name}].u_obj")
+                    elif param_type == CType.BOOL:
+                        args_list.append(f"parsed[ARG_{param_name}].u_bool ? mp_const_true : mp_const_false")
+                    else:
+                        args_list.append(f"parsed[ARG_{param_name}].u_obj")
                 args_str = ", ".join(args_list)
                 lines.append(f"    {self.c_name}___init___mp({args_str});")
 

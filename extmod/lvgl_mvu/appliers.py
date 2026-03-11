@@ -48,8 +48,9 @@ def apply_height(lv_obj: object, value: object) -> None:
 def apply_align(lv_obj: object, value: object) -> None:
     """Set alignment of an LVGL object.
 
-    Uses lv_obj_align with 0 offsets. To apply offsets, use ALIGN_X_OFS
-    and ALIGN_Y_OFS attributes which are handled together.
+    Uses lv_obj_align with 0 offsets. Alignment offsets (ALIGN_X_OFS,
+    ALIGN_Y_OFS) are not currently supported - they require batching
+    multiple attributes together which is not yet implemented.
     """
     lv.lv_obj_align(lv_obj, value, 0, 0)
 
@@ -202,14 +203,10 @@ def apply_text_align(lv_obj: object, value: object) -> None:
 def apply_flex_flow(lv_obj: object, value: object) -> None:
     """Set flex layout flow direction.
 
-    Also sets default CENTER alignment for all three axes.
-    This ensures flex layouts work out-of-the-box without requiring
-    separate alignment calls.
+    Note: Flex alignment (main/cross/track) must be set separately via
+    FLEX_MAIN_PLACE, FLEX_CROSS_PLACE, FLEX_TRACK_PLACE attributes.
     """
     lv.lv_obj_set_flex_flow(lv_obj, value)
-    # Set default CENTER alignment (2, 2, 2)
-    # This will be called first since FLEX_FLOW (120) < FLEX_*_PLACE (121-123)
-    lv.lv_obj_set_flex_align(lv_obj, 2, 2, 2)
 
 def apply_flex_main_place(lv_obj: object, value: object) -> None:
     """Set flex main axis placement."""
