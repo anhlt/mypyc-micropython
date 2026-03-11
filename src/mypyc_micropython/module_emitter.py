@@ -8,7 +8,11 @@ function code, class code, and module registration.
 from __future__ import annotations
 
 import re
-from typing import Any
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .compiler import _PackageSubmodule
 
 from .c_bindings.core.c_ir import CType
 from .ir import FuncIR, ModuleIR, RTuple
@@ -183,7 +187,7 @@ class ModuleEmitter:
         function_code: list[str],
         class_code: list[str],
         parent_functions: list[FuncIR],
-        submodules: list[object],
+        submodules: Sequence[_PackageSubmodule],
     ) -> str:
         lines: list[str] = []
         module_var_entries = self._collect_module_var_entries(submodules)
@@ -244,8 +248,8 @@ class ModuleEmitter:
 
         return "\n".join(lines)
 
-    def _iter_submodules(self, submodules: list[object]) -> list[object]:
-        out: list[object] = []
+    def _iter_submodules(self, submodules: Sequence[_PackageSubmodule]) -> list[_PackageSubmodule]:
+        out: list[_PackageSubmodule] = []
         for submodule in submodules:
             out.append(submodule)
             children = getattr(submodule, "children", None) or []
@@ -253,7 +257,7 @@ class ModuleEmitter:
         return out
 
     def _collect_module_var_entries(
-        self, submodules: list[object] | None = None
+        self, submodules: Sequence[_PackageSubmodule] | None = None
     ) -> list[tuple[str, str, str]]:
         entries: list[tuple[str, str, str]] = []
         for name, kind in self.module_ir.module_vars.items():
@@ -471,7 +475,7 @@ class ModuleEmitter:
         submodule_name: str,
         functions: list[FuncIR],
         module_ir: ModuleIR,
-        children: list[object] | None = None,
+        children: Sequence[_PackageSubmodule] | None = None,
     ) -> list[str]:
         lines = [
             f"static const mp_rom_map_elem_t {symbol_prefix}_globals_table[] = {{",
@@ -534,7 +538,7 @@ class ModuleEmitter:
         lines.append("")
         return lines
 
-    def _emit_submodules_recursive(self, lines: list[str], submodules: list[object]) -> None:
+    def _emit_submodules_recursive(self, lines: list[str], submodules: Sequence[_PackageSubmodule]) -> None:
         """Emit submodule globals tables depth-first (children before parents)."""
         for submodule in submodules:
             # Recurse into children first (they must be defined before parent references them)
@@ -557,7 +561,7 @@ class ModuleEmitter:
         self,
         *,
         parent_functions: list[FuncIR],
-        submodules: list[object],
+        submodules: Sequence[_PackageSubmodule],
     ) -> list[str]:
         lines = [
             f"static const mp_rom_map_elem_t {self.c_name}_module_globals_table[] = {{",

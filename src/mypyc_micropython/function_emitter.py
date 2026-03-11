@@ -34,7 +34,7 @@ from .ir import (
     FuncRefIR,
     IfExprIR,
     IfIR,
-    InstrIR,
+    InstrNode,
     IRType,
     IsInstanceIR,
     LambdaIR,
@@ -57,7 +57,7 @@ from .ir import (
     SiblingModuleCallIR,
     SiblingModuleRefIR,
     SliceIR,
-    StmtIR,
+    StmtNode,
     SubscriptAssignIR,
     SubscriptIR,
     SuperCallIR,
@@ -142,6 +142,8 @@ def _emit_dotted_module_import(module_name: str) -> str:
 
 
 class BaseEmitter:
+    func_ir: FuncIR  # Set by subclasses
+
     def __init__(self, max_temp: int):
         self._container_emitter = ContainerEmitter()
         self._temp_counter = max_temp
@@ -164,7 +166,18 @@ class BaseEmitter:
         del native
         return call.return_type in (IRType.INT, IRType.FLOAT, IRType.BOOL)
 
-    def _emit_statement(self, stmt: StmtIR, native: bool = False) -> list[str]:
+    def _emit_return(self, stmt: ReturnIR, native: bool = False) -> list[str]:
+        raise NotImplementedError
+
+    def _emit_ann_assign(self, stmt: AnnAssignIR, native: bool = False) -> list[str]:
+        raise NotImplementedError
+
+    def emit(self) -> tuple[str, str]:
+        raise NotImplementedError
+
+    def emit_forward_declaration(self) -> str:
+        raise NotImplementedError
+    def _emit_statement(self, stmt: StmtNode, native: bool = False) -> list[str]:
         match stmt:
             case ReturnIR():
                 return self._emit_return(stmt, native)
@@ -592,7 +605,7 @@ class BaseEmitter:
             lines.append('    mp_print_str(&mp_plat_print, "\\n");')
         return lines
 
-    def _emit_prelude(self, prelude: list[InstrIR]) -> list[str]:
+    def _emit_prelude(self, prelude: list[InstrNode]) -> list[str]:
         return self._container_emitter.emit_prelude(prelude)
 
     def _emit_expr(self, value: ValueNode, native: bool = False) -> tuple[str, str]:
@@ -1574,6 +1587,7 @@ class FunctionEmitter(BaseEmitter):
                     lines.append(f"    mp_obj_t {c_arg_name} = {src};")
 
         if has_star_args:
+            assert self.func_ir.star_args is not None
             star_args_name = sanitize_name(self.func_ir.star_args.name)
             # Prefix with _star_ to avoid conflict with C parameter 'args'
             c_star_args_name = f"_star_{star_args_name}"
@@ -1582,6 +1596,7 @@ class FunctionEmitter(BaseEmitter):
             )
 
         if has_star_kwargs:
+            assert self.func_ir.star_kwargs is not None
             star_kwargs_name = sanitize_name(self.func_ir.star_kwargs.name)
             # Prefix with _star_ to avoid conflict with C parameter 'kw_args'
             c_star_kwargs_name = f"_star_{star_kwargs_name}"
@@ -1813,7 +1828,7 @@ class MethodEmitter(BaseEmitter):
         args_str = ", ".join(args)
         return f"{call.c_method_name}_native({args_str})", call.return_type.to_c_type_str()
 
-    def emit_native(self, body: list[StmtIR]) -> str:
+    def emit_native(self, body: list[StmtNode]) -> str:
         method_ir = self.method_ir
         class_ir = self.class_ir
 
@@ -1837,7 +1852,7 @@ class MethodEmitter(BaseEmitter):
         lines.append("}")
         return "\n".join(lines)
 
-    def emit_mp_wrapper(self, body: list[StmtIR] | None = None) -> str:
+    def emit_mp_wrapper(self, body: list[StmtNode] | None = None) -> str:
         method_ir = self.method_ir
         class_ir = self.class_ir
 
@@ -1916,7 +1931,7 @@ class MethodEmitter(BaseEmitter):
                 # Parameter has default value - check n_args
                 arg_index = i if (method_ir.is_static or method_ir.is_classmethod) else i + 1
                 if param_type == CType.MP_INT_T:
-                    default_val = default_arg.value if isinstance(default_arg.value, int) else 0
+                    default_val: int | float | str = default_arg.value if isinstance(default_arg.value, int) else 0
                     lines.append(
                         f"    mp_int_t {param_name} = (n_args > {arg_index}) ? mp_obj_get_int({src}) : {default_val};"
                     )

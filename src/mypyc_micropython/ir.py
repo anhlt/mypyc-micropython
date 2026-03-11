@@ -513,7 +513,7 @@ class FuncIR:
     params: list[tuple[str, CType]]
     return_type: CType
     body_ast: ast.FunctionDef | ast.AsyncFunctionDef | None = None
-    body: list[StmtIR] = field(default_factory=list)
+    body: list[StmtNode] = field(default_factory=list)
     is_method: bool = False
     class_ir: ClassIR | None = None
     locals_: dict[str, CType] = field(default_factory=dict)
@@ -683,7 +683,7 @@ class ListNewIR(InstrIR):
     """Create a new list from *items*."""
 
     result: TempIR
-    items: list[ValueIR]
+    items: list[ValueNode]
 
 
 @dataclass
@@ -691,7 +691,7 @@ class TupleNewIR(InstrIR):
     """Create a new tuple from *items*."""
 
     result: TempIR
-    items: list[ValueIR]
+    items: list[ValueNode]
 
 
 @dataclass
@@ -699,7 +699,7 @@ class SetNewIR(InstrIR):
     """Create a new set from *items*."""
 
     result: TempIR
-    items: list[ValueIR]
+    items: list[ValueNode]
 
 
 @dataclass
@@ -707,7 +707,7 @@ class DictNewIR(InstrIR):
     """Create a new dict from key/value pairs."""
 
     result: TempIR
-    entries: list[tuple[ValueIR, ValueIR]]
+    entries: list[tuple[ValueNode, ValueNode]]
 
 
 @dataclass
@@ -715,17 +715,17 @@ class GetItemIR(InstrIR):
     """container[key]  →  result."""
 
     result: TempIR
-    container: ValueIR
-    key: ValueIR
+    container: ValueNode
+    key: ValueNode
 
 
 @dataclass
 class SetItemIR(InstrIR):
     """container[key] = value  (no result)."""
 
-    container: ValueIR
-    key: ValueIR
-    value: ValueIR
+    container: ValueNode
+    key: ValueNode
+    value: ValueNode
 
 
 @dataclass
@@ -738,11 +738,11 @@ class MethodCallIR(InstrIR):
     """
 
     result: TempIR | None
-    receiver: ValueIR
+    receiver: ValueNode
     method: str
-    args: list[ValueIR]
+    args: list[ValueNode]
     # Keyword arguments: list of (name, value) pairs
-    kwargs: list[tuple[str, ValueIR]] = field(default_factory=list)
+    kwargs: list[tuple[str, ValueNode]] = field(default_factory=list)
     # Python type annotation of receiver (e.g., "dict", "list", "AttrRegistry")
     # Used to apply optimizations only for known container types
     receiver_py_type: str | None = None
@@ -752,7 +752,7 @@ class BoxIR(InstrIR):
     """Box a native value to mp_obj_t."""
 
     result: TempIR
-    value: ValueIR
+    value: ValueNode
 
 
 @dataclass
@@ -760,7 +760,7 @@ class UnboxIR(InstrIR):
     """Unbox mp_obj_t to a native type."""
 
     result: TempIR
-    value: ValueIR
+    value: ValueNode
     target_type: IRType
 
 
@@ -772,7 +772,7 @@ class AttrAccessIR(InstrIR):
     """
 
     result: TempIR
-    obj: ValueIR
+    obj: ValueNode
     attr_name: str
     class_c_name: str
     result_type: IRType
@@ -793,18 +793,18 @@ class ListCompIR(InstrIR):
     result: TempIR
     loop_var: str  # Python variable name
     c_loop_var: str  # C variable name
-    iterable: ValueIR
-    element: ValueIR  # Expression for each element
-    condition: ValueIR | None = None  # Optional filter condition
+    iterable: ValueNode
+    element: ValueNode  # Expression for each element
+    condition: ValueNode | None = None  # Optional filter condition
     # Preludes for iterable, element, and condition
-    iter_prelude: list[InstrIR] = field(default_factory=list)
-    element_prelude: list[InstrIR] = field(default_factory=list)
-    condition_prelude: list[InstrIR] = field(default_factory=list)
+    iter_prelude: list[InstrNode] = field(default_factory=list)
+    element_prelude: list[InstrNode] = field(default_factory=list)
+    condition_prelude: list[InstrNode] = field(default_factory=list)
     # Whether iterable is a range() call (for optimization)
     is_range: bool = False
-    range_start: ValueIR | None = None
-    range_end: ValueIR | None = None
-    range_step: ValueIR | None = None
+    range_start: ValueNode | None = None
+    range_end: ValueNode | None = None
+    range_step: ValueNode | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -820,8 +820,8 @@ class LoweredExpr:
     statement that uses ``value``.
     """
 
-    value: ValueIR
-    prelude: list[InstrIR] = field(default_factory=list)
+    value: ValueNode
+    prelude: list[InstrNode] = field(default_factory=list)
 
 
 @dataclass
@@ -835,7 +835,7 @@ class TempAssignIR(InstrIR):
     """
 
     result: TempIR
-    value: ValueIR
+    value: ValueNode
 
 # ---------------------------------------------------------------------------
 # Statement IR - Full statement-level intermediate representation
@@ -853,15 +853,15 @@ class StmtIR:
 class ReturnIR(StmtIR):
     """Return statement: return [value]."""
 
-    value: ValueIR | None = None
+    value: ValueNode | None = None
     # Prelude instructions that must execute before the return
-    prelude: list[InstrIR] = field(default_factory=list)
+    prelude: list[InstrNode] = field(default_factory=list)
 
 
 @dataclass
 class YieldIR(StmtIR):
-    value: ValueIR | None = None
-    prelude: list[InstrIR] = field(default_factory=list)
+    value: ValueNode | None = None
+    prelude: list[InstrNode] = field(default_factory=list)
     state_id: int = 0
 
 
@@ -887,8 +887,8 @@ class YieldFromIR(StmtIR):
         // Sub-iterator exhausted - continue execution
     """
 
-    iterable: ValueIR  # The iterable expression to delegate to
-    prelude: list[InstrIR] = field(default_factory=list)
+    iterable: ValueNode  # The iterable expression to delegate to
+    prelude: list[InstrNode] = field(default_factory=list)
     state_id: int = 0  # Resumption point for yield from loop
 
 
@@ -911,9 +911,9 @@ class AwaitIR(StmtIR):
     which implements yield-from semantics with mp_iternext.
     """
 
-    value: ValueIR  # The awaitable expression
+    value: ValueNode  # The awaitable expression
     result: str | None = None  # Variable to store result (None if discarded)
-    prelude: list[InstrIR] = field(default_factory=list)
+    prelude: list[InstrNode] = field(default_factory=list)
     state_id: int = 0  # Resumption point after await
 
 
@@ -943,8 +943,8 @@ class AwaitModuleCallIR(StmtIR):
 
     module_name: str  # e.g., "asyncio"
     func_name: str  # e.g., "sleep"
-    args: list[ValueIR] = field(default_factory=list)
-    arg_preludes: list[list[InstrIR]] = field(default_factory=list)  # Prelude for each arg
+    args: list[ValueNode] = field(default_factory=list)
+    arg_preludes: list[list[InstrNode]] = field(default_factory=list)  # Prelude for each arg
     result: str | None = None  # Variable to store result (None if discarded)
     state_id: int = 0  # Resumption point after await
 
@@ -953,21 +953,21 @@ class AwaitModuleCallIR(StmtIR):
 class IfIR(StmtIR):
     """If statement: if test: body else: orelse."""
 
-    test: ValueIR
-    body: list[StmtIR]
-    orelse: list[StmtIR] = field(default_factory=list)
+    test: ValueNode
+    body: list[StmtNode]
+    orelse: list[StmtNode] = field(default_factory=list)
     # Prelude for test expression
-    test_prelude: list[InstrIR] = field(default_factory=list)
+    test_prelude: list[InstrNode] = field(default_factory=list)
 
 
 @dataclass
 class WhileIR(StmtIR):
     """While statement: while test: body."""
 
-    test: ValueIR
-    body: list[StmtIR]
+    test: ValueNode
+    body: list[StmtNode]
     # Prelude for test expression (evaluated each iteration)
-    test_prelude: list[InstrIR] = field(default_factory=list)
+    test_prelude: list[InstrNode] = field(default_factory=list)
 
 
 @dataclass
@@ -976,12 +976,12 @@ class ForRangeIR(StmtIR):
 
     loop_var: str
     c_loop_var: str
-    start: ValueIR
-    end: ValueIR
-    step: ValueIR | None  # None means step=1
+    start: ValueNode
+    end: ValueNode
+    step: ValueNode | None  # None means step=1
     step_is_constant: bool
     step_value: int | None  # If step is constant, its value
-    body: list[StmtIR]
+    body: list[StmtNode]
     # Whether loop_var is newly declared
     is_new_var: bool = True
 
@@ -992,10 +992,10 @@ class ForIterIR(StmtIR):
 
     loop_var: str
     c_loop_var: str
-    iterable: ValueIR
-    body: list[StmtIR]
+    iterable: ValueNode
+    body: list[StmtNode]
     # Prelude for iterable expression
-    iter_prelude: list[InstrIR] = field(default_factory=list)
+    iter_prelude: list[InstrNode] = field(default_factory=list)
     # Whether loop_var is newly declared
     is_new_var: bool = True
 
@@ -1006,10 +1006,10 @@ class AssignIR(StmtIR):
 
     target: str  # Variable name
     c_target: str  # C variable name
-    value: ValueIR
+    value: ValueNode
     value_type: IRType
     # Prelude instructions
-    prelude: list[InstrIR] = field(default_factory=list)
+    prelude: list[InstrNode] = field(default_factory=list)
     # Whether this is a new variable declaration
     is_new_var: bool = False
     # Declared C type (for new vars)
@@ -1023,9 +1023,9 @@ class AnnAssignIR(StmtIR):
     target: str
     c_target: str
     c_type: str
-    value: ValueIR | None
+    value: ValueNode | None
     # Prelude instructions
-    prelude: list[InstrIR] = field(default_factory=list)
+    prelude: list[InstrNode] = field(default_factory=list)
     # Whether this is a new variable declaration
     is_new_var: bool = True
 
@@ -1037,20 +1037,20 @@ class AugAssignIR(StmtIR):
     target: str
     c_target: str
     op: str  # C operator: +=, -=, *=, etc.
-    value: ValueIR
+    value: ValueNode
     target_c_type: str = "mp_int_t"
-    prelude: list[InstrIR] = field(default_factory=list)
+    prelude: list[InstrNode] = field(default_factory=list)
 
 
 @dataclass
 class SubscriptAssignIR(StmtIR):
     """Subscript assignment: container[key] = value."""
 
-    container: ValueIR
-    key: ValueIR
-    value: ValueIR
+    container: ValueNode
+    key: ValueNode
+    value: ValueNode
     # Prelude instructions
-    prelude: list[InstrIR] = field(default_factory=list)
+    prelude: list[InstrNode] = field(default_factory=list)
 
 
 @dataclass
@@ -1059,9 +1059,9 @@ class AttrAssignIR(StmtIR):
 
     attr_name: str
     attr_path: str  # C path like "super.x" or "x"
-    value: ValueIR
+    value: ValueNode
     # Prelude instructions
-    prelude: list[InstrIR] = field(default_factory=list)
+    prelude: list[InstrNode] = field(default_factory=list)
 
 
 @dataclass
@@ -1076,35 +1076,35 @@ class ObjAttrAssignIR(StmtIR):
     obj_class: str | None  # Class name if known, else None
     attr_name: str
     attr_path: str  # C struct path (may differ for inherited fields)
-    value: ValueIR
-    prelude: list[InstrIR] = field(default_factory=list)
+    value: ValueNode
+    prelude: list[InstrNode] = field(default_factory=list)
 
 @dataclass
 class TupleUnpackIR(StmtIR):
     """Tuple unpacking: x, y = tuple_value."""
 
     targets: list[tuple[str, str, bool, str]]  # (py_name, c_name, is_new, c_type)
-    value: ValueIR
+    value: ValueNode
     # Prelude instructions
-    prelude: list[InstrIR] = field(default_factory=list)
+    prelude: list[InstrNode] = field(default_factory=list)
 
 
 @dataclass
 class ExprStmtIR(StmtIR):
     """Expression statement: expr (for side effects)."""
 
-    expr: ValueIR
+    expr: ValueNode
     # Prelude instructions
-    prelude: list[InstrIR] = field(default_factory=list)
+    prelude: list[InstrNode] = field(default_factory=list)
 
 
 @dataclass
 class PrintIR(StmtIR):
     """Print statement: print(args...)."""
 
-    args: list[ValueIR]
+    args: list[ValueNode]
     # Prelude instructions for each arg
-    preludes: list[list[InstrIR]] = field(default_factory=list)
+    preludes: list[list[InstrNode]] = field(default_factory=list)
 
 
 @dataclass
@@ -1148,12 +1148,12 @@ class ExprIR(ValueIR):
 class BinOpIR(ExprIR):
     """Binary operation: left op right."""
 
-    left: ValueIR
+    left: ValueNode
     op: str  # C operator: +, -, *, /, %, &, |, ^, <<, >>
-    right: ValueIR
+    right: ValueNode
     # Prelude for left and right operands
-    left_prelude: list[InstrIR] = field(default_factory=list)
-    right_prelude: list[InstrIR] = field(default_factory=list)
+    left_prelude: list[InstrNode] = field(default_factory=list)
+    right_prelude: list[InstrNode] = field(default_factory=list)
 
 
 @dataclass
@@ -1161,23 +1161,23 @@ class UnaryOpIR(ExprIR):
     """Unary operation: op operand."""
 
     op: str  # C operator: -, !, +, ~
-    operand: ValueIR
+    operand: ValueNode
     # Prelude for operand
-    prelude: list[InstrIR] = field(default_factory=list)
+    prelude: list[InstrNode] = field(default_factory=list)
 
 
 @dataclass
 class CompareIR(ExprIR):
     """Comparison: left op1 comp1 op2 comp2 ..."""
 
-    left: ValueIR
+    left: ValueNode
     ops: list[str]  # C operators: ==, !=, <, <=, >, >=
-    comparators: list[ValueIR]
+    comparators: list[ValueNode]
     # Contains 'in' or 'not in' operations
     has_contains: bool = False
     # Preludes for left and each comparator
-    left_prelude: list[InstrIR] = field(default_factory=list)
-    comparator_preludes: list[list[InstrIR]] = field(default_factory=list)
+    left_prelude: list[InstrNode] = field(default_factory=list)
+    comparator_preludes: list[list[InstrNode]] = field(default_factory=list)
 
 
 @dataclass
@@ -1192,11 +1192,11 @@ class IsInstanceIR(ExprIR):
         mp_obj_is_type(msg, &module_Increment_type)  # Generated C
     """
 
-    obj: ValueIR  # The object being checked
+    obj: ValueNode  # The object being checked
     class_name: str  # Python class name (e.g., 'Increment')
     c_type_name: str  # C type object name (e.g., 'module_Increment_type')
     # Prelude for the object expression
-    obj_prelude: list[InstrIR] = field(default_factory=list)
+    obj_prelude: list[InstrNode] = field(default_factory=list)
 
 
 @dataclass
@@ -1205,10 +1205,10 @@ class CallIR(ExprIR):
 
     func_name: str
     c_func_name: str
-    args: list[ValueIR]
-    kwargs: list[tuple[str, ValueIR]] = field(default_factory=list)
+    args: list[ValueNode]
+    kwargs: list[tuple[str, ValueNode]] = field(default_factory=list)
     # Preludes for each arg
-    arg_preludes: list[list[InstrIR]] = field(default_factory=list)
+    arg_preludes: list[list[InstrNode]] = field(default_factory=list)
     # For builtin calls, the specific handling
     is_builtin: bool = False
     builtin_kind: str | None = None
@@ -1227,47 +1227,47 @@ class DynamicCallIR(ExprIR):
     """
 
     callable_var: str  # Name of the local variable holding the callable
-    args: list[ValueIR]
-    kwargs: list[tuple[str, ValueIR]] = field(default_factory=list)
-    arg_preludes: list[list[InstrIR]] = field(default_factory=list)
+    args: list[ValueNode]
+    kwargs: list[tuple[str, ValueNode]] = field(default_factory=list)
+    arg_preludes: list[list[InstrNode]] = field(default_factory=list)
 
 
 @dataclass
 class SubscriptIR(ExprIR):
     """Subscript access: value[slice]."""
 
-    value: ValueIR
-    slice_: ValueIR
+    value: ValueNode
+    slice_: ValueNode
     # For RTuple optimization
     is_rtuple: bool = False
     rtuple_index: int | None = None
     # For list optimization
     is_list_opt: bool = False
     # Preludes
-    value_prelude: list[InstrIR] = field(default_factory=list)
-    slice_prelude: list[InstrIR] = field(default_factory=list)
+    value_prelude: list[InstrNode] = field(default_factory=list)
+    slice_prelude: list[InstrNode] = field(default_factory=list)
 
 
 @dataclass
 class SliceIR(ExprIR):
     """Slice object: [lower:upper:step]."""
 
-    lower: ValueIR | None
-    upper: ValueIR | None
-    step: ValueIR | None
+    lower: ValueNode | None
+    upper: ValueNode | None
+    step: ValueNode | None
 
 
 @dataclass
 class IfExprIR(ExprIR):
     """Conditional expression: body if test else orelse."""
 
-    test: ValueIR
-    body: ValueIR
-    orelse: ValueIR
+    test: ValueNode
+    body: ValueNode
+    orelse: ValueNode
     # Preludes
-    test_prelude: list[InstrIR] = field(default_factory=list)
-    body_prelude: list[InstrIR] = field(default_factory=list)
-    orelse_prelude: list[InstrIR] = field(default_factory=list)
+    test_prelude: list[InstrNode] = field(default_factory=list)
+    body_prelude: list[InstrNode] = field(default_factory=list)
+    orelse_prelude: list[InstrNode] = field(default_factory=list)
 
 
 @dataclass
@@ -1276,9 +1276,9 @@ class ClassInstantiationIR(ExprIR):
 
     class_name: str
     c_class_name: str
-    args: list[ValueIR]
+    args: list[ValueNode]
     # Preludes for args
-    arg_preludes: list[list[InstrIR]] = field(default_factory=list)
+    arg_preludes: list[list[InstrNode]] = field(default_factory=list)
 
 
 @dataclass
@@ -1338,10 +1338,10 @@ class SelfMethodCallIR(ExprIR):
 
     method_name: str
     c_method_name: str
-    args: list[ValueIR]
+    args: list[ValueNode]
     return_type: IRType
     # Preludes for args
-    arg_preludes: list[list[InstrIR]] = field(default_factory=list)
+    arg_preludes: list[list[InstrNode]] = field(default_factory=list)
     # Target parameter types from the method definition (for boxing decisions)
     param_types: list[IRType] = field(default_factory=list)
 
@@ -1358,11 +1358,11 @@ class SuperCallIR(ExprIR):
     method_name: str
     parent_c_name: str  # Parent class C name (e.g., 'module_Parent')
     parent_method_c_name: str  # Parent method C name (e.g., 'module_Parent___init__')
-    args: list[ValueIR]
+    args: list[ValueNode]
     return_type: IRType
     is_init: bool = False  # True if calling super().__init__()
     # Preludes for args
-    arg_preludes: list[list[InstrIR]] = field(default_factory=list)
+    arg_preludes: list[list[InstrNode]] = field(default_factory=list)
 
 
 @dataclass
@@ -1389,11 +1389,11 @@ class ModuleCallIR(ExprIR):
 
     module_name: str  # Python module name (e.g., 'math')
     func_name: str  # Function name (e.g., 'sqrt')
-    args: list[ValueIR]
-    arg_preludes: list[list[InstrIR]] = field(default_factory=list)
+    args: list[ValueNode]
+    arg_preludes: list[list[InstrNode]] = field(default_factory=list)
     # Keyword arguments: list of (name, value) pairs
-    kwargs: list[tuple[str, ValueIR]] = field(default_factory=list)
-    kwarg_preludes: list[list[InstrIR]] = field(default_factory=list)
+    kwargs: list[tuple[str, ValueNode]] = field(default_factory=list)
+    kwarg_preludes: list[list[InstrNode]] = field(default_factory=list)
 
 
 @dataclass
@@ -1455,8 +1455,8 @@ class SiblingModuleCallIR(ExprIR):
 
     c_prefix: str  # C name prefix for the sibling module (e.g., 'lvui_screens')
     func_name: str  # Function name (e.g., 'create_screen')
-    args: list[ValueIR]
-    arg_preludes: list[list[InstrIR]] = field(default_factory=list)
+    args: list[ValueNode]
+    arg_preludes: list[list[InstrNode]] = field(default_factory=list)
 
 
 @dataclass
@@ -1474,8 +1474,8 @@ class SiblingClassInstantiationIR(ExprIR):
 
     c_prefix: str  # C name prefix for the sibling module (e.g., 'lvui_nav')
     class_name: str  # Class name (e.g., 'Nav')
-    args: list[ValueIR]
-    arg_preludes: list[list[InstrIR]] = field(default_factory=list)
+    args: list[ValueNode]
+    arg_preludes: list[list[InstrNode]] = field(default_factory=list)
 
 
 @dataclass
@@ -1494,8 +1494,8 @@ class CLibCallIR(ExprIR):
     lib_name: str  # Library name (e.g., "lvgl")
     func_name: str  # Python function name (e.g., "label_create")
     c_wrapper_name: str  # C wrapper function name (e.g., "lv_label_create_wrapper")
-    args: list[ValueIR]
-    arg_preludes: list[list[InstrIR]] = field(default_factory=list)
+    args: list[ValueNode]
+    arg_preludes: list[list[InstrNode]] = field(default_factory=list)
     is_void: bool = False
     uses_var_args: bool = False
 
@@ -1523,8 +1523,8 @@ class SelfAugAssignIR(StmtIR):
     attr_name: str
     attr_path: str
     op: str
-    value: ValueIR
-    prelude: list[InstrIR] = field(default_factory=list)
+    value: ValueNode
+    prelude: list[InstrNode] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -1546,7 +1546,7 @@ class ExceptHandlerIR:
     exc_type: str | None  # Exception type name (None for bare 'except:')
     exc_var: str | None  # Variable name for 'as name' (None if not bound)
     c_exc_var: str | None  # Sanitized C variable name
-    body: list[StmtIR] = field(default_factory=list)
+    body: list[StmtNode] = field(default_factory=list)
 
 
 @dataclass
@@ -1578,10 +1578,10 @@ class TryIR(StmtIR):
         // finally block
     """
 
-    body: list[StmtIR]
+    body: list[StmtNode]
     handlers: list[ExceptHandlerIR] = field(default_factory=list)
-    orelse: list[StmtIR] = field(default_factory=list)  # else block
-    finalbody: list[StmtIR] = field(default_factory=list)  # finally block
+    orelse: list[StmtNode] = field(default_factory=list)  # else block
+    finalbody: list[StmtNode] = field(default_factory=list)  # finally block
 
 
 @dataclass
@@ -1599,9 +1599,9 @@ class RaiseIR(StmtIR):
     """
 
     exc_type: str | None = None  # Exception type (None for bare raise)
-    exc_msg: ValueIR | None = None  # Message argument (if any)
+    exc_msg: ValueNode | None = None  # Message argument (if any)
     is_reraise: bool = False  # True for bare 'raise' (re-raise current)
-    prelude: list[InstrIR] = field(default_factory=list)
+    prelude: list[InstrNode] = field(default_factory=list)
 
 
 @dataclass

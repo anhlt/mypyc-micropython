@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import cast
 
 from mypyc_micropython.c_bindings.core.c_ir import (
     CCallbackDef,
@@ -70,6 +71,7 @@ class StubParser:
         return self._library
 
     def _parse_assign(self, node: ast.Assign) -> None:
+        assert self._library is not None
         if len(node.targets) != 1:
             return
         target = node.targets[0]
@@ -79,7 +81,7 @@ class StubParser:
         name = target.id
 
         if name == "__c_header__" and isinstance(node.value, ast.Constant):
-            self._library.header = node.value.value
+            self._library.header = cast(str, node.value.value)
         elif name == "__c_include_dirs__" and isinstance(node.value, ast.List):
             for elt in node.value.elts:
                 if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
@@ -101,6 +103,7 @@ class StubParser:
 
     def _parse_module_constant(self, node: ast.AnnAssign) -> None:
         """Parse module-level annotated constant: NAME: int = VALUE"""
+        assert self._library is not None
         if not isinstance(node.target, ast.Name):
             return
         if not isinstance(node.annotation, ast.Name) or node.annotation.id != "int":
@@ -114,7 +117,7 @@ class StubParser:
         elif isinstance(node.value, ast.UnaryOp) and isinstance(node.value.op, ast.USub):
             # Handle negative constants like -1
             if isinstance(node.value.operand, ast.Constant):
-                self._library.constants[name] = -node.value.operand.value
+                self._library.constants[name] = -cast(int, node.value.operand.value)
         elif isinstance(node.value, ast.BinOp):
             # Handle hex expressions like 0xFF << 8
             try:
@@ -154,12 +157,12 @@ class StubParser:
     def _parse_struct(self, node: ast.ClassDef, decorator: ast.Call) -> None:
         c_name = node.name
         if decorator.args and isinstance(decorator.args[0], ast.Constant):
-            c_name = decorator.args[0].value
+            c_name = cast(str, decorator.args[0].value)
 
         is_opaque = True
         for kw in decorator.keywords:
             if kw.arg == "opaque" and isinstance(kw.value, ast.Constant):
-                is_opaque = kw.value.value
+                is_opaque = cast(bool, kw.value.value)
 
         struct_def = CStructDef(
             py_name=node.name,
@@ -175,12 +178,13 @@ class StubParser:
                     field_type = self._parse_annotation(item.annotation)
                     struct_def.fields[field_name] = field_type
 
+        assert self._library is not None
         self._library.structs[node.name] = struct_def
 
     def _parse_enum(self, node: ast.ClassDef, decorator: ast.Call) -> None:
         c_name = node.name
         if decorator.args and isinstance(decorator.args[0], ast.Constant):
-            c_name = decorator.args[0].value
+            c_name = cast(str, decorator.args[0].value)
 
         enum_def = CEnumDef(
             py_name=node.name,
@@ -192,13 +196,14 @@ class StubParser:
             if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
                 val_name = item.target.id
                 if item.value and isinstance(item.value, ast.Constant):
-                    enum_def.values[val_name] = item.value.value
+                    enum_def.values[val_name] = cast(int, item.value.value)
                 elif item.value and isinstance(item.value, ast.BinOp):
                     try:
                         enum_def.values[val_name] = self._eval_const_expr(item.value)
                     except (ValueError, TypeError):
                         pass
 
+        assert self._library is not None
         self._library.enums[node.name] = enum_def
 
     def _eval_const_expr(self, node: ast.expr) -> int:
@@ -224,6 +229,7 @@ class StubParser:
         raise ValueError(f"Cannot evaluate: {ast.dump(node)}")
 
     def _parse_function(self, node: ast.FunctionDef) -> None:
+        assert self._library is not None
         if node.name in STUB_HELPER_FUNCTIONS:
             return
         func_def = CFuncDef(

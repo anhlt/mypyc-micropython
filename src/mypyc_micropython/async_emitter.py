@@ -20,7 +20,7 @@ from .ir import (
     AwaitIR,
     AwaitModuleCallIR,
     ReturnIR,
-    StmtIR,
+    StmtNode,
     YieldIR,
 )
 
@@ -201,7 +201,7 @@ class AsyncEmitter(GeneratorEmitter):
 
         return lines
 
-    def _emit_statement(self, stmt: StmtIR, native: bool = False) -> list[str]:
+    def _emit_statement(self, stmt: StmtNode, native: bool = False) -> list[str]:
         """Handle AwaitIR and AwaitModuleCallIR in addition to normal statements."""
         del native
         match stmt:
@@ -230,11 +230,11 @@ class AsyncEmitter(GeneratorEmitter):
             lines.append(f"    return mp_make_stop_iteration({ret_expr});")
         return lines
 
-    def _collect_all_state_ids(self, body: list[StmtIR]) -> list[int]:
+    def _collect_all_state_ids(self, body: list[StmtNode]) -> list[int]:
         """Collect state IDs from both YieldIR and AwaitIR."""
         state_ids: set[int] = set()
 
-        def walk(stmts: list[StmtIR]) -> None:
+        def walk(stmts: list[StmtNode]) -> None:
             for stmt in stmts:
                 if isinstance(stmt, (YieldIR, AwaitIR, AwaitModuleCallIR)):
                     state_ids.add(stmt.state_id)

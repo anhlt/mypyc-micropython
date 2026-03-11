@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from dataclasses import fields, is_dataclass
 from enum import Enum
-from typing import Any, assert_never
+from typing import Any, assert_never, cast
 
 from .ir import (
     AnnAssignIR,
@@ -905,11 +905,11 @@ def dump_ir(ir_node: Any, format: str = "text") -> str:
         elif isinstance(ir_node, ClassIR):
             return printer.print_class(ir_node)
         elif isinstance(ir_node, StmtIR):
-            return printer.print_stmt(ir_node)
+            return printer.print_stmt(cast(StmtNode, ir_node))
         elif isinstance(ir_node, ValueIR):
-            return printer.print_value(ir_node)
+            return printer.print_value(cast(ValueNode, ir_node))
         elif isinstance(ir_node, InstrIR):
-            return printer.print_instr(ir_node)
+            return printer.print_instr(cast(InstrNode, ir_node))
         elif isinstance(ir_node, MethodIR):
             return printer.print_method_detail(ir_node)
         elif isinstance(ir_node, EnumIR):

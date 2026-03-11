@@ -128,14 +128,16 @@ def dump_ir_command(source_path: Path, format: str, function_name: str | None) -
                     method_ir = cls.methods[function_name]
                     # Build method body IR for full dump
                     body = builder.build_method_body(method_ir, cls)
-                    from mypyc_micropython.ir import FuncIR
+                    from typing import cast
+
+                    from mypyc_micropython.ir import FuncIR, StmtNode
 
                     func_ir = FuncIR(
                         name=method_ir.name,
                         c_name=method_ir.c_name,
                         params=method_ir.params,
                         return_type=method_ir.return_type,
-                        body=body,
+                        body=cast(list[StmtNode], body),
                         is_method=True,
                         class_ir=cls,
                         max_temp=builder._temp_counter,
