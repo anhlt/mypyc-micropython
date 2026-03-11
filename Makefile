@@ -254,7 +254,6 @@ compile-all: check-board
 		echo "include(\$${CMAKE_CURRENT_LIST_DIR}/usermod_lvgl_mvu/micropython.cmake)" >> $(MODULES_DIR)/micropython.cmake; \
 	fi
 	@echo "Done! Ready to build."
-	@echo "Done! Ready to build."
 
 compile-lvgl-only:
 	@mkdir -p $(LVGL_MODULE_DIR)
