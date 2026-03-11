@@ -780,6 +780,39 @@ if (n := len(data)) > 10:
 | **5 (Advanced)** | Simple generators ✅ (while/for-range/for-iter + yield), closures, `map()`/`filter()` |
 | **6 (Polish)** | Full IR pipeline ✅, RTuple optimization ✅ (47x speedup), list access optimization ✅, package compilation ✅, 1002 tests ✅ |
 
+## Future Improvements
+
+### Exhaustive IR Node Matching via `assert_never`
+
+Currently, IR dispatch in emitters (`function_emitter.py`, `container_emitter.py`, `ir_visualizer.py`) uses `isinstance` if/elif chains with no exhaustiveness enforcement. Adding a new IR node to `ir.py` and forgetting to handle it in any emitter produces a silent `/* unknown value */` bug at runtime.
+
+**Planned approach**: Use `typing.assert_never` with union type aliases to get **compile-time exhaustiveness checking** via mypy — the same pattern Rust uses for exhaustive `match`.
+
+```python
+from typing import assert_never
+
+# In ir.py — single source of truth for all IR node types
+type ValueNode = TempIR | ConstIR | NameIR | FuncRefIR | ModuleRefIR | ModuleAttrIR | ...
+type StmtNode = ReturnIR | IfIR | WhileIR | ForRangeIR | ForIterIR | AssignIR | ...
+type InstrNode = ListNewIR | TupleNewIR | SetNewIR | DictNewIR | GetItemIR | ...
+
+# In each emitter — mypy enforces completeness
+def _value_to_c(self, value: ValueNode) -> str:
+    match value:
+        case TempIR():
+            return f"_tmp{value.index}"
+        case ConstIR():
+            return self._const_to_c(value)
+        # ... all cases ...
+        case _:
+            assert_never(value)  # mypy error if any ValueNode member is unhandled
+```
+
+**Why this matters**: mypy will report `Argument of type "NewIR" cannot be assigned to parameter of type "Never"` if you add a new IR node to the union but miss a dispatch site. This turns a silent runtime bug into a CI failure.
+
+**Prerequisites**: Requires defining union type aliases for each IR category (`ValueNode`, `StmtNode`, `InstrNode`, `ExprNode`) in `ir.py`.
+
+
 ## See Also
 
 - [05-roadmap.md](05-roadmap.md) - Detailed implementation roadmap

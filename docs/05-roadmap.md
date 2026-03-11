@@ -996,6 +996,40 @@ Tasks:
 - [ ] CI/CD pipeline
 - [ ] Test on multiple targets (Unix, ESP32, RP2040)
 
+### 6.5 Exhaustive IR Node Matching via `assert_never`
+
+**Problem**: IR dispatch in emitters uses `isinstance` if/elif chains with no exhaustiveness check. Adding a new IR node to `ir.py` and forgetting to handle it in any emitter produces a silent `/* unknown value */` bug at runtime.
+
+**Solution**: Use `typing.assert_never` with union type aliases for compile-time exhaustiveness checking via mypy — the same pattern Rust uses for exhaustive `match`.
+
+```python
+from typing import assert_never
+
+# ir.py — union types as single source of truth
+type ValueNode = TempIR | ConstIR | NameIR | FuncRefIR | ModuleRefIR | ...
+type StmtNode = ReturnIR | IfIR | WhileIR | ForRangeIR | AssignIR | ...
+type InstrNode = ListNewIR | TupleNewIR | DictNewIR | GetItemIR | ...
+
+# Each emitter — mypy catches missing cases
+def _value_to_c(self, value: ValueNode) -> str:
+    match value:
+        case TempIR(): ...
+        case ConstIR(): ...
+        case _:
+            assert_never(value)  # mypy error if union member unhandled
+```
+
+**Impact**: Turns silent runtime bugs into CI failures. When you add a new IR class, mypy will flag every dispatch site that needs updating.
+
+Tasks:
+- [ ] Define union type aliases in `ir.py`: `ValueNode`, `StmtNode`, `InstrNode`, `ExprNode`
+- [ ] Add `assert_never` fallback to `_value_to_c()` in `container_emitter.py`
+- [ ] Add `assert_never` fallback to `_emit_stmt()` in `function_emitter.py`
+- [ ] Add `assert_never` fallback to `_emit_instr()` in `container_emitter.py`
+- [ ] Add `assert_never` fallback to `_emit_expr()` in `function_emitter.py`
+- [ ] Add `assert_never` fallback to IR visualizer dispatch in `ir_visualizer.py`
+- [ ] Verify mypy catches missing handlers in CI
+
 ---
 
 ## MicroPython C API Reference
