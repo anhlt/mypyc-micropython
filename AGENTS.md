@@ -270,7 +270,7 @@ for node in ast.iter_child_nodes(tree):
 ### Tooling (pyproject.toml)
 - **Linter**: ruff — rules `E`, `F`, `I`, `W`
 - **Line length**: 100
-- **Python target**: 3.10+
+- **Python target**: 3.12+
 - **Build**: hatchling
 - **Tests**: pytest (`testpaths = ["tests"]`)
 
@@ -647,7 +647,7 @@ Explain every C concept before using it.
 
 | Component | Version |
 |-----------|---------|
-| Python | ≥3.10 |
+| Python | >=3.12 |
 | MicroPython submodule | v1.28.0-preview |
 | ESP-IDF (for firmware) | v5.4.2 |
 | mypy | ≥1.0.0 |

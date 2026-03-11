@@ -51,6 +51,7 @@ from .ir import (
     FuncRefIR,
     IfExprIR,
     IfIR,
+    InstrNode,
     IRType,
     IsInstanceIR,
     ListCompIR,
@@ -79,7 +80,7 @@ from .ir import (
     SiblingModuleCallIR,
     SiblingModuleRefIR,
     SliceIR,
-    StmtIR,
+    StmtNode,
     SubscriptAssignIR,
     SubscriptIR,
     SuperCallIR,
@@ -90,6 +91,7 @@ from .ir import (
     TupleUnpackIR,
     UnaryOpIR,
     ValueIR,
+    ValueNode,
     WhileIR,
     YieldFromIR,
     YieldIR,
@@ -348,7 +350,7 @@ class IRBuilder:
         # Extract literal value
         value = node.value
         if isinstance(value, ast.Constant):
-            self._module_constants[name] = value.value
+            self._module_constants[name] = value.value if isinstance(value.value, (int, float, str, bool)) else None
             return True
         elif isinstance(value, ast.UnaryOp) and isinstance(value.op, ast.USub):
             # Handle negative numbers: -1, -3.14
@@ -366,7 +368,7 @@ class IRBuilder:
         # First: check if this is a literal constant (NAME: type = literal_value)
         # Register as module constant so functions can resolve the value at compile time
         if isinstance(node.value, ast.Constant):
-            self._module_constants[node.target.id] = node.value.value
+            self._module_constants[node.target.id] = node.value.value if isinstance(node.value.value, (int, float, str, bool)) else None
             return True
         if isinstance(node.value, ast.UnaryOp) and isinstance(node.value.op, ast.USub):
             if isinstance(node.value.operand, ast.Constant) and isinstance(
@@ -436,8 +438,8 @@ class IRBuilder:
     def build_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> FuncIR:
         self._temp_counter = 0
         self._var_types = {}
-        self._star_c_names: dict[str, str] = {}
-        self._list_vars: dict[str, str | None] = {}
+        self._star_c_names: dict[str, str] = {}  # type: ignore[no-redef]
+        self._list_vars: dict[str, str | None] = {}  # type: ignore[no-redef]
         self._rtuple_types = {}
         self._used_rtuples = set()
         self._uses_print = False
@@ -447,7 +449,7 @@ class IRBuilder:
         self._class_typed_params = {}
         self._optional_class_params = set()
         self._container_element_types = {}
-        self._param_py_types: dict[str, str] = {}  # Python type annotations for params
+        self._param_py_types: dict[str, str] = {}  # type: ignore[no-redef]  # Python type annotations for params
         self._mypy_local_types = {}
 
         # Clear PEP 695 function-level TypeVars from previous build
@@ -499,6 +501,7 @@ class IRBuilder:
 
                 if is_range_call:
                     # Validate supported range(...) shapes for generators
+                    assert isinstance(for_node.iter, ast.Call)
                     if not self._is_supported_generator_range_call(for_node.iter):
                         raise NotImplementedError(
                             f"unsupported generator range(...) loop is not supported (line {for_node.lineno})"
@@ -578,7 +581,7 @@ class IRBuilder:
             self._star_c_names[star_kwargs.name] = f"_star_{sanitize_name(star_kwargs.name)}"
 
         self._ctx = BuildContext(locals_=local_vars)
-        body_ir: list[StmtIR] = []
+        body_ir: list[StmtNode] = []
         for stmt in node.body:
             stmt_ir = self._build_statement(stmt, local_vars)
             if stmt_ir is not None:
@@ -613,7 +616,7 @@ class IRBuilder:
             star_kwargs=star_kwargs,
         )
 
-    def _build_statement(self, stmt: ast.stmt, locals_: list[str]) -> StmtIR | None:
+    def _build_statement(self, stmt: ast.stmt, locals_: list[str]) -> StmtNode | None:
         if isinstance(stmt, ast.FunctionDef):
             raise NotImplementedError(
                 f"Nested functions are not supported (line {stmt.lineno}): "
@@ -706,8 +709,8 @@ class IRBuilder:
                 func_name = attr.attr
 
                 # Build arguments
-                args: list[ValueIR] = []
-                arg_preludes: list[list] = []
+                args: list[ValueNode] = []
+                arg_preludes: list[list[InstrNode]] = []
                 for arg in awaited.args:
                     value, prelude = self._build_expr(arg, locals_)
                     args.append(value)
@@ -781,23 +784,23 @@ class IRBuilder:
             saved_optional = narrowed_var
             if is_none_check:
                 # 'if x is None:' -> body: x is None (keep optional), orelse: x narrowed
-                body = [self._build_statement(s, locals_) for s in stmt.body]
-                body = [s for s in body if s is not None]
+                body_raw = [self._build_statement(s, locals_) for s in stmt.body]
+                body = [s for s in body_raw if s is not None]
                 self._optional_class_params.discard(narrowed_var)
-                orelse = [self._build_statement(s, locals_) for s in stmt.orelse]
-                orelse = [s for s in orelse if s is not None]
+                orelse_raw = [self._build_statement(s, locals_) for s in stmt.orelse]
+                orelse = [s for s in orelse_raw if s is not None]
                 self._optional_class_params.add(narrowed_var)
             else:
                 # 'if x is not None:' -> body: x narrowed, orelse: x is None (keep optional)
                 self._optional_class_params.discard(narrowed_var)
-                body = [self._build_statement(s, locals_) for s in stmt.body]
-                body = [s for s in body if s is not None]
+                body_raw = [self._build_statement(s, locals_) for s in stmt.body]
+                body = [s for s in body_raw if s is not None]
                 self._optional_class_params.add(narrowed_var)
-                orelse = [self._build_statement(s, locals_) for s in stmt.orelse]
-                orelse = [s for s in orelse if s is not None]
+                orelse_raw = [self._build_statement(s, locals_) for s in stmt.orelse]
+                orelse = [s for s in orelse_raw if s is not None]
         else:
-            body = [self._build_statement(s, locals_) for s in stmt.body]
-            body = [s for s in body if s is not None]
+            body_raw = [self._build_statement(s, locals_) for s in stmt.body]
+            body = [s for s in body_raw if s is not None]
 
             # Restore isinstance narrowing after body, apply to orelse if negated
             if narrowing:
@@ -812,8 +815,8 @@ class IRBuilder:
                     # not isinstance(x, Foo): narrow x to Foo in the orelse branch
                     self._class_typed_params[narrow_var] = narrow_class
 
-            orelse = [self._build_statement(s, locals_) for s in stmt.orelse]
-            orelse = [s for s in orelse if s is not None]
+            orelse_raw = [self._build_statement(s, locals_) for s in stmt.orelse]
+            orelse = [s for s in orelse_raw if s is not None]
 
             # Restore isinstance narrowing after orelse (for negated case)
             if narrowing and negated:
@@ -834,14 +837,14 @@ class IRBuilder:
     def _build_while(self, stmt: ast.While, locals_: list[str]) -> WhileIR:
         test, test_prelude = self._build_expr(stmt.test, locals_)
         self._loop_depth += 1
-        body = [self._build_statement(s, locals_) for s in stmt.body]
-        body = [s for s in body if s is not None]
+        body_raw = [self._build_statement(s, locals_) for s in stmt.body]
+        body = [s for s in body_raw if s is not None]
         self._loop_depth -= 1
         return WhileIR(test=test, body=body, test_prelude=test_prelude)
 
     def _build_try(self, stmt: ast.Try, locals_: list[str]) -> TryIR:
-        body = [self._build_statement(s, locals_) for s in stmt.body]
-        body = [s for s in body if s is not None]
+        body_raw = [self._build_statement(s, locals_) for s in stmt.body]
+        body = [s for s in body_raw if s is not None]
 
         handlers: list[ExceptHandlerIR] = []
         for handler in stmt.handlers:
@@ -859,8 +862,8 @@ class IRBuilder:
                 locals_.append(exc_var)
                 self._var_types[exc_var] = "mp_obj_t"
 
-            handler_body = [self._build_statement(s, locals_) for s in handler.body]
-            handler_body = [s for s in handler_body if s is not None]
+            handler_body_raw = [self._build_statement(s, locals_) for s in handler.body]
+            handler_body = [s for s in handler_body_raw if s is not None]
 
             handlers.append(
                 ExceptHandlerIR(
@@ -871,11 +874,11 @@ class IRBuilder:
                 )
             )
 
-        orelse = [self._build_statement(s, locals_) for s in stmt.orelse]
-        orelse = [s for s in orelse if s is not None]
+        orelse_raw = [self._build_statement(s, locals_) for s in stmt.orelse]
+        orelse = [s for s in orelse_raw if s is not None]
 
-        finalbody = [self._build_statement(s, locals_) for s in stmt.finalbody]
-        finalbody = [s for s in finalbody if s is not None]
+        finalbody_raw = [self._build_statement(s, locals_) for s in stmt.finalbody]
+        finalbody = [s for s in finalbody_raw if s is not None]
 
         return TryIR(body=body, handlers=handlers, orelse=orelse, finalbody=finalbody)
 
@@ -884,8 +887,8 @@ class IRBuilder:
             return RaiseIR(is_reraise=True)
 
         exc_type: str | None = None
-        exc_msg: ValueIR | None = None
-        prelude: list = []
+        exc_msg: ValueNode | None = None
+        prelude: list[InstrNode] = []
 
         if isinstance(stmt.exc, ast.Call):
             if isinstance(stmt.exc.func, ast.Name):
@@ -934,10 +937,10 @@ class IRBuilder:
 
         step_is_constant = False
         step_value: int | None = None
-        step: ValueIR | None = None
+        step: ValueNode | None = None
 
         if len(args) == 1:
-            start = ConstIR(ir_type=IRType.INT, value=0)
+            start: ValueNode = ConstIR(ir_type=IRType.INT, value=0)
             end, _ = self._build_expr(args[0], locals_)
             step_is_constant = True
             step_value = 1
@@ -966,8 +969,8 @@ class IRBuilder:
             raise ValueError("Unsupported range() call")
 
         self._loop_depth += 1
-        body = [self._build_statement(s, locals_) for s in stmt.body]
-        body = [s for s in body if s is not None]
+        body_raw = [self._build_statement(s, locals_) for s in stmt.body]
+        body = [s for s in body_raw if s is not None]
         self._loop_depth -= 1
 
         return ForRangeIR(
@@ -999,8 +1002,8 @@ class IRBuilder:
         self._var_types[loop_var] = "mp_obj_t"
 
         self._loop_depth += 1
-        body = [self._build_statement(s, locals_) for s in stmt.body]
-        body = [s for s in body if s is not None]
+        body_raw = [self._build_statement(s, locals_) for s in stmt.body]
+        body = [s for s in body_raw if s is not None]
         self._loop_depth -= 1
 
         return ForIterIR(
@@ -1049,8 +1052,8 @@ class IRBuilder:
 
         # Build loop body with unpack prepended
         self._loop_depth += 1
-        body_stmts = [self._build_statement(s, locals_) for s in stmt.body]
-        body_stmts = [s for s in body_stmts if s is not None]
+        body_stmts_raw = [self._build_statement(s, locals_) for s in stmt.body]
+        body_stmts = [s for s in body_stmts_raw if s is not None]
         self._loop_depth -= 1
 
         # Prepend tuple unpack to body
@@ -1065,7 +1068,7 @@ class IRBuilder:
             is_new_var=True,
         )
 
-    def _build_assign(self, stmt: ast.Assign, locals_: list[str]) -> StmtIR | None:
+    def _build_assign(self, stmt: ast.Assign, locals_: list[str]) -> StmtNode | None:
         if len(stmt.targets) != 1:
             return None
 
@@ -1077,6 +1080,7 @@ class IRBuilder:
                 value, prelude = self._build_expr(stmt.value, locals_)
                 attr_path = attr_name
                 class_ir = self._ctx.class_ir
+                assert class_ir is not None
                 for fld, path in class_ir.get_all_fields_with_path():
                     if fld.name == attr_name:
                         attr_path = path
@@ -1239,8 +1243,8 @@ class IRBuilder:
                 if elem_class:
                     self._container_element_types[var_name] = elem_class
 
-        value: ValueIR | None = None
-        prelude: list = []
+        value: ValueNode | None = None
+        prelude: list[InstrNode] = []
         if stmt.value is not None:
             value, prelude = self._build_expr(stmt.value, locals_)
 
@@ -1304,15 +1308,15 @@ class IRBuilder:
 
     def _build_print(self, call: ast.Call, locals_: list[str]) -> PrintIR:
         self._uses_print = True
-        args: list[ValueIR] = []
-        preludes: list[list] = []
+        args: list[ValueNode] = []
+        preludes: list[list[InstrNode]] = []
         for arg in call.args:
             value, prelude = self._build_expr(arg, locals_)
             args.append(value)
             preludes.append(prelude)
         return PrintIR(args=args, preludes=preludes)
 
-    def _build_expr(self, expr: ast.expr, locals_: list[str]) -> tuple[ValueIR, list]:
+    def _build_expr(self, expr: ast.expr, locals_: list[str]) -> tuple[ValueNode, list[InstrNode]]:
         if isinstance(expr, ast.YieldFrom):
             raise NotImplementedError(
                 f"yield from as expression is not supported (use as statement instead) (line {expr.lineno})"
@@ -1324,6 +1328,7 @@ class IRBuilder:
 
         if self._ctx.is_method:
             class_ir = self._ctx.class_ir
+            assert class_ir is not None
 
             if isinstance(expr, ast.Attribute):
                 if isinstance(expr.value, ast.Name):
@@ -1444,8 +1449,8 @@ class IRBuilder:
                         parent_class = parent_class.base
                     if parent_class is not None:
                         parent_method = parent_class.methods[method_name]
-                        args: list[ValueIR] = []
-                        arg_preludes: list[list] = []
+                        args: list[ValueNode] = []
+                        arg_preludes: list[list[InstrNode]] = []
                         for arg in expr.args:
                             val, prelude = self._build_expr(arg, locals_)
                             args.append(val)
@@ -1468,9 +1473,9 @@ class IRBuilder:
             if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute):
                 if isinstance(expr.func.value, ast.Name) and expr.func.value.id == "self":
                     method_name = expr.func.attr
-                    method_ir = class_ir.methods.get(method_name)
-                    args: list[ValueIR] = []
-                    arg_preludes: list[list] = []
+                    method_ir = class_ir.methods.get(method_name)  # type: ignore[assignment]
+                    args: list[ValueNode] = []  # type: ignore[no-redef]
+                    arg_preludes: list[list[InstrNode]] = []  # type: ignore[no-redef]
                     for arg in expr.args:
                         val, prelude = self._build_expr(arg, locals_)
                         args.append(val)
@@ -1576,7 +1581,7 @@ class IRBuilder:
             return ConstIR(ir_type=IRType.OBJ, value=val)
         return ConstIR(ir_type=IRType.OBJ, value=val)
 
-    def _build_name(self, expr: ast.Name, locals_: list[str]) -> ValueIR:
+    def _build_name(self, expr: ast.Name, locals_: list[str]) -> ValueNode:
         name = expr.id
         if name == "True":
             return ConstIR(ir_type=IRType.BOOL, value=True)
@@ -1688,7 +1693,7 @@ class IRBuilder:
         ir_type = IRType.from_c_type_str(var_type)
         return NameIR(ir_type=ir_type, py_name=name, c_name=c_name)
 
-    def _build_binop(self, expr: ast.BinOp, locals_: list[str]) -> tuple[BinOpIR, list]:
+    def _build_binop(self, expr: ast.BinOp, locals_: list[str]) -> tuple[BinOpIR, list[InstrNode]]:
         left, left_prelude = self._build_expr(expr.left, locals_)
         right, right_prelude = self._build_expr(expr.right, locals_)
 
@@ -1731,7 +1736,7 @@ class IRBuilder:
             right_prelude=right_prelude,
         ), left_prelude + right_prelude
 
-    def _build_boolop(self, expr: ast.BoolOp, locals_: list[str]) -> tuple[BinOpIR, list]:
+    def _build_boolop(self, expr: ast.BoolOp, locals_: list[str]) -> tuple[ValueNode, list[InstrNode]]:
         c_op = "&&" if isinstance(expr.op, ast.And) else "||"
 
         values = expr.values
@@ -1753,7 +1758,7 @@ class IRBuilder:
 
         return left, all_prelude
 
-    def _build_unaryop(self, expr: ast.UnaryOp, locals_: list[str]) -> tuple[UnaryOpIR, list]:
+    def _build_unaryop(self, expr: ast.UnaryOp, locals_: list[str]) -> tuple[UnaryOpIR, list[InstrNode]]:
         operand, prelude = self._build_expr(expr.operand, locals_)
         op_map = {ast.USub: "-", ast.Not: "!", ast.UAdd: "+", ast.Invert: "~"}
         c_op = op_map.get(type(expr.op), "-")
@@ -1769,7 +1774,7 @@ class IRBuilder:
             prelude=prelude,
         ), prelude
 
-    def _build_compare(self, expr: ast.Compare, locals_: list[str]) -> tuple[CompareIR, list]:
+    def _build_compare(self, expr: ast.Compare, locals_: list[str]) -> tuple[CompareIR, list[InstrNode]]:
         left, left_prelude = self._build_expr(expr.left, locals_)
 
         op_map = {
@@ -1786,8 +1791,8 @@ class IRBuilder:
         }
 
         ops: list[str] = []
-        comparators: list[ValueIR] = []
-        comparator_preludes: list[list] = []
+        comparators: list[ValueNode] = []
+        comparator_preludes: list[list[InstrNode]] = []
         has_contains = False
 
         for op, comparator in zip(expr.ops, expr.comparators):
@@ -1811,7 +1816,7 @@ class IRBuilder:
             comparator_preludes=comparator_preludes,
         ), all_preludes
 
-    def _build_call(self, expr: ast.Call, locals_: list[str]) -> tuple[ValueIR, list]:
+    def _build_call(self, expr: ast.Call, locals_: list[str]) -> tuple[ValueNode, list[InstrNode]]:
         if isinstance(expr.func, ast.Attribute):
             return self._build_method_call(expr, locals_)
 
@@ -1824,14 +1829,14 @@ class IRBuilder:
             # Store the callable in a temp variable
             assign_instr = TempAssignIR(result=temp_ir, value=func_val)
             # Build args for the outer call
-            args: list[ValueIR] = []
-            arg_preludes: list[list] = []
+            args: list[ValueNode] = []
+            arg_preludes: list[list[InstrNode]] = []
             for arg in expr.args:
                 val, prelude = self._build_expr(arg, locals_)
                 args.append(val)
                 arg_preludes.append(prelude)
-            kwargs: list[tuple[str, ValueIR]] = []
-            kwarg_preludes: list[list] = []
+            kwargs: list[tuple[str, ValueNode]] = []
+            kwarg_preludes: list[list[InstrNode]] = []
             for kw in expr.keywords:
                 if kw.arg is None:
                     continue
@@ -1859,14 +1864,14 @@ class IRBuilder:
             return self._build_isinstance(expr, locals_)
 
         if func_name in locals_:
-            args: list[ValueIR] = []
-            arg_preludes: list[list] = []
+            args: list[ValueNode] = []  # type: ignore[no-redef]
+            arg_preludes: list[list[InstrNode]] = []  # type: ignore[no-redef]
             for arg in expr.args:
                 val, prelude = self._build_expr(arg, locals_)
                 args.append(val)
                 arg_preludes.append(prelude)
-            kwargs: list[tuple[str, ValueIR]] = []
-            kwarg_preludes: list[list] = []
+            kwargs: list[tuple[str, ValueNode]] = []  # type: ignore[no-redef]
+            kwarg_preludes: list[list[InstrNode]] = []  # type: ignore[no-redef]
             for kw in expr.keywords:
                 if kw.arg is None:
                     continue
@@ -1883,15 +1888,15 @@ class IRBuilder:
                 arg_preludes=arg_preludes,
             ), all_preludes
 
-        args: list[ValueIR] = []
-        arg_preludes: list[list] = []
+        args: list[ValueNode] = []  # type: ignore[no-redef]
+        arg_preludes: list[list[InstrNode]] = []  # type: ignore[no-redef]
         for arg in expr.args:
             val, prelude = self._build_expr(arg, locals_)
             args.append(val)
             arg_preludes.append(prelude)
 
-        kwargs: list[tuple[str, ValueIR]] = []
-        kwarg_preludes: list[list] = []
+        kwargs: list[tuple[str, ValueNode]] = []  # type: ignore[no-redef]
+        kwarg_preludes: list[list[InstrNode]] = []  # type: ignore[no-redef]
         for kw in expr.keywords:
             if kw.arg is None:
                 continue
@@ -1909,18 +1914,18 @@ class IRBuilder:
             sum_element_type: str | None = None
 
             if func_name == "len" and len(args) == 1:
-                arg = args[0]
-                if isinstance(arg, NameIR) and arg.py_name in self._list_vars:
+                first_arg = args[0]
+                if isinstance(first_arg, NameIR) and first_arg.py_name in self._list_vars:
                     is_list_len_opt = True
                     self._uses_list_opt = True
 
             if func_name == "sum" and len(args) >= 1:
-                arg = args[0]
-                if isinstance(arg, NameIR) and arg.py_name in self._list_vars:
-                    elem_type = self._list_vars.get(arg.py_name)
+                first_arg = args[0]
+                if isinstance(first_arg, NameIR) and first_arg.py_name in self._list_vars:
+                    elem_type = self._list_vars.get(first_arg.py_name)
                     if elem_type in ("int", "float"):
                         is_typed_list_sum = True
-                        sum_list_var = arg.py_name
+                        sum_list_var = first_arg.py_name
                         sum_element_type = elem_type
                         self._uses_list_opt = True
 
@@ -1988,7 +1993,7 @@ class IRBuilder:
             builtin_kind=None,
         ), all_preludes
 
-    def _build_isinstance(self, expr: ast.Call, locals_: list[str]) -> tuple[ValueIR, list]:
+    def _build_isinstance(self, expr: ast.Call, locals_: list[str]) -> tuple[ValueNode, list[InstrNode]]:
         """Build isinstance(obj, ClassName) -> IsInstanceIR.
 
         Only supports compile-time-known concrete classes.
@@ -2109,7 +2114,7 @@ class IRBuilder:
         """Check if name is a private identifier (__name without trailing __)."""
         return name.startswith("__") and not name.endswith("__")
 
-    def _build_method_call(self, expr: ast.Call, locals_: list[str]) -> tuple[ValueIR, list]:
+    def _build_method_call(self, expr: ast.Call, locals_: list[str]) -> tuple[ValueNode, list[InstrNode]]:
         if not isinstance(expr.func, ast.Attribute):
             return ConstIR(ir_type=IRType.OBJ, value=None), []
 
@@ -2129,14 +2134,14 @@ class IRBuilder:
         if self._is_private_name(method_name) and not (self._ctx.is_method and is_self_call):
             raise TypeError(f"Cannot access private method '{method_name}' from outside its class")
 
-        args: list[ValueIR] = []
+        args: list[ValueNode] = []
         all_preludes = list(recv_prelude)
         for arg in expr.args:
             val, prelude = self._build_expr(arg, locals_)
             all_preludes.extend(prelude)
             args.append(val)
 
-        kwargs: list[tuple[str, ValueIR]] = []
+        kwargs: list[tuple[str, ValueNode]] = []
         for kw in expr.keywords:
             if kw.arg is None:
                 continue
@@ -2169,7 +2174,7 @@ class IRBuilder:
 
     def _build_clib_call(
         self, expr: ast.Call, alias: str, locals_: list[str]
-    ) -> tuple[ValueIR, list]:
+    ) -> tuple[ValueNode, list[InstrNode]]:
         from .c_bindings.core.c_ir import CType as CBindingsCType
         from .ir import CLibCallIR
 
@@ -2183,8 +2188,8 @@ class IRBuilder:
 
         func_def = lib_def.functions.get(func_name)
 
-        args: list[ValueIR] = []
-        arg_preludes: list[list] = []
+        args: list[ValueNode] = []
+        arg_preludes: list[list[InstrNode]] = []
         for arg in expr.args:
             val, prelude = self._build_expr(arg, locals_)
             args.append(val)
@@ -2216,7 +2221,7 @@ class IRBuilder:
 
     def _build_module_call(
         self, expr: ast.Call, alias: str, locals_: list[str]
-    ) -> tuple[ValueIR, list]:
+    ) -> tuple[ValueNode, list[InstrNode]]:
         """Build IR for a call on an imported module: module.func(args, **kwargs)."""
         if not isinstance(expr.func, ast.Attribute):
             return ConstIR(ir_type=IRType.OBJ, value=None), []
@@ -2226,16 +2231,16 @@ class IRBuilder:
         self._uses_imports = True
 
         # Process positional arguments
-        args: list[ValueIR] = []
-        arg_preludes: list[list] = []
+        args: list[ValueNode] = []
+        arg_preludes: list[list[InstrNode]] = []
         for arg in expr.args:
             val, prelude = self._build_expr(arg, locals_)
             args.append(val)
             arg_preludes.append(prelude)
 
         # Process keyword arguments
-        kwargs: list[tuple[str, ValueIR]] = []
-        kwarg_preludes: list[list] = []
+        kwargs: list[tuple[str, ValueNode]] = []
+        kwarg_preludes: list[list[InstrNode]] = []
         for kw in expr.keywords:
             if kw.arg is None:  # **kwargs - not supported
                 continue
@@ -2278,10 +2283,10 @@ class IRBuilder:
 
     def _build_class_instantiation(
         self, expr: ast.Call, class_name: str, locals_: list[str]
-    ) -> tuple[ClassInstantiationIR, list]:
+    ) -> tuple[ClassInstantiationIR, list[InstrNode]]:
         class_ir = self._known_classes[class_name]
-        args: list[ValueIR] = []
-        arg_preludes: list[list] = []
+        args: list[ValueNode] = []
+        arg_preludes: list[list[InstrNode]] = []
         for arg in expr.args:
             val, prelude = self._build_expr(arg, locals_)
             args.append(val)
@@ -2297,7 +2302,7 @@ class IRBuilder:
             arg_preludes=arg_preludes,
         ), all_preludes
 
-    def _build_ifexp(self, expr: ast.IfExp, locals_: list[str]) -> tuple[IfExprIR, list]:
+    def _build_ifexp(self, expr: ast.IfExp, locals_: list[str]) -> tuple[IfExprIR, list[InstrNode]]:
         test, test_prelude = self._build_expr(expr.test, locals_)
         body, body_prelude = self._build_expr(expr.body, locals_)
         orelse, orelse_prelude = self._build_expr(expr.orelse, locals_)
@@ -2312,12 +2317,12 @@ class IRBuilder:
             orelse_prelude=orelse_prelude,
         ), test_prelude + body_prelude + orelse_prelude
 
-    def _build_list(self, expr: ast.List, locals_: list[str]) -> tuple[ValueIR, list]:
+    def _build_list(self, expr: ast.List, locals_: list[str]) -> tuple[ValueNode, list[InstrNode]]:
         if not expr.elts:
             return ConstIR(ir_type=IRType.OBJ, value=[]), []
 
-        items: list[ValueIR] = []
-        all_preludes: list = []
+        items: list[ValueNode] = []
+        all_preludes: list[InstrNode] = []
         for elt in expr.elts:
             val, prelude = self._build_expr(elt, locals_)
             all_preludes.extend(prelude)
@@ -2327,12 +2332,12 @@ class IRBuilder:
         result = TempIR(ir_type=IRType.OBJ, name=temp_name)
         return result, all_preludes + [ListNewIR(result=result, items=items)]
 
-    def _build_tuple(self, expr: ast.Tuple, locals_: list[str]) -> tuple[ValueIR, list]:
+    def _build_tuple(self, expr: ast.Tuple, locals_: list[str]) -> tuple[ValueNode, list[InstrNode]]:
         if not expr.elts:
             return ConstIR(ir_type=IRType.OBJ, value=()), []
 
-        items: list[ValueIR] = []
-        all_preludes: list = []
+        items: list[ValueNode] = []
+        all_preludes: list[InstrNode] = []
         for elt in expr.elts:
             val, prelude = self._build_expr(elt, locals_)
             all_preludes.extend(prelude)
@@ -2342,12 +2347,12 @@ class IRBuilder:
         result = TempIR(ir_type=IRType.OBJ, name=temp_name)
         return result, all_preludes + [TupleNewIR(result=result, items=items)]
 
-    def _build_set(self, expr: ast.Set, locals_: list[str]) -> tuple[ValueIR, list]:
+    def _build_set(self, expr: ast.Set, locals_: list[str]) -> tuple[ValueNode, list[InstrNode]]:
         if not expr.elts:
             return ConstIR(ir_type=IRType.OBJ, value=set()), []
 
-        items: list[ValueIR] = []
-        all_preludes: list = []
+        items: list[ValueNode] = []
+        all_preludes: list[InstrNode] = []
         for elt in expr.elts:
             val, prelude = self._build_expr(elt, locals_)
             all_preludes.extend(prelude)
@@ -2357,12 +2362,12 @@ class IRBuilder:
         result = TempIR(ir_type=IRType.OBJ, name=temp_name)
         return result, all_preludes + [SetNewIR(result=result, items=items)]
 
-    def _build_dict(self, expr: ast.Dict, locals_: list[str]) -> tuple[ValueIR, list]:
+    def _build_dict(self, expr: ast.Dict, locals_: list[str]) -> tuple[ValueNode, list[InstrNode]]:
         if not expr.keys:
             return ConstIR(ir_type=IRType.OBJ, value={}), []
 
-        entries: list[tuple[ValueIR, ValueIR]] = []
-        all_preludes: list = []
+        entries: list[tuple[ValueNode, ValueNode]] = []
+        all_preludes: list[InstrNode] = []
         for key, val in zip(expr.keys, expr.values):
             if key is None:
                 continue
@@ -2376,7 +2381,7 @@ class IRBuilder:
         result = TempIR(ir_type=IRType.OBJ, name=temp_name)
         return result, all_preludes + [DictNewIR(result=result, entries=entries)]
 
-    def _build_subscript(self, expr: ast.Subscript, locals_: list[str]) -> tuple[SubscriptIR, list]:
+    def _build_subscript(self, expr: ast.Subscript, locals_: list[str]) -> tuple[SubscriptIR, list[InstrNode]]:
         value, value_prelude = self._build_expr(expr.value, locals_)
 
         is_rtuple = False
@@ -2425,7 +2430,7 @@ class IRBuilder:
             slice_prelude=slice_prelude,
         ), value_prelude + slice_prelude
 
-    def _build_attribute(self, expr: ast.Attribute, locals_: list[str]) -> tuple[ValueIR, list]:
+    def _build_attribute(self, expr: ast.Attribute, locals_: list[str]) -> tuple[ValueNode, list[InstrNode]]:
         if isinstance(expr.value, ast.Attribute) and isinstance(expr.value.value, ast.Name):
             module_alias = expr.value.value.id
             if module_alias in self._import_aliases:
@@ -2561,7 +2566,7 @@ class IRBuilder:
 
     def _build_clib_enum(
         self, expr: ast.Attribute, module_alias: str, locals_: list[str]
-    ) -> tuple[ValueIR, list]:
+    ) -> tuple[ValueNode, list[InstrNode]]:
         del locals_
         from .ir import CLibEnumIR
 
@@ -2588,7 +2593,7 @@ class IRBuilder:
 
         return ConstIR(ir_type=IRType.INT, value=0), []
 
-    def _build_list_comp(self, expr: ast.ListComp, locals_: list[str]) -> tuple[ValueIR, list]:
+    def _build_list_comp(self, expr: ast.ListComp, locals_: list[str]) -> tuple[ValueNode, list[InstrNode]]:
         """Build IR for list comprehension: [expr for var in iterable] or [expr for var in iterable if cond]."""
         if not expr.generators:
             return ConstIR(ir_type=IRType.OBJ, value=[]), []
@@ -2614,9 +2619,9 @@ class IRBuilder:
 
         # Check if iterable is range() for optimization
         is_range = False
-        range_start: ValueIR | None = None
-        range_end: ValueIR | None = None
-        range_step: ValueIR | None = None
+        range_start: ValueNode | None = None
+        range_end: ValueNode | None = None
+        range_step: ValueNode | None = None
 
         if (
             isinstance(gen.iter, ast.Call)
@@ -2642,8 +2647,8 @@ class IRBuilder:
         element, element_prelude = self._build_expr(expr.elt, locals_)
 
         # Build condition if present
-        condition: ValueIR | None = None
-        condition_prelude: list = []
+        condition: ValueNode | None = None
+        condition_prelude: list[InstrNode] = []
         if gen.ifs:
             # Combine multiple conditions with AND
             cond_parts = []
@@ -3423,7 +3428,7 @@ class IRBuilder:
 
                 # Detect Final[type] or bare Final annotation
                 is_final_field = False
-                inner_annotation = stmt.annotation
+                inner_annotation: ast.expr | None = stmt.annotation
                 if isinstance(stmt.annotation, ast.Subscript):
                     if (
                         isinstance(stmt.annotation.value, ast.Name)
@@ -3641,7 +3646,7 @@ class IRBuilder:
 
     def build_method_body(
         self, method_ir: MethodIR, class_ir: ClassIR, native: bool = False
-    ) -> list[StmtIR]:
+    ) -> list[StmtNode]:
         """Build IR for a method body with class context.
 
         Args:
@@ -3655,7 +3660,7 @@ class IRBuilder:
         # Reset state for this method
         self._temp_counter = 0
         self._var_types = {}
-        self._list_vars: dict[str, str | None] = {}
+        self._list_vars: dict[str, str | None] = {}  # type: ignore[no-redef]
         self._rtuple_types = {}
         self._used_rtuples = set()
         self._uses_print = False
@@ -3707,7 +3712,7 @@ class IRBuilder:
             local_vars.insert(0, "self")
 
         self._ctx = BuildContext(locals_=local_vars, class_ir=class_ir, native=native)
-        body_ir: list[StmtIR] = []
+        body_ir: list[StmtNode] = []
         for stmt in method_ir.body_ast.body:
             # Skip docstrings
             if (

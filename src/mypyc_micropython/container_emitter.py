@@ -11,6 +11,7 @@ and produces C code lines, with no knowledge of the AST.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import assert_never
 
 from .ir import (
     AttrAccessIR,
@@ -18,19 +19,25 @@ from .ir import (
     BoxIR,
     CallIR,
     ClassInstantiationIR,
+    CLibCallIR,
+    CLibEnumIR,
     CompareIR,
     ConstIR,
     DictNewIR,
     DynamicCallIR,
     FuncRefIR,
     GetItemIR,
-    InstrIR,
+    IfExprIR,
+    InstrNode,
     IRType,
+    IsInstanceIR,
+    LambdaIR,
     ListCompIR,
     ListNewIR,
     MethodCallIR,
     ModuleAttrIR,
     ModuleCallIR,
+    ModuleImportIR,
     ModuleRefIR,
     NameIR,
     ParamAttrIR,
@@ -40,13 +47,17 @@ from .ir import (
     SetItemIR,
     SetNewIR,
     SiblingClassInstantiationIR,
+    SiblingModuleCallIR,
+    SiblingModuleRefIR,
+    SliceIR,
     SubscriptIR,
+    SuperCallIR,
     TempAssignIR,
     TempIR,
     TupleNewIR,
     UnaryOpIR,
     UnboxIR,
-    ValueIR,
+    ValueNode,
 )
 
 
@@ -71,35 +82,39 @@ def _emit_dotted_module_import(module_name: str) -> str:
 class ContainerEmitter:
     """Generates C code from expression-level IR instructions."""
 
-    def emit_instr(self, instr: InstrIR) -> list[str]:
+    def emit_instr(self, instr: InstrNode) -> list[str]:
         """Dispatch an IR instruction to its specific emitter."""
-        if isinstance(instr, ListNewIR):
-            return self.emit_list_new(instr)
-        elif isinstance(instr, TupleNewIR):
-            return self.emit_tuple_new(instr)
-        elif isinstance(instr, SetNewIR):
-            return self.emit_set_new(instr)
-        elif isinstance(instr, DictNewIR):
-            return self.emit_dict_new(instr)
-        elif isinstance(instr, GetItemIR):
-            return self.emit_get_item(instr)
-        elif isinstance(instr, SetItemIR):
-            return self.emit_set_item(instr)
-        elif isinstance(instr, MethodCallIR):
-            return self.emit_method_call(instr)
-        elif isinstance(instr, BoxIR):
-            return self.emit_box(instr)
-        elif isinstance(instr, UnboxIR):
-            return self.emit_unbox(instr)
-        elif isinstance(instr, AttrAccessIR):
-            return self.emit_attr_access(instr)
-        elif isinstance(instr, ListCompIR):
-            return self.emit_list_comp(instr)
-        elif isinstance(instr, TempAssignIR):
-            return self.emit_temp_assign(instr)
-        return [f"    /* unsupported IR instruction: {type(instr).__name__} */"]
+        match instr:
+            case ListNewIR():
+                return self.emit_list_new(instr)
+            case TupleNewIR():
+                return self.emit_tuple_new(instr)
+            case SetNewIR():
+                return self.emit_set_new(instr)
+            case DictNewIR():
+                return self.emit_dict_new(instr)
+            case GetItemIR():
+                return self.emit_get_item(instr)
+            case SetItemIR():
+                return self.emit_set_item(instr)
+            case MethodCallIR():
+                return self.emit_method_call(instr)
+            case BoxIR():
+                return self.emit_box(instr)
+            case UnboxIR():
+                return self.emit_unbox(instr)
+            case AttrAccessIR():
+                return self.emit_attr_access(instr)
+            case ListCompIR():
+                return self.emit_list_comp(instr)
+            case TempAssignIR():
+                return self.emit_temp_assign(instr)
+            case ModuleImportIR():
+                return self._emit_module_import(instr)
+            case _:
+                assert_never(instr)
 
-    def emit_prelude(self, prelude: list[InstrIR]) -> list[str]:
+    def emit_prelude(self, prelude: list[InstrNode]) -> list[str]:
         """Emit all instructions in a prelude, in order."""
         lines: list[str] = []
         for instr in prelude:
@@ -241,6 +256,12 @@ class ContainerEmitter:
         value_c = self._value_to_c(instr.value)
         c_type = instr.result.ir_type.to_c_type_str()
         return [f"    {c_type} {result_name} = {value_c};"]
+
+    def _emit_module_import(self, instr: ModuleImportIR) -> list[str]:
+        """ModuleImportIR -> mp_import_name (supports dotted names)."""
+        result_name = instr.result.name
+        import_expr = _emit_dotted_module_import(instr.module_name)
+        return [f"    mp_obj_t {result_name} = {import_expr};"]
 
     def emit_list_comp(self, instr: ListCompIR) -> list[str]:
         """Emit list comprehension as inline loop.
@@ -612,199 +633,283 @@ class ContainerEmitter:
     # Value helpers
     # ------------------------------------------------------------------
 
-    def _value_to_c(self, value: ValueIR) -> str:
+    def _value_to_c(self, value: ValueNode) -> str:
         """Convert a ValueIR to its C expression string."""
-        if isinstance(value, TempIR):
-            return value.name
-        elif isinstance(value, NameIR):
-            return value.c_name
-        elif isinstance(value, FuncRefIR):
-            # Function reference as first-class value
-            return f"MP_OBJ_FROM_PTR(&{value.c_name}_obj)"
-        elif isinstance(value, ModuleRefIR):
-            # Import the module at runtime (supports dotted names)
-            return _emit_dotted_module_import(value.module_name)
-        elif isinstance(value, ModuleAttrIR):
-            # Import module and load attribute at runtime (supports dotted names)
-            mod_import = _emit_dotted_module_import(value.module_name)
-            return f"mp_load_attr({mod_import}, MP_QSTR_{value.attr_name})"
-        elif isinstance(value, ConstIR):
-            return self._const_to_c(value)
-        elif isinstance(value, BinOpIR):
-            left = self._value_to_c(value.left)
-            right = self._value_to_c(value.right)
-            # Handle mp_obj_t operands - need mp_binary_op
-            left_is_obj = value.left.ir_type == IRType.OBJ
-            right_is_obj = value.right.ir_type == IRType.OBJ
-            if left_is_obj or right_is_obj:
-                # Box operands if needed
-                if not left_is_obj:
-                    left = self._box_expr(left, value.left.ir_type)
-                if not right_is_obj:
-                    right = self._box_expr(right, value.right.ir_type)
-                op_map = {
-                    "+": "MP_BINARY_OP_ADD",
-                    "-": "MP_BINARY_OP_SUBTRACT",
-                    "*": "MP_BINARY_OP_MULTIPLY",
-                    "/": "MP_BINARY_OP_TRUE_DIVIDE",
-                    "//": "MP_BINARY_OP_FLOOR_DIVIDE",
-                    "%": "MP_BINARY_OP_MODULO",
-                }
-                mp_op = op_map.get(value.op, "MP_BINARY_OP_ADD")
-                return f"mp_binary_op({mp_op}, {left}, {right})"
-            return f"({left} {value.op} {right})"
-        elif isinstance(value, UnaryOpIR):
-            operand = self._value_to_c(value.operand)
-            return f"({value.op}{operand})"
-        elif isinstance(value, CompareIR):
-            left = self._value_to_c(value.left)
-            left_is_obj = value.left.ir_type == IRType.OBJ
-            # Check if any operand is mp_obj_t
-            any_obj = left_is_obj or any(comp.ir_type == IRType.OBJ for comp in value.comparators)
-            if any_obj and len(value.ops) == 1:
-                # Use mp_binary_op for mp_obj_t comparisons
-                comp_c = self._value_to_c(value.comparators[0])
-                # Box operands if needed
-                if not left_is_obj:
-                    left = self._box_expr(left, value.left.ir_type)
-                if value.comparators[0].ir_type != IRType.OBJ:
-                    comp_c = self._box_expr(comp_c, value.comparators[0].ir_type)
-                op_map = {
-                    ">": "MP_BINARY_OP_MORE",
-                    "<": "MP_BINARY_OP_LESS",
-                    ">=": "MP_BINARY_OP_MORE_EQUAL",
-                    "<=": "MP_BINARY_OP_LESS_EQUAL",
-                    "==": "MP_BINARY_OP_EQUAL",
-                    "!=": "MP_BINARY_OP_NOT_EQUAL",
-                }
-                mp_op = op_map.get(value.ops[0], "MP_BINARY_OP_EQUAL")
-                return f"mp_obj_is_true(mp_binary_op({mp_op}, {left}, {comp_c}))"
-            parts = [f"({left}"]
-            for op, comp in zip(value.ops, value.comparators):
-                comp_c = self._value_to_c(comp)
-                parts.append(f" {op} {comp_c}")
-            parts.append(")")
-            return "".join(parts)
-        elif isinstance(value, SelfAttrIR):
-            return f"self->{value.attr_path}"
-        elif isinstance(value, SelfMethodRefIR):
-            # Bound method reference: self.method -> bound method object
-            return (
-                f"mp_obj_new_bound_meth("
-                f"MP_OBJ_FROM_PTR(&{value.method_c_name}_obj), "
-                f"MP_OBJ_FROM_PTR(self))"
-            )
-        elif isinstance(value, SelfMethodCallIR):
-            args = ["self"]
-            for i, arg in enumerate(value.args):
-                arg_c = self._value_to_c(arg)
-                # Use target param type when available for correct boxing
-                target_type = value.param_types[i] if i < len(value.param_types) else arg.ir_type
-                if target_type == IRType.OBJ and arg.ir_type != IRType.OBJ:
-                    args.append(self._box_expr(arg_c, arg.ir_type))
+        match value:
+            case TempIR():
+                return value.name
+            case NameIR():
+                return value.c_name
+            case FuncRefIR():
+                # Function reference as first-class value
+                return f"MP_OBJ_FROM_PTR(&{value.c_name}_obj)"
+            case ModuleRefIR():
+                # Import the module at runtime (supports dotted names)
+                return _emit_dotted_module_import(value.module_name)
+            case ModuleAttrIR():
+                # Import module and load attribute at runtime (supports dotted names)
+                mod_import = _emit_dotted_module_import(value.module_name)
+                return f"mp_load_attr({mod_import}, MP_QSTR_{value.attr_name})"
+            case ConstIR():
+                return self._const_to_c(value)
+            case BinOpIR():
+                left = self._value_to_c(value.left)
+                right = self._value_to_c(value.right)
+                # Handle mp_obj_t operands - need mp_binary_op
+                left_is_obj = value.left.ir_type == IRType.OBJ
+                right_is_obj = value.right.ir_type == IRType.OBJ
+                if left_is_obj or right_is_obj:
+                    # Box operands if needed
+                    if not left_is_obj:
+                        left = self._box_expr(left, value.left.ir_type)
+                    if not right_is_obj:
+                        right = self._box_expr(right, value.right.ir_type)
+                    op_map = {
+                        "+": "MP_BINARY_OP_ADD",
+                        "-": "MP_BINARY_OP_SUBTRACT",
+                        "*": "MP_BINARY_OP_MULTIPLY",
+                        "/": "MP_BINARY_OP_TRUE_DIVIDE",
+                        "//": "MP_BINARY_OP_FLOOR_DIVIDE",
+                        "%": "MP_BINARY_OP_MODULO",
+                    }
+                    mp_op = op_map.get(value.op, "MP_BINARY_OP_ADD")
+                    return f"mp_binary_op({mp_op}, {left}, {right})"
+                return f"({left} {value.op} {right})"
+            case UnaryOpIR():
+                operand = self._value_to_c(value.operand)
+                return f"({value.op}{operand})"
+            case CompareIR():
+                left = self._value_to_c(value.left)
+                left_is_obj = value.left.ir_type == IRType.OBJ
+                # Check if any operand is mp_obj_t
+                any_obj = left_is_obj or any(comp.ir_type == IRType.OBJ for comp in value.comparators)
+                if any_obj and len(value.ops) == 1:
+                    # Use mp_binary_op for mp_obj_t comparisons
+                    comp_c = self._value_to_c(value.comparators[0])
+                    # Box operands if needed
+                    if not left_is_obj:
+                        left = self._box_expr(left, value.left.ir_type)
+                    if value.comparators[0].ir_type != IRType.OBJ:
+                        comp_c = self._box_expr(comp_c, value.comparators[0].ir_type)
+                    op_map = {
+                        ">": "MP_BINARY_OP_MORE",
+                        "<": "MP_BINARY_OP_LESS",
+                        ">=": "MP_BINARY_OP_MORE_EQUAL",
+                        "<=": "MP_BINARY_OP_LESS_EQUAL",
+                        "==": "MP_BINARY_OP_EQUAL",
+                        "!=": "MP_BINARY_OP_NOT_EQUAL",
+                    }
+                    mp_op = op_map.get(value.ops[0], "MP_BINARY_OP_EQUAL")
+                    return f"mp_obj_is_true(mp_binary_op({mp_op}, {left}, {comp_c}))"
+                parts = [f"({left}"]
+                for op, comp in zip(value.ops, value.comparators):
+                    comp_c = self._value_to_c(comp)
+                    parts.append(f" {op} {comp_c}")
+                parts.append(")")
+                return "".join(parts)
+            case SelfAttrIR():
+                return f"self->{value.attr_path}"
+            case SelfMethodRefIR():
+                # Bound method reference: self.method -> bound method object
+                return (
+                    f"mp_obj_new_bound_meth("
+                    f"MP_OBJ_FROM_PTR(&{value.method_c_name}_obj), "
+                    f"MP_OBJ_FROM_PTR(self))"
+                )
+            case SelfMethodCallIR():
+                args = ["self"]
+                for i, arg in enumerate(value.args):
+                    arg_c = self._value_to_c(arg)
+                    # Use target param type when available for correct boxing
+                    target_type = value.param_types[i] if i < len(value.param_types) else arg.ir_type
+                    if target_type == IRType.OBJ and arg.ir_type != IRType.OBJ:
+                        args.append(self._box_expr(arg_c, arg.ir_type))
+                    else:
+                        args.append(arg_c)
+                args_str = ", ".join(args)
+                return f"{value.c_method_name}_native({args_str})"
+            case ParamAttrIR():
+                if value.is_trait_type:
+                    return f"mp_load_attr({value.c_param_name}, MP_QSTR_{value.attr_name})"
+                return (
+                    f"(({value.class_c_name}_obj_t *)MP_OBJ_TO_PTR({value.c_param_name}))"
+                    f"->{value.attr_path}"
+                )
+            case SubscriptIR():
+                val_c = self._value_to_c(value.value)
+                if value.is_rtuple and value.rtuple_index is not None:
+                    return f"{val_c}.f{value.rtuple_index}"
+                slice_c = self._value_to_c(value.slice_)
+                return f"mp_obj_subscr({val_c}, {self._box_expr(slice_c, value.slice_.ir_type)}, MP_OBJ_SENTINEL)"
+            case CallIR():
+                # Handle builtin calls that can appear in container contexts
+                if value.is_builtin and value.builtin_kind == "id":
+                    # id(obj) -> (mp_int_t)(uintptr_t)(obj)
+                    if value.args:
+                        arg_c = self._box_value_ir(value.args[0])
+                        return f"(mp_int_t)(uintptr_t)({arg_c})"
+                # General function call: emit as direct C call
+                boxed_args = [self._box_value_ir(a) for a in value.args]
+                n_args = len(boxed_args)
+                if n_args > 3:
+                    args_str = ", ".join(boxed_args)
+                    return f"{value.c_func_name}({n_args}, (const mp_obj_t[]){{{args_str}}})"
+                args_str = ", ".join(boxed_args)
+                return f"{value.c_func_name}({args_str})"
+            case ClassInstantiationIR():
+                boxed_args = [self._box_value_ir(a) for a in value.args]
+                args_str = ", ".join(boxed_args)
+                n = len(boxed_args)
+                return (
+                    f"{value.c_class_name}_make_new(&{value.c_class_name}_type, "
+                    f"{n}, 0, (const mp_obj_t[]){{{args_str}}})"
+                )
+            case SiblingClassInstantiationIR():
+                c_name = f"{value.c_prefix}_{value.class_name}"
+                boxed_args = [self._box_value_ir(a) for a in value.args]
+                args_str = ", ".join(boxed_args)
+                n = len(boxed_args)
+                return f"{c_name}_make_new(&{c_name}_type, {n}, 0, (const mp_obj_t[]){{{args_str}}})"
+            case ModuleCallIR():
+                # Module function call: module.func(args, **kwargs)
+                mod_import = _emit_dotted_module_import(value.module_name)
+                fn_expr = f"mp_load_attr({mod_import}, MP_QSTR_{value.func_name})"
+                boxed_args = [self._box_value_ir(a) for a in value.args]
+                # Build keyword args (interleaved: key, value, key, value, ...)
+                boxed_kwargs = []
+                for kw_name, kw_val in value.kwargs:
+                    boxed_kwargs.append(f"MP_OBJ_NEW_QSTR(MP_QSTR_{kw_name})")
+                    boxed_kwargs.append(self._box_value_ir(kw_val))
+                n_args = len(boxed_args)
+                n_kw = len(value.kwargs)
+                if n_kw > 0:
+                    all_args = boxed_args + boxed_kwargs
+                    args_str = ", ".join(all_args)
+                    return (
+                        f"mp_call_function_n_kw({fn_expr}, "
+                        f"{n_args}, {n_kw}, (const mp_obj_t[]){{{args_str}}})"
+                    )
+                if n_args == 0:
+                    return f"mp_call_function_0({fn_expr})"
+                elif n_args == 1:
+                    return f"mp_call_function_1({fn_expr}, {boxed_args[0]})"
+                elif n_args == 2:
+                    return f"mp_call_function_2({fn_expr}, {boxed_args[0]}, {boxed_args[1]})"
                 else:
-                    args.append(arg_c)
-            args_str = ", ".join(args)
-            return f"{value.c_method_name}_native({args_str})"
-        elif isinstance(value, ParamAttrIR):
-            if value.is_trait_type:
-                return f"mp_load_attr({value.c_param_name}, MP_QSTR_{value.attr_name})"
-            return (
-                f"(({value.class_c_name}_obj_t *)MP_OBJ_TO_PTR({value.c_param_name}))"
-                f"->{value.attr_path}"
-            )
-        elif isinstance(value, SubscriptIR):
-            val_c = self._value_to_c(value.value)
-            if value.is_rtuple and value.rtuple_index is not None:
-                return f"{val_c}.f{value.rtuple_index}"
-            slice_c = self._value_to_c(value.slice_)
-            return f"mp_obj_subscr({val_c}, {self._box_expr(slice_c, value.slice_.ir_type)}, MP_OBJ_SENTINEL)"
-        elif isinstance(value, CallIR):
-            # Handle builtin calls that can appear in container contexts
-            if value.is_builtin and value.builtin_kind == "id":
-                # id(obj) -> (mp_int_t)(uintptr_t)(obj)
-                if value.args:
-                    arg_c = self._box_value_ir(value.args[0])
-                    return f"(mp_int_t)(uintptr_t)({arg_c})"
-            # For other calls, we can't easily emit them inline - fall through to unknown
-        elif isinstance(value, ClassInstantiationIR):
-            boxed_args = [self._box_value_ir(a) for a in value.args]
-            args_str = ", ".join(boxed_args)
-            n = len(boxed_args)
-            return (
-                f"{value.c_class_name}_make_new(&{value.c_class_name}_type, "
-                f"{n}, 0, (const mp_obj_t[]){{{args_str}}})"
-            )
-        elif isinstance(value, SiblingClassInstantiationIR):
-            c_name = f"{value.c_prefix}_{value.class_name}"
-            boxed_args = [self._box_value_ir(a) for a in value.args]
-            args_str = ", ".join(boxed_args)
-            n = len(boxed_args)
-            return f"{c_name}_make_new(&{c_name}_type, {n}, 0, (const mp_obj_t[]){{{args_str}}})"
-        elif isinstance(value, ModuleCallIR):
-            # Module function call: module.func(args, **kwargs)
-            mod_import = _emit_dotted_module_import(value.module_name)
-            fn_expr = f"mp_load_attr({mod_import}, MP_QSTR_{value.func_name})"
-            boxed_args = [self._box_value_ir(a) for a in value.args]
-            # Build keyword args (interleaved: key, value, key, value, ...)
-            boxed_kwargs = []
-            for kw_name, kw_val in value.kwargs:
-                boxed_kwargs.append(f"MP_OBJ_NEW_QSTR(MP_QSTR_{kw_name})")
-                boxed_kwargs.append(self._box_value_ir(kw_val))
-            n_args = len(boxed_args)
-            n_kw = len(value.kwargs)
-            if n_kw > 0:
-                all_args = boxed_args + boxed_kwargs
-                args_str = ", ".join(all_args)
+                    args_str = ", ".join(boxed_args)
+                    return (
+                        f"mp_call_function_n_kw({fn_expr}, "
+                        f"{n_args}, 0, (const mp_obj_t[]){{{args_str}}})"
+                    )
+            case DynamicCallIR():
+                # Dynamic callable invocation: local_var(args)
+                callable_var = value.callable_var
+                boxed_args = [self._box_value_ir(a) for a in value.args]
+                # Build keyword args (interleaved: key, value, key, value, ...)
+                boxed_kwargs = []
+                for kw_name, kw_val in value.kwargs:
+                    boxed_kwargs.append(f"MP_OBJ_NEW_QSTR(MP_QSTR_{kw_name})")
+                    boxed_kwargs.append(self._box_value_ir(kw_val))
+                n_args = len(boxed_args)
+                n_kw = len(value.kwargs)
+                if n_kw > 0:
+                    all_args = boxed_args + boxed_kwargs
+                    args_str = ", ".join(all_args)
+                    return (
+                        f"mp_call_function_n_kw({callable_var}, "
+                        f"{n_args}, {n_kw}, (const mp_obj_t[]){{{args_str}}})"
+                    )
+                if n_args == 0:
+                    return f"mp_call_function_0({callable_var})"
+                elif n_args == 1:
+                    return f"mp_call_function_1({callable_var}, {boxed_args[0]})"
+                elif n_args == 2:
+                    return (
+                        f"mp_call_function_2({callable_var}, {boxed_args[0]}, {boxed_args[1]})"
+                    )
+                else:
+                    args_str = ", ".join(boxed_args)
+                    return (
+                        f"mp_call_function_n_kw({callable_var}, "
+                        f"{n_args}, 0, (const mp_obj_t[]){{{args_str}}})"
+                    )
+            case LambdaIR():
+                # Lambda as first-class value (same as function reference)
+                if value.captured_vars:
+                    captured_parts = [f"MP_OBJ_FROM_PTR(&{value.c_name}_obj)"]
+                    for var in value.captured_vars:
+                        captured_parts.append(var)
+                    n_closed = len(value.captured_vars)
+                    closed_arr = ", ".join(captured_parts[1:])
+                    return (
+                        f"mp_obj_new_closure(MP_OBJ_FROM_PTR(&{value.c_name}_obj), "
+                        f"{n_closed}, (mp_obj_t[]){{ {closed_arr} }})"
+                    )
+                return f"MP_OBJ_FROM_PTR(&{value.c_name}_obj)"
+            case IsInstanceIR():
+                obj_c = self._box_value_ir(value.obj)
+                return f"mp_obj_is_type({obj_c}, &{value.c_type_name})"
+            case SliceIR():
+                lower = self._box_value_ir(value.lower) if value.lower else "mp_const_none"
+                upper = self._box_value_ir(value.upper) if value.upper else "mp_const_none"
+                step = self._box_value_ir(value.step) if value.step else "mp_const_none"
+                return f"mp_obj_new_slice({lower}, {upper}, {step})"
+            case IfExprIR():
+                test_c = self._value_to_c(value.test)
+                body_c = self._value_to_c(value.body)
+                orelse_c = self._value_to_c(value.orelse)
+                if value.test.ir_type != IRType.BOOL:
+                    test_c = f"mp_obj_is_true({self._box_value_ir(value.test)})"
+                return f"(({test_c}) ? ({body_c}) : ({orelse_c}))"
+            case SuperCallIR():
+                # super().method(args) - compile-time resolved to parent method
+                if value.is_init:
+                    boxed_args = [self._box_value_ir(a) for a in value.args]
+                    total_args = len(boxed_args) + 1
+                    args_str = ", ".join(["MP_OBJ_FROM_PTR(self)"] + boxed_args)
+                    if total_args <= 3:
+                        return f"({value.parent_method_c_name}_mp({args_str}), mp_const_none)"
+                    return (
+                        f"({value.parent_method_c_name}_mp({total_args}, "
+                        f"(const mp_obj_t[]){{{args_str}}}), mp_const_none)"
+                    )
+                native_args = [self._value_to_c(a) for a in value.args]
+                args_str = ", ".join(native_args)
                 return (
-                    f"mp_call_function_n_kw({fn_expr}, "
-                    f"{n_args}, {n_kw}, (const mp_obj_t[]){{{args_str}}})"
+                    f"{value.parent_method_c_name}_native("
+                    f"({value.parent_c_name}_obj_t *)self"
+                    f"{", " if args_str else ""}{args_str})"
                 )
-            if n_args == 0:
-                return f"mp_call_function_0({fn_expr})"
-            elif n_args == 1:
-                return f"mp_call_function_1({fn_expr}, {boxed_args[0]})"
-            elif n_args == 2:
-                return f"mp_call_function_2({fn_expr}, {boxed_args[0]}, {boxed_args[1]})"
-            else:
+            case SiblingModuleRefIR():
+                raise ValueError(
+                    f"SiblingModuleRefIR(c_prefix='{value.c_prefix}') cannot be emitted "
+                    "as a standalone expression value. Sibling module references should "
+                    "only appear as receivers in SiblingModuleCallIR or "
+                    "SiblingClassInstantiationIR, not as first-class values."
+                )
+            case SiblingModuleCallIR():
+                # Direct C call to sibling module function
+                c_func_name = f"{value.c_prefix}_{value.func_name}"
+                boxed_args = [self._box_value_ir(a) for a in value.args]
                 args_str = ", ".join(boxed_args)
-                return (
-                    f"mp_call_function_n_kw({fn_expr}, "
-                    f"{n_args}, 0, (const mp_obj_t[]){{{args_str}}})"
-                )
-        elif isinstance(value, DynamicCallIR):
-            # Dynamic callable invocation: local_var(args)
-            callable_var = value.callable_var
-            boxed_args = [self._box_value_ir(a) for a in value.args]
-            # Build keyword args (interleaved: key, value, key, value, ...)
-            boxed_kwargs = []
-            for kw_name, kw_val in value.kwargs:
-                boxed_kwargs.append(f"MP_OBJ_NEW_QSTR(MP_QSTR_{kw_name})")
-                boxed_kwargs.append(self._box_value_ir(kw_val))
-            n_args = len(boxed_args)
-            n_kw = len(value.kwargs)
-            if n_kw > 0:
-                all_args = boxed_args + boxed_kwargs
-                args_str = ", ".join(all_args)
-                return (
-                    f"mp_call_function_n_kw({callable_var}, "
-                    f"{n_args}, {n_kw}, (const mp_obj_t[]){{{args_str}}})"
-                )
-            if n_args == 0:
-                return f"mp_call_function_0({callable_var})"
-            elif n_args == 1:
-                return f"mp_call_function_1({callable_var}, {boxed_args[0]})"
-            elif n_args == 2:
-                return (
-                    f"mp_call_function_2({callable_var}, {boxed_args[0]}, {boxed_args[1]})"
-                )
-            else:
+                if args_str:
+                    return f"{c_func_name}({args_str})"
+                return f"{c_func_name}()"
+            case CLibCallIR():
+                boxed_args = [self._box_value_ir(a) for a in value.args]
                 args_str = ", ".join(boxed_args)
-                return (
-                    f"mp_call_function_n_kw({callable_var}, "
-                    f"{n_args}, 0, (const mp_obj_t[]){{{args_str}}})"
-                )
-        return "/* unknown value */"
+                if value.uses_var_args:
+                    n = len(boxed_args)
+                    call_expr = f"{value.c_wrapper_name}({n}, (const mp_obj_t[]){{{args_str}}})"
+                else:
+                    call_expr = f"{value.c_wrapper_name}({args_str})"
+                if value.is_void:
+                    return f"({call_expr}, mp_const_none)"
+                return call_expr
+            case CLibEnumIR():
+                return str(value.c_enum_value)
+            case _:
+                assert_never(value)
 
     def _const_to_c(self, const: ConstIR) -> str:
         """Convert a ConstIR to its C literal string."""
@@ -822,7 +927,7 @@ class ContainerEmitter:
             return f'mp_obj_new_str("{escaped}", {len(v)})'
         return "/* unknown const */"
 
-    def _box_value_ir(self, value: ValueIR) -> str:
+    def _box_value_ir(self, value: ValueNode) -> str:
         """Return the C expression for a ValueIR, boxed to mp_obj_t."""
         c_expr = self._value_to_c(value)
         return self._box_expr(c_expr, value.ir_type)

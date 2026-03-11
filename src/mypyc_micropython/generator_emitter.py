@@ -12,8 +12,8 @@ from .ir import (
     FuncIR,
     NameIR,
     ReturnIR,
-    StmtIR,
-    ValueIR,
+    StmtNode,
+    ValueNode,
     YieldFromIR,
     YieldIR,
 )
@@ -165,15 +165,17 @@ class GeneratorEmitter(BaseEmitter):
             f"MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN({self.func_ir.c_name}_obj, {num_args}, {num_args}, {self.func_ir.c_name});",
         )
 
-    def _emit_statement(self, stmt: StmtIR, native: bool = False) -> list[str]:
+    def _emit_statement(self, stmt: StmtNode, native: bool = False) -> list[str]:
         del native
-        if isinstance(stmt, YieldIR):
-            return self._emit_yield(stmt)
-        if isinstance(stmt, YieldFromIR):
-            return self._emit_yield_from(stmt)
-        if isinstance(stmt, ReturnIR):
-            return self._emit_return(stmt)
-        return super()._emit_statement(stmt, native=False)
+        match stmt:
+            case YieldIR():
+                return self._emit_yield(stmt)
+            case YieldFromIR():
+                return self._emit_yield_from(stmt)
+            case ReturnIR():
+                return self._emit_return(stmt)
+            case _:
+                return super()._emit_statement(stmt, native=False)
 
     def _emit_yield(self, stmt: YieldIR) -> list[str]:
         lines = ["    {"]
@@ -323,15 +325,17 @@ class GeneratorEmitter(BaseEmitter):
         lines.append(f"    self->{target} = {expr};")
         return lines
 
-    def _emit_expr(self, value: ValueIR, native: bool = False) -> tuple[str, str]:
-        if isinstance(value, NameIR):
-            return f"self->{sanitize_name(value.c_name)}", value.ir_type.to_c_type_str()
-        return super()._emit_expr(value, native)
+    def _emit_expr(self, value: ValueNode, native: bool = False) -> tuple[str, str]:
+        match value:
+            case NameIR():
+                return f"self->{sanitize_name(value.c_name)}", value.ir_type.to_c_type_str()
+            case _:
+                return super()._emit_expr(value, native)
 
-    def _collect_yield_state_ids(self, body: list[StmtIR]) -> list[int]:
+    def _collect_yield_state_ids(self, body: list[StmtNode]) -> list[int]:
         state_ids: set[int] = set()
 
-        def walk(stmts: list[StmtIR]) -> None:
+        def walk(stmts: list[StmtNode]) -> None:
             for stmt in stmts:
                 if isinstance(stmt, YieldIR):
                     state_ids.add(stmt.state_id)
@@ -345,9 +349,9 @@ class GeneratorEmitter(BaseEmitter):
         walk(body)
         return sorted(state_ids)
 
-    def _has_yield_from(self, body: list[StmtIR]) -> bool:
+    def _has_yield_from(self, body: list[StmtNode]) -> bool:
         """Check if the body contains any YieldFromIR."""
-        def walk(stmts: list[StmtIR]) -> bool:
+        def walk(stmts: list[StmtNode]) -> bool:
             for stmt in stmts:
                 if isinstance(stmt, YieldFromIR):
                     return True
@@ -371,7 +375,7 @@ class GeneratorEmitter(BaseEmitter):
                 fields[safe] = c_type
 
         # Add iterator fields for ForIterIR loops
-        def walk_for_iter_fields(stmts: list[StmtIR]) -> None:
+        def walk_for_iter_fields(stmts: list[StmtNode]) -> None:
             for stmt in stmts:
                 if isinstance(stmt, ForIterIR):
                     loop_var = sanitize_name(stmt.c_loop_var)

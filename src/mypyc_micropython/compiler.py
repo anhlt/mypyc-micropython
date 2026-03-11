@@ -14,7 +14,7 @@ import ast
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .ir import CType, FuncIR, ModuleIR, RTuple
 from .type_checker import TypeCheckResult, type_check_file, type_check_package, type_check_source
@@ -297,7 +297,7 @@ def _compile_module_parts(
 ) -> _ModuleCompileParts:
     from .async_emitter import AsyncEmitter
     from .class_emitter import ClassEmitter
-    from .function_emitter import FunctionEmitter, MethodEmitter
+    from .function_emitter import BaseEmitter, FunctionEmitter, MethodEmitter
     from .generator_emitter import GeneratorEmitter
     from .ir_builder import IRBuilder, MypyTypeInfo
 
@@ -386,7 +386,7 @@ def _compile_module_parts(
 
             # Select appropriate emitter based on function type
             if func_ir.is_async:
-                emitter = AsyncEmitter(func_ir)
+                emitter: BaseEmitter = AsyncEmitter(func_ir)
             elif func_ir.is_generator:
                 emitter = GeneratorEmitter(func_ir)
             else:
@@ -561,7 +561,7 @@ def _extract_module_constants(source: str) -> dict[str, int | float | str | bool
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
             target = node.targets[0]
             if isinstance(target, ast.Name) and isinstance(node.value, ast.Constant):
-                constants[target.id] = node.value.value
+                constants[target.id] = cast(int | float | str | bool | None, node.value.value)
             elif isinstance(target, ast.Name) and isinstance(node.value, ast.UnaryOp):
                 # Handle negative numbers: -1, -3.14
                 if isinstance(node.value.op, ast.USub) and isinstance(node.value.operand, ast.Constant):
@@ -571,7 +571,7 @@ def _extract_module_constants(source: str) -> dict[str, int | float | str | bool
         # Handle NAME: Type = literal
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             if node.value and isinstance(node.value, ast.Constant):
-                constants[node.target.id] = node.value.value
+                constants[node.target.id] = cast(int | float | str | bool | None, node.value.value)
             elif node.value and isinstance(node.value, ast.UnaryOp):
                 if isinstance(node.value.op, ast.USub) and isinstance(node.value.operand, ast.Constant):
                     if isinstance(node.value.operand.value, (int, float)):

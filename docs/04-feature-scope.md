@@ -782,21 +782,21 @@ if (n := len(data)) > 10:
 
 ## Future Improvements
 
-### Exhaustive IR Node Matching via `assert_never`
+### Exhaustive IR Node Matching via `assert_never` ✅ Done
 
-Currently, IR dispatch in emitters (`function_emitter.py`, `container_emitter.py`, `ir_visualizer.py`) uses `isinstance` if/elif chains with no exhaustiveness enforcement. Adding a new IR node to `ir.py` and forgetting to handle it in any emitter produces a silent `/* unknown value */` bug at runtime.
+IR dispatch in emitters (`function_emitter.py`, `container_emitter.py`, `ir_visualizer.py`) now uses Python 3.12+ `match`/`case` statements with `typing.assert_never` for compile-time exhaustiveness checking via mypy -- the same pattern Rust uses for exhaustive `match`.
 
-**Planned approach**: Use `typing.assert_never` with union type aliases to get **compile-time exhaustiveness checking** via mypy — the same pattern Rust uses for exhaustive `match`.
+Union type aliases (`ValueNode`, `StmtNode`, `InstrNode`) are defined in `ir.py` as the single source of truth for all IR node types. Every dispatch function uses these union types in its signature, and `assert_never` in the default case ensures mypy flags any missing handler when a new IR node is added.
 
 ```python
 from typing import assert_never
 
-# In ir.py — single source of truth for all IR node types
-type ValueNode = TempIR | ConstIR | NameIR | FuncRefIR | ModuleRefIR | ModuleAttrIR | ...
-type StmtNode = ReturnIR | IfIR | WhileIR | ForRangeIR | ForIterIR | AssignIR | ...
-type InstrNode = ListNewIR | TupleNewIR | SetNewIR | DictNewIR | GetItemIR | ...
+# ir.py -- single source of truth for all IR node types
+ValueNode: TypeAlias = Union[TempIR, ConstIR, NameIR, FuncRefIR, ModuleRefIR, ModuleAttrIR, ...]
+StmtNode: TypeAlias = Union[ReturnIR, IfIR, WhileIR, ForRangeIR, ForIterIR, AssignIR, ...]
+InstrNode: TypeAlias = Union[ListNewIR, TupleNewIR, SetNewIR, DictNewIR, GetItemIR, ...]
 
-# In each emitter — mypy enforces completeness
+# In each emitter -- mypy enforces completeness
 def _value_to_c(self, value: ValueNode) -> str:
     match value:
         case TempIR():
@@ -808,9 +808,9 @@ def _value_to_c(self, value: ValueNode) -> str:
             assert_never(value)  # mypy error if any ValueNode member is unhandled
 ```
 
-**Why this matters**: mypy will report `Argument of type "NewIR" cannot be assigned to parameter of type "Never"` if you add a new IR node to the union but miss a dispatch site. This turns a silent runtime bug into a CI failure.
+**Dispatch functions converted:** `_value_to_c()` (28 branches), `emit_instr()` (13 branches), `_emit_statement()` (21 branches), `_emit_expr()` (28 branches), `print_stmt()` (24 branches), `print_instr()` (13 branches), `print_value()` (28 branches).
 
-**Prerequisites**: Requires defining union type aliases for each IR category (`ValueNode`, `StmtNode`, `InstrNode`, `ExprNode`) in `ir.py`.
+**Note:** `_emit_statement()` in `BaseEmitter` uses `raise ValueError` instead of `assert_never` because `GeneratorEmitter` and `AsyncEmitter` override it to handle additional statement types (`YieldIR`, `YieldFromIR`, `AwaitIR`, `AwaitModuleCallIR`).
 
 
 ## See Also

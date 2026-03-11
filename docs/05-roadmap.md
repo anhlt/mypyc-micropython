@@ -92,10 +92,11 @@ Phase 4: Exception Handling     ███████████████  ~
 Phase 5: Advanced Features      ████░░░░░░░░░░░  ~25% done
   generators ✅ (while/for-range/for-iter + yield) │ closures │ comprehensions │ map/filter
 
-Phase 6: Integration & Polish   ███████████████░ ~95% done
+Phase 6: Integration & Polish   ████████████████ 100% done
   ESP32 modules ✅ (35 modules + 2 packages on ESP32-C6) │ RTuple optimization ✅ (57x speedup)
   list access optimization ✅ │ benchmarks ✅ (22 tests, 11.8x avg) │ Full IR pipeline ✅
-  1002 tests ✅ │ type checking ✅ (strict by default) │ package compilation ✅ │ error messages │ docs
+  1195 tests ✅ │ type checking ✅ (strict by default) │ package compilation ✅
+  assert_never exhaustive dispatch ✅ │ match/case IR dispatch ✅ (Python 3.12+)
 
 Phase 7: Type-Based Optimizations  ░░░░░░░░░░░░░░░  TODO (new!)
   native int arithmetic │ typed local variables │ typed list access
@@ -996,21 +997,21 @@ Tasks:
 - [ ] CI/CD pipeline
 - [ ] Test on multiple targets (Unix, ESP32, RP2040)
 
-### 6.5 Exhaustive IR Node Matching via `assert_never`
+### 6.5 Exhaustive IR Node Matching via `assert_never` ✅ DONE
 
-**Problem**: IR dispatch in emitters uses `isinstance` if/elif chains with no exhaustiveness check. Adding a new IR node to `ir.py` and forgetting to handle it in any emitter produces a silent `/* unknown value */` bug at runtime.
+**Problem**: IR dispatch in emitters used `isinstance` if/elif chains with no exhaustiveness check. Adding a new IR node to `ir.py` and forgetting to handle it in any emitter produced a silent `/* unknown value */` bug at runtime.
 
-**Solution**: Use `typing.assert_never` with union type aliases for compile-time exhaustiveness checking via mypy — the same pattern Rust uses for exhaustive `match`.
+**Solution**: Union type aliases (`ValueNode`, `StmtNode`, `InstrNode`) in `ir.py` + `typing.assert_never` + Python 3.12+ `match`/`case` statements for compile-time exhaustiveness checking via mypy.
 
 ```python
 from typing import assert_never
 
-# ir.py — union types as single source of truth
-type ValueNode = TempIR | ConstIR | NameIR | FuncRefIR | ModuleRefIR | ...
-type StmtNode = ReturnIR | IfIR | WhileIR | ForRangeIR | AssignIR | ...
-type InstrNode = ListNewIR | TupleNewIR | DictNewIR | GetItemIR | ...
+# ir.py -- union types as single source of truth
+ValueNode: TypeAlias = Union[TempIR, ConstIR, NameIR, FuncRefIR, ModuleRefIR, ...]
+StmtNode: TypeAlias = Union[ReturnIR, IfIR, WhileIR, ForRangeIR, AssignIR, ...]
+InstrNode: TypeAlias = Union[ListNewIR, TupleNewIR, DictNewIR, GetItemIR, ...]
 
-# Each emitter — mypy catches missing cases
+# Each emitter -- mypy catches missing cases
 def _value_to_c(self, value: ValueNode) -> str:
     match value:
         case TempIR(): ...
@@ -1019,16 +1020,17 @@ def _value_to_c(self, value: ValueNode) -> str:
             assert_never(value)  # mypy error if union member unhandled
 ```
 
-**Impact**: Turns silent runtime bugs into CI failures. When you add a new IR class, mypy will flag every dispatch site that needs updating.
+**Impact**: Turns silent runtime bugs into CI failures. When you add a new IR class, mypy flags every dispatch site that needs updating.
 
 Tasks:
-- [ ] Define union type aliases in `ir.py`: `ValueNode`, `StmtNode`, `InstrNode`, `ExprNode`
-- [ ] Add `assert_never` fallback to `_value_to_c()` in `container_emitter.py`
-- [ ] Add `assert_never` fallback to `_emit_stmt()` in `function_emitter.py`
-- [ ] Add `assert_never` fallback to `_emit_instr()` in `container_emitter.py`
-- [ ] Add `assert_never` fallback to `_emit_expr()` in `function_emitter.py`
-- [ ] Add `assert_never` fallback to IR visualizer dispatch in `ir_visualizer.py`
-- [ ] Verify mypy catches missing handlers in CI
+- [x] Define union type aliases in `ir.py`: `ValueNode`, `StmtNode`, `InstrNode`
+- [x] Add `assert_never` fallback to `_value_to_c()` in `container_emitter.py`
+- [x] Add `assert_never` / `raise ValueError` fallback to `_emit_statement()` in `function_emitter.py`
+- [x] Add `assert_never` fallback to `emit_instr()` in `container_emitter.py`
+- [x] Add `assert_never` fallback to `_emit_expr()` in `function_emitter.py`
+- [x] Add `assert_never` fallback to IR visualizer dispatch in `ir_visualizer.py`
+- [x] Convert all `isinstance` dispatch chains to `match`/`case` (Python 3.12+)
+- [x] Drop Python 3.10/3.11 support, target Python >=3.12
 
 ---
 

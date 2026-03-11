@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Convert all IR dispatch from `isinstance` chains to Python 3.12 `match`/`case` with `assert_never` exhaustive checking (#54)
+- Add union type aliases (`ValueNode`, `StmtNode`, `InstrNode`) to `ir.py` for precise IR node typing
+- Enforce strict mypy typing across all 25 compiler source files (zero errors)
+- Drop Python 3.10/3.11 support, require Python >=3.12
+- Update CI matrix to test Python 3.12 and 3.13
+
 ### Fixed
 - `from X import Y` names not resolved as imports in IR builder when used as values
   - `_build_name()` now checks `_imported_from` for `ModuleAttrIR` resolution
