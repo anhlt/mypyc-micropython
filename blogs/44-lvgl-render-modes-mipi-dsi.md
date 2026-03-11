@@ -466,6 +466,40 @@ That division of responsibility is exactly what we wanted:
 - The only operation during a frame is a DMA copy into a buffer the driver can schedule safely.
 - Vsync is handled once, centrally, by the DPI driver.
 
-In practice, this removed tearing and ghosting, and it made rapid UI updates stable. In a stress test of 10,000 label updates, the loop completed in about 1.34 seconds, around 7,468 updates per second.
+In practice, this removed tearing and ghosting, and it made rapid UI updates stable. In a stress test of 10,000 label updates, the loop completed in about 1.2 seconds, around 8,300 updates per second.
 
-The key takeaway is simple: on a video-mode MIPI-DSI DPI panel with driver-managed double framebuffers, PARTIAL mode is the correct choice because LVGL should not own scanout buffers. LVGL should render into DMA-friendly scratch buffers, and the DPI driver should manage the real framebuffers and vsync swaps.
+### One more thing: garbage on first display
+
+After switching to PARTIAL mode, the display worked perfectly during updates -- but the very first frame after `init_display()` showed overlapping garbage text. Old pixel data from a previous session was stuck in the DPI framebuffers.
+
+The root cause: the DPI panel allocates its two framebuffers in PSRAM via `num_fbs=2`. PSRAM is not zeroed on allocation. The DPI hardware starts scanning immediately after `esp_lcd_panel_init()`, so whatever random bytes were in PSRAM show up on screen before LVGL has a chance to render anything.
+
+The fix has three parts:
+
+First, get the DPI framebuffer pointers (we are not using them as LVGL buffers, but we still need to clear them):
+
+```c
+void *fb0 = NULL;
+void *fb1_dpi = NULL;
+esp_lcd_dpi_panel_get_frame_buffer(panel, 2, &fb0, &fb1_dpi);
+```
+
+Second, zero both buffers. `memset` with zero produces black pixels in RGB565:
+
+```c
+size_t fb_size = 480 * 800 * 2;  // width * height * bytes_per_pixel
+memset(fb0, 0, fb_size);
+memset(fb1_dpi, 0, fb_size);
+```
+
+Third, force LVGL to render the default screen (a blank background) and flush it before turning on the backlight:
+
+```c
+lv_obj_invalidate(lv_screen_active());
+lv_timer_handler();
+set_backlight(true);  // only now turn on the light
+```
+
+By clearing the framebuffers and doing a full LVGL render pass before the backlight turns on, the user never sees garbage. The display appears to turn on with a clean screen.
+
+The key takeaway is simple: on a video-mode MIPI-DSI DPI panel with driver-managed double framebuffers, PARTIAL mode is the correct choice because LVGL should not own scanout buffers. LVGL should render into DMA-friendly scratch buffers, and the DPI driver should manage the real framebuffers and vsync swaps. And always clear the framebuffers before turning on the backlight -- PSRAM does not initialize to zero.
