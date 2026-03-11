@@ -35,6 +35,9 @@ jobs:
       - name: Run linter
         run: ruff check src/ tests/
 
+      - name: Run mypy type checker
+        run: python -m mypy src/mypyc_micropython/
+
       - name: Run Python runtime tests
         run: pytest -xvs -m "not c_runtime"
 
