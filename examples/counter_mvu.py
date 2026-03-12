@@ -28,7 +28,7 @@ from lvgl_mvu.app import App
 from lvgl_mvu.appliers import register_p0_appliers
 from lvgl_mvu.attrs import AttrRegistry
 from lvgl_mvu.dsl import Button, Label, Screen
-from lvgl_mvu.events import EventBinder, LvEvent_CLICKED
+from lvgl_mvu.events import EventBinder, LvEvent
 from lvgl_mvu.factories import delete_lv_obj, register_p0_factories
 from lvgl_mvu.layouts import HStack, VStack
 from lvgl_mvu.program import Cmd, Program
@@ -95,13 +95,13 @@ def view(model: Model) -> Widget:
 
     # Buttons row
     btn_dec: Widget = (
-        Button("-").size(80, 50).bg_color(0xFF6B6B).on(LvEvent_CLICKED, MSG_DECREMENT).build()
+        Button("-").size(80, 50).bg_color(0xFF6B6B).on(LvEvent.CLICKED, MSG_DECREMENT).build()
     )
     btn_reset: Widget = (
-        Button("0").size(80, 50).bg_color(0x4ECDC4).on(LvEvent_CLICKED, MSG_RESET).build()
+        Button("0").size(80, 50).bg_color(0x4ECDC4).on(LvEvent.CLICKED, MSG_RESET).build()
     )
     btn_inc: Widget = (
-        Button("+").size(80, 50).bg_color(0x45B7D1).on(LvEvent_CLICKED, MSG_INCREMENT).build()
+        Button("+").size(80, 50).bg_color(0x45B7D1).on(LvEvent.CLICKED, MSG_INCREMENT).build()
     )
 
     buttons: Widget = HStack(10).with_children([btn_dec, btn_reset, btn_inc])

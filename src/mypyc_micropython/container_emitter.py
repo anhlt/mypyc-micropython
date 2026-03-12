@@ -42,6 +42,7 @@ from .ir import (
     ModuleCallIR,
     ModuleImportIR,
     ModuleRefIR,
+    ImportedClassAttrIR,
     NameIR,
     ParamAttrIR,
     SelfAttrIR,
@@ -660,6 +661,11 @@ class ContainerEmitter:
                 # Import module and load attribute at runtime (supports dotted names)
                 mod_import = _emit_dotted_module_import(value.module_name)
                 return f"mp_load_attr({mod_import}, MP_QSTR_{value.attr_name})"
+            case ImportedClassAttrIR():
+                # Import module, get class, load attribute at runtime
+                mod_import = _emit_dotted_module_import(value.source_module)
+                class_load = f"mp_load_attr({mod_import}, MP_QSTR_{value.class_name})"
+                return f"mp_load_attr({class_load}, MP_QSTR_{value.attr_name})"
             case ConstIR():
                 return self._const_to_c(value)
             case BinOpIR():

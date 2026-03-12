@@ -1234,7 +1234,11 @@ class ClassEmitter:
                 or name in ("__len__", "__getitem__", "__setitem__")
             )
         ]
-        if method_names:
+        # Also check for Final constants and ClassVar fields
+        final_fields = [f for f in self.class_ir.fields if f.is_final and f.final_value is not None]
+        classvar_fields = [f for f in self.class_ir.fields if f.is_classvar and not f.is_final]
+        has_locals = method_names or final_fields or classvar_fields
+        if has_locals:
             slots.append(f"    locals_dict, &{self.c_name}_locals_dict")
 
         slots_str = ",\n".join(slots)

@@ -1,7 +1,8 @@
 """LVGL event system for the MVU framework.
 
 Provides:
-- LvEvent: Integer constants for all LVGL event codes
+- LvEvent: Integer constants for all LVGL event codes (using Final[int])
+- HandlerKind: Handler type tags (using Final[int])
 - EventHandler: Wrapper around a registered LVGL callback
 - EventBinder: Registers/deactivates event callbacks on LVGL objects
 
@@ -28,91 +29,107 @@ Usage::
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Final
 
 import lvgl as lv
 
-
 # ---------------------------------------------------------------------------
-# LVGL Event Code Constants (module-level for static access)
+# LVGL Event Code Constants (using Final[int] for compile-time constants)
 # ---------------------------------------------------------------------------
 # Values match LVGL 9.6 lv_event_code_t enum.
+# Access via LvEvent.CLICKED, LvEvent.VALUE_CHANGED, etc.
 
-# Input events
-LvEvent_ALL: int = 0
-LvEvent_PRESSED: int = 1
-LvEvent_PRESSING: int = 2
-LvEvent_PRESS_LOST: int = 3
-LvEvent_SHORT_CLICKED: int = 4
-LvEvent_SINGLE_CLICKED: int = 5
-LvEvent_DOUBLE_CLICKED: int = 6
-LvEvent_TRIPLE_CLICKED: int = 7
-LvEvent_LONG_PRESSED: int = 8
-LvEvent_LONG_PRESSED_REPEAT: int = 9
-LvEvent_CLICKED: int = 10
-LvEvent_RELEASED: int = 11
 
-# Scroll events
-LvEvent_SCROLL_BEGIN: int = 12
-LvEvent_SCROLL_THROW_BEGIN: int = 13
-LvEvent_SCROLL_END: int = 14
-LvEvent_SCROLL: int = 15
+class LvEvent:
+    """LVGL event type constants.
 
-# Gesture / input device events
-LvEvent_GESTURE: int = 16
-LvEvent_KEY: int = 17
-LvEvent_ROTARY: int = 18
-LvEvent_FOCUSED: int = 19
-LvEvent_DEFOCUSED: int = 20
-LvEvent_LEAVE: int = 21
-LvEvent_HIT_TEST: int = 22
-LvEvent_INDEV_RESET: int = 23
-LvEvent_HOVER_OVER: int = 24
-LvEvent_HOVER_LEAVE: int = 25
+    These constants are compile-time values that can be accessed as
+    LvEvent.CLICKED, LvEvent.LONG_PRESSED, etc.
 
-# Drawing events
-LvEvent_COVER_CHECK: int = 26
-LvEvent_REFR_EXT_DRAW_SIZE: int = 27
-LvEvent_DRAW_MAIN_BEGIN: int = 28
-LvEvent_DRAW_MAIN: int = 29
-LvEvent_DRAW_MAIN_END: int = 30
-LvEvent_DRAW_POST_BEGIN: int = 31
-LvEvent_DRAW_POST: int = 32
-LvEvent_DRAW_POST_END: int = 33
-LvEvent_DRAW_TASK_ADDED: int = 34
+    Generated C code will emit #define constants for efficient access.
+    """
 
-# Widget-specific events
-LvEvent_VALUE_CHANGED: int = 35
-LvEvent_INSERT: int = 36
-LvEvent_REFRESH: int = 37
-LvEvent_READY: int = 38
-LvEvent_CANCEL: int = 39
+    # Input events
+    ALL: Final[int] = 0
+    PRESSED: Final[int] = 1
+    PRESSING: Final[int] = 2
+    PRESS_LOST: Final[int] = 3
+    SHORT_CLICKED: Final[int] = 4
+    SINGLE_CLICKED: Final[int] = 5
+    DOUBLE_CLICKED: Final[int] = 6
+    TRIPLE_CLICKED: Final[int] = 7
+    LONG_PRESSED: Final[int] = 8
+    LONG_PRESSED_REPEAT: Final[int] = 9
+    CLICKED: Final[int] = 10
+    RELEASED: Final[int] = 11
 
-# Object lifecycle events
-LvEvent_STATE_CHANGED: int = 40
-LvEvent_CREATE: int = 41
-LvEvent_OBJ_DELETE: int = 42
-LvEvent_CHILD_CHANGED: int = 43
-LvEvent_CHILD_CREATED: int = 44
-LvEvent_CHILD_DELETED: int = 45
+    # Scroll events
+    SCROLL_BEGIN: Final[int] = 12
+    SCROLL_THROW_BEGIN: Final[int] = 13
+    SCROLL_END: Final[int] = 14
+    SCROLL: Final[int] = 15
 
-# Screen events
-LvEvent_SCREEN_UNLOAD_START: int = 46
-LvEvent_SCREEN_LOAD_START: int = 47
-LvEvent_SCREEN_LOADED: int = 48
-LvEvent_SCREEN_UNLOADED: int = 49
+    # Gesture / input device events
+    GESTURE: Final[int] = 16
+    KEY: Final[int] = 17
+    ROTARY: Final[int] = 18
+    FOCUSED: Final[int] = 19
+    DEFOCUSED: Final[int] = 20
+    LEAVE: Final[int] = 21
+    HIT_TEST: Final[int] = 22
+    INDEV_RESET: Final[int] = 23
+    HOVER_OVER: Final[int] = 24
+    HOVER_LEAVE: Final[int] = 25
 
-# Layout/style events
-LvEvent_SIZE_CHANGED: int = 50
-LvEvent_STYLE_CHANGED: int = 51
-LvEvent_LAYOUT_CHANGED: int = 52
-LvEvent_GET_SELF_SIZE: int = 53
+    # Drawing events
+    COVER_CHECK: Final[int] = 26
+    REFR_EXT_DRAW_SIZE: Final[int] = 27
+    DRAW_MAIN_BEGIN: Final[int] = 28
+    DRAW_MAIN: Final[int] = 29
+    DRAW_MAIN_END: Final[int] = 30
+    DRAW_POST_BEGIN: Final[int] = 31
+    DRAW_POST: Final[int] = 32
+    DRAW_POST_END: Final[int] = 33
+    DRAW_TASK_ADDED: Final[int] = 34
+
+    # Widget-specific events
+    VALUE_CHANGED: Final[int] = 35
+    INSERT: Final[int] = 36
+    REFRESH: Final[int] = 37
+    READY: Final[int] = 38
+    CANCEL: Final[int] = 39
+
+    # Object lifecycle events
+    STATE_CHANGED: Final[int] = 40
+    CREATE: Final[int] = 41
+    OBJ_DELETE: Final[int] = 42
+    CHILD_CHANGED: Final[int] = 43
+    CHILD_CREATED: Final[int] = 44
+    CHILD_DELETED: Final[int] = 45
+
+    # Screen events
+    SCREEN_UNLOAD_START: Final[int] = 46
+    SCREEN_LOAD_START: Final[int] = 47
+    SCREEN_LOADED: Final[int] = 48
+    SCREEN_UNLOADED: Final[int] = 49
+
+    # Layout/style events
+    SIZE_CHANGED: Final[int] = 50
+    STYLE_CHANGED: Final[int] = 51
+    LAYOUT_CHANGED: Final[int] = 52
+    GET_SELF_SIZE: Final[int] = 53
+
 
 # ---------------------------------------------------------------------------
-# Handler kind tags
+# Handler kind tags (using Final[int] for compile-time constants)
 # ---------------------------------------------------------------------------
-HANDLER_MSG: int = 0
-HANDLER_VALUE: int = 1
+
+
+class HandlerKind:
+    """Handler type constants for EventHandler."""
+
+    MSG: Final[int] = 0
+    VALUE: Final[int] = 1
 
 
 # ---------------------------------------------------------------------------
@@ -125,8 +142,8 @@ class EventHandler:
 
     Attributes:
         active: Whether the handler should dispatch messages.
-        kind: HANDLER_MSG or HANDLER_VALUE.
-        payload: The message (HANDLER_MSG) or message factory (HANDLER_VALUE).
+        kind: HandlerKind.MSG or HandlerKind.VALUE.
+        payload: The message (MSG) or message factory (VALUE).
     """
 
     active: bool
@@ -182,7 +199,7 @@ class EventBinder:
         Returns:
             An EventHandler reference for later unbinding.
         """
-        handler = EventHandler(HANDLER_MSG, msg)
+        handler = EventHandler(HandlerKind.MSG, msg)
         dispatch_fn = self._dispatch_fn
 
         # Closure captures: handler, dispatch_fn, msg
@@ -212,7 +229,7 @@ class EventBinder:
         Returns:
             An EventHandler reference for later unbinding.
         """
-        handler = EventHandler(HANDLER_VALUE, msg_fn)
+        handler = EventHandler(HandlerKind.VALUE, msg_fn)
         dispatch_fn = self._dispatch_fn
 
         # Closure captures: handler, dispatch_fn, msg_fn

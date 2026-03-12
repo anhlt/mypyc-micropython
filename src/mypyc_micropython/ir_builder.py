@@ -64,6 +64,7 @@ from .ir import (
     ModuleAttrIR,
     ModuleCallIR,
     ModuleRefIR,
+    ImportedClassAttrIR,
     NameIR,
     ObjAttrAssignIR,
     ParamAttrIR,
@@ -2640,6 +2641,20 @@ class IRBuilder:
                             result_type=result_type,
                         )
                         return result_temp, subscript_prelude + [attr_access]
+
+        # Check for attribute access on imported class (from module import Class; Class.attr)
+        if isinstance(expr.value, ast.Name):
+            class_name = expr.value.id
+            if class_name in self._imported_from:
+                # This is an imported class - generate runtime attribute access
+                source_module = self._imported_from[class_name]
+                self._uses_imports = True
+                return ImportedClassAttrIR(
+                    ir_type=IRType.OBJ,
+                    source_module=source_module,
+                    class_name=class_name,
+                    attr_name=attr_name,
+                ), []
 
         return ConstIR(ir_type=IRType.OBJ, value=None), []
 

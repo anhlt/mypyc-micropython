@@ -61,6 +61,7 @@ from .ir import (
     ModuleImportIR,
     ModuleIR,
     ModuleRefIR,
+    ImportedClassAttrIR,
     NameIR,
     ObjAttrAssignIR,
     ParamAttrIR,
@@ -750,6 +751,8 @@ class IRPrinter:
                 return f"{value.module_name}.{value.func_name}({all_args})"
             case ModuleAttrIR():
                 return f"{value.module_name}.{value.attr_name}"
+            case ImportedClassAttrIR():
+                return f"{value.class_name}.{value.attr_name}  # from {value.source_module}"
             case SiblingModuleCallIR():
                 args = ", ".join(self.print_value(a) for a in value.args)
                 return f"{value.c_prefix}.{value.func_name}({args})"

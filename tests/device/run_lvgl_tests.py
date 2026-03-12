@@ -795,7 +795,7 @@ try:
     import lvgl as lv
     import lvgl_mvu
     EventBinder = lvgl_mvu.events.EventBinder
-    LvEvent_CLICKED = lvgl_mvu.events.LvEvent_CLICKED
+    LvEvent = lvgl_mvu.events.LvEvent
 
     # Track callback invocations
     _callback_count = [0]
@@ -816,7 +816,7 @@ try:
 
     # Bind event using compiled closure
     MSG_TEST = 42
-    handler = binder.bind(btn, LvEvent_CLICKED, MSG_TEST)
+    handler = binder.bind(btn, LvEvent.CLICKED, MSG_TEST)
     t("Event bound", handler is not None, "True")
     t("Handler active", handler.active, "True")
 
@@ -828,7 +828,7 @@ try:
     # to the LVGL C bindings generator.
 
     # Test unbind functionality
-    binder.unbind(btn, LvEvent_CLICKED, handler)
+    binder.unbind(btn, LvEvent.CLICKED, handler)
     t("Handler inactive after unbind", handler.active, "False")
 
     # Clean up

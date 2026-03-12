@@ -697,6 +697,7 @@ def _scan_package_recursive(
         accumulated_parts.struct_code.extend(parts.struct_code)
         accumulated_parts.function_code.extend(parts.function_code)
         accumulated_parts.class_code.extend(parts.class_code)
+        accumulated_parts.class_constants.extend(parts.class_constants)
 
         accumulated_parts.uses_print = accumulated_parts.uses_print or parts.uses_print
         accumulated_parts.uses_list_opt = accumulated_parts.uses_list_opt or parts.uses_list_opt
@@ -746,6 +747,7 @@ def _scan_package_recursive(
         accumulated_parts.struct_code.extend(init_parts.struct_code)
         accumulated_parts.function_code.extend(init_parts.function_code)
         accumulated_parts.class_code.extend(init_parts.class_code)
+        accumulated_parts.class_constants.extend(init_parts.class_constants)
 
         accumulated_parts.uses_print = accumulated_parts.uses_print or init_parts.uses_print
         accumulated_parts.uses_list_opt = (

@@ -44,6 +44,7 @@ from .ir import (
     ModuleAttrIR,
     ModuleCallIR,
     ModuleRefIR,
+    ImportedClassAttrIR,
     NameIR,
     ObjAttrAssignIR,
     ParamAttrIR,
@@ -699,6 +700,8 @@ class BaseEmitter:
                     "only appear as receivers in SiblingModuleCallIR or "
                     "SiblingClassInstantiationIR, not as first-class values."
                 )
+            case ImportedClassAttrIR():
+                return self._emit_imported_class_attr(value)
             case _:
                 assert_never(value)
 
@@ -1396,6 +1399,26 @@ class BaseEmitter:
         """
         mod_import = _emit_dotted_module_import(attr.module_name)
         return f"mp_load_attr({mod_import}, MP_QSTR_{attr.attr_name})", "mp_obj_t"
+
+    def _emit_imported_class_attr(self, attr: ImportedClassAttrIR) -> tuple[str, str]:
+        """Emit C code for accessing an attribute on an imported class.
+
+        For: from lvgl_mvu.events import LvEvent; LvEvent.CLICKED
+
+        Generated C pattern:
+            mp_load_attr(
+                mp_load_attr(
+                    mp_import_name(MP_QSTR_lvgl_mvu, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)),
+                    MP_QSTR_events),
+                MP_QSTR_LvEvent),
+            MP_QSTR_CLICKED)
+        """
+        # Import the source module
+        mod_import = _emit_dotted_module_import(attr.source_module)
+        # Load the class from the module
+        class_load = f"mp_load_attr({mod_import}, MP_QSTR_{attr.class_name})"
+        # Load the attribute from the class
+        return f"mp_load_attr({class_load}, MP_QSTR_{attr.attr_name})", "mp_obj_t"
 
     def _emit_sibling_module_call(
         self, call: SiblingModuleCallIR, native: bool = False
