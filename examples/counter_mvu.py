@@ -35,7 +35,6 @@ from lvgl_mvu.program import Cmd, Program
 from lvgl_mvu.reconciler import Reconciler
 from lvgl_mvu.widget import Widget
 
-
 # ---------------------------------------------------------------------------
 # Messages
 # ---------------------------------------------------------------------------

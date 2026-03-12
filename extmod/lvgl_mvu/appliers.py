@@ -174,7 +174,7 @@ def apply_button_text(lv_obj: object, value: object) -> None:
     # Check if button already has a child label
     child_cnt: int = lv.lv_obj_get_child_count(lv_obj)
     label: object
-    
+
     if child_cnt > 0:
         # Update existing child (assumed to be the label)
         label = lv.lv_obj_get_child(lv_obj, 0)

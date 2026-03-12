@@ -178,7 +178,7 @@ def test_trait_identity() -> str:
     """Test is/is not with trait-typed parameters."""
     p1 = Person(1, "Alice", 30)
     p2 = Person(2, "Bob", 25)
-    
+
     # Same object
     same: bool = is_same_named(p1, p1)
     # Different objects
@@ -187,10 +187,10 @@ def test_trait_identity() -> str:
     not_same: bool = is_not_same_named(p1, p2)
     # is not None
     not_none: bool = is_not_none_named(p1)
-    
+
     r1: str = "T" if same else "F"
     r2: str = "T" if diff else "F"
     r3: str = "T" if not_same else "F"
     r4: str = "T" if not_none else "F"
-    
+
     return r1 + "," + r2 + "," + r3 + "," + r4

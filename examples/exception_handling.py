@@ -66,7 +66,7 @@ def full_try(a: int, b: int) -> int:
 def catch_with_binding(a: int, b: int) -> int:
     try:
         return a // b
-    except ZeroDivisionError as e:
+    except ZeroDivisionError:
         return -1
 
 

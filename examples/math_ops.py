@@ -4,7 +4,6 @@ Demonstrates runtime import support for built-in MicroPython modules.
 """
 
 import math
-import time
 
 
 def distance(x1: float, y1: float, x2: float, y2: float) -> float:
