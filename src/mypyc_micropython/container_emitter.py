@@ -18,7 +18,9 @@ from .ir import (
     BinOpIR,
     BoxIR,
     CallIR,
+    ClassConstIR,
     ClassInstantiationIR,
+    ClassVarIR,
     CLibCallIR,
     CLibEnumIR,
     CompareIR,
@@ -640,6 +642,13 @@ class ContainerEmitter:
                 return value.name
             case NameIR():
                 return value.c_name
+            case ClassConstIR():
+                # Final class constant - compile-time constant
+                # Use the pre-generated #define constant name
+                return value.c_name
+            case ClassVarIR():
+                # ClassVar - runtime attribute lookup on class type
+                return f"mp_load_attr(MP_OBJ_FROM_PTR(&{value.class_c_name}_type), MP_QSTR_{value.attr_name})"
             case FuncRefIR():
                 # Function reference as first-class value
                 return f"MP_OBJ_FROM_PTR(&{value.c_name}_obj)"

@@ -7519,3 +7519,117 @@ def f() -> object:
         assert "mp_import_name(MP_QSTR_ui" in result
         assert "MP_QSTR_Button" in result
         assert "MP_QSTR_size" in result
+
+
+# ============================================================================
+# Test: Class Constants (Final) and ClassVar Support
+# ============================================================================
+
+
+class TestClassConstants:
+    """Test Final class constants are compiled to #define constants.
+
+    This enables `LvEvent.CLICKED` syntax instead of `LvEvent_CLICKED`.
+    Final fields emit compile-time constants accessed directly.
+    """
+
+    def test_final_int_constant(self):
+        """Final[int] class attribute should generate #define."""
+        source = '''
+from typing import Final
+
+class LvEvent:
+    CLICKED: Final[int] = 10
+    LONG_PRESSED: Final[int] = 20
+
+def get_click_event() -> int:
+    return LvEvent.CLICKED
+'''
+        result = compile_source(source, "test")
+        # Should generate #define constants (with module prefix)
+        assert "#define test_LvEvent_CLICKED" in result
+        assert "#define test_LvEvent_LONG_PRESSED" in result
+        # Should use constant directly (not mp_load_attr)
+        assert "test_LvEvent_CLICKED" in result
+
+    def test_final_bool_constant(self):
+        """Final[bool] class attribute should generate #define."""
+        source = '''
+from typing import Final
+
+class Config:
+    DEBUG: Final[bool] = True
+    VERBOSE: Final[bool] = False
+
+def is_debug() -> bool:
+    return Config.DEBUG
+'''
+        result = compile_source(source, "test")
+        assert "#define test_Config_DEBUG" in result
+        assert "true" in result or "1" in result
+
+    def test_final_in_locals_dict(self):
+        """Final constants should be accessible via class dict."""
+        source = '''
+from typing import Final
+
+class LvEvent:
+    CLICKED: Final[int] = 10
+'''
+        result = compile_source(source, "test")
+        # Should be in locals dict for Python access
+        assert "MP_QSTR_CLICKED" in result
+        assert "MP_ROM_INT(10)" in result
+
+    def test_classvar_mutable(self):
+        """ClassVar[T] fields should use runtime lookup."""
+        source = '''
+from typing import ClassVar
+
+class Counter:
+    count: ClassVar[int] = 0
+
+def get_count() -> object:
+    return Counter.count
+'''
+        result = compile_source(source, "test")
+        # Should use mp_load_attr for runtime lookup
+        assert "mp_load_attr" in result
+        assert "MP_QSTR_count" in result
+
+    def test_non_classvar_instance_attr_error(self):
+        """Accessing non-ClassVar field via Class.attr should raise error."""
+        source = '''
+class Point:
+    x: int = 0
+
+def get_x() -> int:
+    return Point.x
+'''
+        import pytest
+        with pytest.raises(TypeError, match="Cannot access instance attribute"):
+            compile_source(source, "test")
+
+    def test_mixed_final_and_instance_fields(self):
+        """Class with both Final constants and instance fields."""
+        source = '''
+from typing import Final
+
+class Widget:
+    DEFAULT_SIZE: Final[int] = 100
+    width: int
+    height: int
+
+    def __init__(self, w: int, h: int) -> None:
+        self.width = w
+        self.height = h
+
+def get_default() -> int:
+    return Widget.DEFAULT_SIZE
+'''
+        result = compile_source(source, "test")
+        # Final constant should be a #define (with module prefix)
+        assert "#define test_Widget_DEFAULT_SIZE" in result
+        # Instance fields should be in struct
+        assert "mp_int_t width" in result
+        assert "mp_int_t height" in result

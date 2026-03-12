@@ -98,6 +98,7 @@ class ModuleEmitter:
         self,
         forward_decls: list[str],
         struct_code: list[str],
+        class_constants: list[str],  # #define constants for Final class attrs
         function_code: list[str],
         class_code: list[str],
         functions: list[FuncIR],
@@ -143,6 +144,11 @@ class ModuleEmitter:
             lines.extend(self._emit_module_var_init_helper(module_init_name, module_var_entries))
             lines.append("")
 
+        # Emit class constants (#define) before functions that use them
+        if class_constants:
+            lines.extend(class_constants)
+            lines.append("")
+
         for func_code in function_code:
             if module_var_entries:
                 lines.append(self._inject_module_init_call(func_code, module_init_name))
@@ -184,6 +190,7 @@ class ModuleEmitter:
         *,
         forward_decls: list[str],
         struct_code: list[str],
+        class_constants: list[str],  # #define constants for Final class attrs
         function_code: list[str],
         class_code: list[str],
         parent_functions: list[FuncIR],
@@ -224,6 +231,11 @@ class ModuleEmitter:
             lines.extend(self._emit_module_var_declarations(module_var_entries))
             lines.append("")
             lines.extend(self._emit_module_var_init_helper(module_init_name, module_var_entries))
+            lines.append("")
+
+        # Emit class constants (#define) before functions that use them
+        if class_constants:
+            lines.extend(class_constants)
             lines.append("")
 
         for func_code in function_code:

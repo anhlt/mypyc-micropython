@@ -18,8 +18,10 @@ from .ir import (
     BinOpIR,
     BreakIR,
     CallIR,
+    ClassConstIR,
     ClassInstantiationIR,
     ClassIR,
+    ClassVarIR,
     CLibCallIR,
     CLibEnumIR,
     CompareIR,
@@ -614,6 +616,13 @@ class BaseEmitter:
                 return self._emit_const(value)
             case NameIR():
                 return value.c_name, value.ir_type.to_c_type_str()
+            case ClassConstIR():
+                # Final class constant - use the pre-generated #define constant name
+                return value.c_name, value.value_ctype.to_c_type_str()
+            case ClassVarIR():
+                # ClassVar - runtime attribute lookup on class type
+                expr = f"mp_load_attr(MP_OBJ_FROM_PTR(&{value.class_c_name}_type), MP_QSTR_{value.attr_name})"
+                return expr, "mp_obj_t"
             case FuncRefIR():
                 return f"MP_OBJ_FROM_PTR(&{value.c_name}_obj)", "mp_obj_t"
             case LambdaIR():

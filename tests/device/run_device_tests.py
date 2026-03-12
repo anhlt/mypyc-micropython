@@ -954,6 +954,27 @@ t("GenericBox str val", box2.get_value(), "hello")
 t("GenericBox str lbl", box2.get_label(), "str")
 gc.collect()
 
+
+# ---- class_constants ----
+suite("class_constants")
+import class_constants as cc
+
+# Test LvEvent class constants via Class.ATTR syntax
+t("LvEvent.CLICKED", cc.get_click_event(), "10")
+t("LvEvent.LONG_PRESSED", cc.get_long_press_event(), "20")
+
+# Test Config class constants
+t("Config.DEBUG_MODE", cc.is_debug(), "True")
+t("Config.MAX_ITEMS", cc.get_max_items(), "100")
+
+# Test function using class constants in comparisons
+t("check_event(10)", cc.check_event(10), "True")
+t("check_event(99)", cc.check_event(99), "False")
+
+# Test using class constants in if/else
+t("compare_events eq", cc.compare_events(5, 5), "10")  # Returns CLICKED
+t("compare_events neq", cc.compare_events(5, 10), "30")  # Returns RELEASED
+gc.collect()
 # ---- summary ----
 gc.collect()
 print("@D:" + str(_total) + "|" + str(_passed) + "|" + str(_failed))
