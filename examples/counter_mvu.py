@@ -110,7 +110,7 @@ def view(model: Model) -> Widget:
     stack: Widget = (
         VStack(15)
         .width(320)
-        .height(200)
+        .height(240)
         .align(9, 0, -30)  # LV_ALIGN_CENTER = 9, offset up by 30px
         .bg_color(0x2D2D44)  # Dark purple-gray
         .bg_opa(255)
