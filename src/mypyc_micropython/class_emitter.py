@@ -1118,7 +1118,6 @@ class ClassEmitter:
 
         # Add Final constants to locals dict
         for field in final_fields:
-            c_name = f"{self.c_name}_{field.name}"
             value = field.final_value
             if isinstance(value, bool):
                 lines.append(f"    {{ MP_ROM_QSTR(MP_QSTR_{field.name}), MP_ROM_INT({1 if value else 0}) }},")
