@@ -20,8 +20,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `examples/lambda_closures.py` demonstrating lambda features
 
 ### Changed
-
-### Changed
 - Convert all IR dispatch from `isinstance` chains to Python 3.12 `match`/`case` with `assert_never` exhaustive checking (#54)
 - Add union type aliases (`ValueNode`, `StmtNode`, `InstrNode`) to `ir.py` for precise IR node typing
 - Enforce strict mypy typing across all 25 compiler source files (zero errors)
