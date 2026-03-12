@@ -412,6 +412,7 @@ def _compile_module_parts(
                 uses_imports = True
             used_rtuples.update(func_ir.used_rtuples)
 
+
     module_ir.imported_modules = ir_builder.imported_modules
     module_ir.constants = ir_builder.module_constants
     module_ir.module_vars = ir_builder.module_vars
@@ -477,6 +478,16 @@ def _compile_module_parts(
             function_code.append("")
 
         class_code.append(class_emitter.emit_all_except_struct())
+
+    # Emit all lambda functions generated during function/method building
+    # NOTE: Must be after class method processing since methods may contain lambdas
+    for lambda_func_ir in ir_builder.lambda_funcs:
+        # Add to module (but not to module globals - lambdas are internal)
+        lambda_emitter = FunctionEmitter(lambda_func_ir)
+        forward_decls.append(lambda_emitter.emit_forward_declaration())
+        lambda_code, _ = lambda_emitter.emit()
+        function_code.append(lambda_code)
+        used_rtuples.update(lambda_func_ir.used_rtuples)
 
     used_libs = {
         key: value
@@ -686,6 +697,7 @@ def _scan_package_recursive(
         accumulated_parts.struct_code.extend(parts.struct_code)
         accumulated_parts.function_code.extend(parts.function_code)
         accumulated_parts.class_code.extend(parts.class_code)
+        accumulated_parts.class_constants.extend(parts.class_constants)
 
         accumulated_parts.uses_print = accumulated_parts.uses_print or parts.uses_print
         accumulated_parts.uses_list_opt = accumulated_parts.uses_list_opt or parts.uses_list_opt
@@ -735,6 +747,7 @@ def _scan_package_recursive(
         accumulated_parts.struct_code.extend(init_parts.struct_code)
         accumulated_parts.function_code.extend(init_parts.function_code)
         accumulated_parts.class_code.extend(init_parts.class_code)
+        accumulated_parts.class_constants.extend(init_parts.class_constants)
 
         accumulated_parts.uses_print = accumulated_parts.uses_print or init_parts.uses_print
         accumulated_parts.uses_list_opt = (

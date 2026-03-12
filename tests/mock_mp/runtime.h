@@ -1189,14 +1189,32 @@ static inline mp_obj_t mp_call_function_n_kw(mp_obj_t fun, size_t n_args, size_t
 #define MP_ROM_PTR(x) ((mp_obj_t)(x))
 #define MP_ROM_INT(x) MP_OBJ_NEW_SMALL_INT(x)
 
-#define MP_DEFINE_CONST_FUN_OBJ_0(obj_name, fun_name) const int obj_name = 0
-#define MP_DEFINE_CONST_FUN_OBJ_1(obj_name, fun_name) const int obj_name = 0
-#define MP_DEFINE_CONST_FUN_OBJ_2(obj_name, fun_name) const int obj_name = 0
-#define MP_DEFINE_CONST_FUN_OBJ_3(obj_name, fun_name) const int obj_name = 0
-#define MP_DEFINE_CONST_FUN_OBJ_VAR(obj_name, min, fun_name) const int obj_name = 0
+/* Mock closure and function object type support */
+typedef struct {
+    mp_obj_base_t base;
+    short n_def_args;
+} mp_obj_fun_builtin_fixed_t;
+
+typedef struct {
+    mp_obj_base_t base;
+    short n_def_args;
+} mp_obj_fun_builtin_var_t;
+
+static inline mp_obj_t mp_obj_new_closure(mp_obj_t fun, size_t n_closed, const mp_obj_t *closed) {
+    /* For mock testing, just return the function itself (ignore closed vars) */
+    (void)n_closed;
+    (void)closed;
+    return fun;
+}
+
+#define MP_DEFINE_CONST_FUN_OBJ_0(obj_name, fun_name) const mp_obj_fun_builtin_fixed_t obj_name = {{0}, 0}
+#define MP_DEFINE_CONST_FUN_OBJ_1(obj_name, fun_name) const mp_obj_fun_builtin_fixed_t obj_name = {{0}, 0}
+#define MP_DEFINE_CONST_FUN_OBJ_2(obj_name, fun_name) const mp_obj_fun_builtin_fixed_t obj_name = {{0}, 0}
+#define MP_DEFINE_CONST_FUN_OBJ_3(obj_name, fun_name) const mp_obj_fun_builtin_fixed_t obj_name = {{0}, 0}
+#define MP_DEFINE_CONST_FUN_OBJ_VAR(obj_name, min, fun_name) const mp_obj_fun_builtin_var_t obj_name = {{0}, 0}
 #define MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(obj_name, min, max, fun_name) \
-    const int obj_name = 0
-#define MP_DEFINE_CONST_FUN_OBJ_KW(obj_name, min, fun_name) const int obj_name = 0
+    const mp_obj_fun_builtin_var_t obj_name = {{0}, 0}
+#define MP_DEFINE_CONST_FUN_OBJ_KW(obj_name, min, fun_name) const mp_obj_fun_builtin_var_t obj_name = {{0}, 0}
 #define MP_DEFINE_CONST_DICT(dict_name, table_name) const int dict_name = 0
 #define MP_TYPE_FLAG_NONE (0)
 #define MP_TYPE_FLAG_ITER_IS_ITERNEXT (1)

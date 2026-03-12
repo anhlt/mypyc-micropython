@@ -129,13 +129,9 @@ class ClassEmitter:
                 if (method_ir.has_defaults or num_args > 3)
                 else "mp_obj_fun_builtin_fixed_t"
             )
-            # Mock runtime headers define MP_DEFINE_CONST_FUN_OBJ_* as const int.
-            # Keep forward declarations compatible in both real and mock builds.
-            lines.append("#ifdef MYPYC_MICROPYTHON_FUNCTIONAL_RUNTIME_H")
-            lines.append(f"extern const int {method_ir.c_name}_obj;")
-            lines.append("#else")
+            # Use mp_obj_fun_builtin_fixed_t for forward declarations
+            # (both real MicroPython and mock runtime define this type)
             lines.append(f"extern const {obj_type} {method_ir.c_name}_obj;")
-            lines.append("#endif")
 
         if lines:
             lines.append("")
@@ -1238,7 +1234,11 @@ class ClassEmitter:
                 or name in ("__len__", "__getitem__", "__setitem__")
             )
         ]
-        if method_names:
+        # Also check for Final constants and ClassVar fields
+        final_fields = [f for f in self.class_ir.fields if f.is_final and f.final_value is not None]
+        classvar_fields = [f for f in self.class_ir.fields if f.is_classvar and not f.is_final]
+        has_locals = method_names or final_fields or classvar_fields
+        if has_locals:
             slots.append(f"    locals_dict, &{self.c_name}_locals_dict")
 
         slots_str = ",\n".join(slots)

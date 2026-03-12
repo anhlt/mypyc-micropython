@@ -151,34 +151,40 @@ def apply_radius(lv_obj: object, value: object) -> None:
 
 
 def apply_text(lv_obj: object, value: object) -> None:
-    """Set text content of a label or button.
+    """Set text content of a label widget.
 
-    For labels, sets text directly via lv_label_set_text.
-    For buttons, creates/updates a child label.
+    This function should ONLY be called on label objects created via
+    lv_label_create(). Calling on non-label objects will crash.
+
+    For buttons, use apply_button_text instead.
     """
-    # Try setting as label first (most common case)
-    try:
-        lv.lv_label_set_text(lv_obj, value)
-        return
-    except Exception:
-        pass
+    lv.lv_label_set_text(lv_obj, value)
 
-    # For buttons, need a child label
+
+def apply_button_text(lv_obj: object, value: object) -> None:
+    """Set text on a button by creating/updating a child label.
+
+    Buttons don't have native text support - they need a child label.
+    This function creates a centered label inside the button.
+
+    Note: If called multiple times, creates multiple labels (LVGL handles
+    the z-ordering). For proper updates, the reconciler should track
+    the child label separately.
+    """
+    # Check if button already has a child label
     child_cnt: int = lv.lv_obj_get_child_count(lv_obj)
     label: object
-    if child_cnt > 0:
-        # Update existing child label
-        label = lv.lv_obj_get_child(lv_obj, 0)
-        try:
-            lv.lv_label_set_text(label, value)
-            return
-        except Exception:
-            pass
 
-    # Create new label for button
-    label = lv.lv_label_create(lv_obj)
-    lv.lv_label_set_text(label, value)
-    lv.lv_obj_center(label)
+    if child_cnt > 0:
+        # Update existing child (assumed to be the label)
+        label = lv.lv_obj_get_child(lv_obj, 0)
+        lv.lv_label_set_text(label, value)
+    else:
+        # Create new centered label
+        label = lv.lv_label_create(lv_obj)
+        lv.lv_label_set_text(label, value)
+        lv.lv_obj_center(label)
+
 def apply_text_color(lv_obj: object, value: object) -> None:
     """Set text color."""
     color: object = lv.lv_color_hex(value)
@@ -276,6 +282,7 @@ def register_p0_appliers(registry: AttrRegistry) -> None:
     registry.add(AttrDef(AttrKey.TEXT_COLOR, "text_color", 0xFFFFFF, apply_text_color))
     registry.add(AttrDef(AttrKey.TEXT_OPA, "text_opa", 255, apply_text_opa))
     registry.add(AttrDef(AttrKey.TEXT_ALIGN, "text_align", 0, apply_text_align))
+    registry.add(AttrDef(AttrKey.BUTTON_TEXT, "button_text", "", apply_button_text))
 
     # Layout
     registry.add(AttrDef(AttrKey.FLEX_FLOW, "flex_flow", 0, apply_flex_flow))

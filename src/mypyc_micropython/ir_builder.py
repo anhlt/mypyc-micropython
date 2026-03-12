@@ -53,9 +53,11 @@ from .ir import (
     FuncRefIR,
     IfExprIR,
     IfIR,
+    ImportedClassAttrIR,
     InstrNode,
     IRType,
     IsInstanceIR,
+    LambdaIR,
     ListCompIR,
     ListNewIR,
     MethodCallIR,
@@ -289,6 +291,11 @@ class IRBuilder:
         self._known_enums: dict[str, EnumIR] = dict(known_enums or {})
         self._known_functions: dict[str, tuple[str, CType]] = {}  # py_name -> (c_name, return_type)
         self._ctx: BuildContext = BuildContext(locals_=[])
+        # Lambda tracking
+        self._lambda_counter = 0  # Module-level counter for unique lambda IDs
+        self._lambda_funcs: list[FuncIR] = []  # Lambda FuncIRs to be emitted as module functions
+        self._current_scope_vars: set[str] = set()  # Variables in current function scope (params + locals)
+
 
     def _fresh_temp(self) -> str:
         self._temp_counter += 1
@@ -436,6 +443,12 @@ class IRBuilder:
     def imported_modules(self) -> set[str]:
         """Set of module names that have been imported."""
         return self._imported_modules
+    @property
+    def lambda_funcs(self) -> list[FuncIR]:
+        """List of lambda FuncIRs generated during build."""
+        return self._lambda_funcs
+
+
 
     def build_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> FuncIR:
         self._temp_counter = 0
@@ -582,6 +595,8 @@ class IRBuilder:
             self._var_types[star_kwargs.name] = "mp_obj_t"
             self._star_c_names[star_kwargs.name] = f"_star_{sanitize_name(star_kwargs.name)}"
 
+        # Track current scope variables for closure capture detection
+        self._current_scope_vars = set(local_vars)
         self._ctx = BuildContext(locals_=local_vars)
         body_ir: list[StmtNode] = []
         for stmt in node.body:
@@ -1579,6 +1594,8 @@ class IRBuilder:
             return self._build_attribute(expr, locals_)
         elif isinstance(expr, ast.ListComp):
             return self._build_list_comp(expr, locals_)
+        elif isinstance(expr, ast.Lambda):
+            return self._build_lambda(expr, locals_)
         return ConstIR(ir_type=IRType.OBJ, value=None), []
 
     def _build_constant(self, expr: ast.Constant) -> ConstIR:
@@ -2625,6 +2642,20 @@ class IRBuilder:
                         )
                         return result_temp, subscript_prelude + [attr_access]
 
+        # Check for attribute access on imported class (from module import Class; Class.attr)
+        if isinstance(expr.value, ast.Name):
+            class_name = expr.value.id
+            if class_name in self._imported_from:
+                # This is an imported class - generate runtime attribute access
+                source_module = self._imported_from[class_name]
+                self._uses_imports = True
+                return ImportedClassAttrIR(
+                    ir_type=IRType.OBJ,
+                    source_module=source_module,
+                    class_name=class_name,
+                    attr_name=attr_name,
+                ), []
+
         return ConstIR(ir_type=IRType.OBJ, value=None), []
 
     def _build_clib_enum(
@@ -2744,6 +2775,175 @@ class IRBuilder:
         )
 
         return result, [list_comp]
+
+    def _build_lambda(self, expr: ast.Lambda, locals_: list[str]) -> tuple[ValueNode, list[InstrNode]]:
+        """Build IR for lambda expression: lambda x, y: x + y
+
+        Lambdas are compiled to module-level C functions with unique names.
+        Captured variables (closures) become extra leading parameters, and
+        mp_obj_new_closure() is used to bind those values at closure creation time.
+
+        MicroPython's closure mechanism prepends the closed-over values to the
+        argument list when calling the wrapped function.
+        """
+        # Get unique lambda ID and C name
+        lambda_id = self._lambda_counter
+        self._lambda_counter += 1
+        c_name = f"{self.c_name}__lambda_{lambda_id}"
+
+        # Collect lambda parameter names
+        lambda_param_names: set[str] = set()
+        for arg in expr.args.args:
+            lambda_param_names.add(arg.arg)
+
+        # Find free variables (referenced but not lambda params)
+        # These are potential closure captures
+        free_vars = self._collect_free_vars(expr.body, lambda_param_names)
+
+        # Determine which free vars are captured from enclosing scope
+        # Variables in locals_ or current scope that appear free in lambda
+        captured_vars: list[tuple[str, CType]] = []
+        for var in free_vars:
+            if var in locals_ or var in self._current_scope_vars:
+                # Get the variable's type from _var_types
+                c_type_str = self._var_types.get(var, "mp_obj_t")
+                c_type = CType.from_c_type_str(c_type_str)
+                captured_vars.append((var, c_type))
+            # Skip module-level constants, known functions, known classes, etc.
+            # These don't need closure capture
+
+        # Build lambda parameters: captured vars first, then regular params
+        # mp_obj_new_closure prepends captured values, so we prepend captured params
+        params: list[tuple[str, CType]] = []
+
+        # Add captured variables as leading parameters (boxed as mp_obj_t)
+        for var_name, _ in captured_vars:
+            params.append((var_name, CType.MP_OBJ_T))
+
+        # Add regular lambda parameters (all boxed for simplicity)
+        for arg in expr.args.args:
+            # Try to get type annotation if present
+            if arg.annotation:
+                c_type = CType.from_python_type(self._annotation_to_py_type(arg.annotation))
+            else:
+                c_type = CType.MP_OBJ_T
+            params.append((arg.arg, c_type))
+
+        # Create a temporary context to build the lambda body
+        # Lambda body is just an expression, so we wrap it in a return
+        captured_var_names = [name for name, _ in captured_vars]
+        lambda_locals = list(lambda_param_names) + captured_var_names
+
+        # Save current state
+        old_var_types = dict(self._var_types)
+        old_list_vars = dict(self._list_vars)
+        old_ctx = self._ctx
+        old_scope_vars = self._current_scope_vars.copy()
+
+        # Set up lambda-local state
+        self._ctx = BuildContext(locals_=lambda_locals)
+        self._current_scope_vars = set(lambda_locals)
+        for var_name, _ in captured_vars:
+            self._var_types[var_name] = "mp_obj_t"
+        for arg in expr.args.args:
+            if arg.annotation:
+                self._var_types[arg.arg] = self._annotation_to_c_type(arg.annotation)
+            else:
+                self._var_types[arg.arg] = "mp_obj_t"
+
+        # Build the body expression
+        body_value, body_prelude = self._build_expr(expr.body, lambda_locals)
+
+        # Restore state
+        self._var_types = old_var_types
+        self._list_vars = old_list_vars
+        self._ctx = old_ctx
+        self._current_scope_vars = old_scope_vars
+
+        # Determine return type from body expression
+        return_type = self._get_value_ctype(body_value)
+
+        # Create the lambda's body as a single return statement
+        lambda_body: list[StmtNode] = []
+        lambda_body.extend(body_prelude)  # type: ignore[arg-type]
+        lambda_body.append(ReturnIR(value=body_value, prelude=body_prelude))
+
+        # Create FuncIR for the lambda
+        func_ir = FuncIR(
+            name=f"_lambda_{lambda_id}",
+            c_name=c_name,
+            params=params,
+            return_type=return_type,
+            body_ast=None,
+            body=lambda_body,
+            is_method=False,
+            class_ir=None,
+            locals_={
+                name: CType.from_c_type_str(self._var_types.get(name, "mp_obj_t"))
+                for name in lambda_locals
+            },
+            docstring=None,
+            arg_types=[p[1].to_c_type_str() for p in params],
+            uses_print=False,
+            uses_list_opt=False,
+            uses_imports=False,
+            max_temp=self._temp_counter,
+        )
+
+        # Store lambda FuncIR for later emission
+        self._lambda_funcs.append(func_ir)
+
+        # Create LambdaIR as the value
+        lambda_ir = LambdaIR(
+            ir_type=IRType.OBJ,
+            lambda_id=lambda_id,
+            c_name=c_name,
+            func_ir=func_ir,
+            captured_vars=captured_vars,
+        )
+
+        return lambda_ir, []
+
+    def _collect_free_vars(self, node: ast.expr, bound_vars: set[str]) -> list[str]:
+        """Collect free variables in an expression (names referenced but not bound)."""
+        free_vars: list[str] = []
+        seen: set[str] = set()
+
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load):
+                name = child.id
+                if name not in bound_vars and name not in seen:
+                    # Skip builtins and known constants
+                    if name in BUILTIN_FUNCTIONS:
+                        continue
+                    if name in ("True", "False", "None"):
+                        continue
+                    if name in self._module_constants:
+                        continue
+                    if name in self._known_classes:
+                        continue
+                    if name in self._known_enums:
+                        continue
+                    if name in self._known_functions:
+                        continue
+                    if name in self._imported_from:
+                        continue
+                    seen.add(name)
+                    free_vars.append(name)
+
+        return free_vars
+
+    def _get_value_ctype(self, value: ValueNode) -> CType:
+        """Get CType from a ValueNode's ir_type."""
+        if hasattr(value, "ir_type"):
+            ir_type = value.ir_type
+            if ir_type == IRType.INT:
+                return CType.MP_INT_T
+            elif ir_type == IRType.FLOAT:
+                return CType.MP_FLOAT_T
+            elif ir_type == IRType.BOOL:
+                return CType.BOOL
+        return CType.MP_OBJ_T
 
     def _resolve_class_name_from_type_str(self, type_str: str) -> str | None:
         """Extract a known class name from a type string, handling Optional/union.

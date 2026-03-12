@@ -7652,3 +7652,78 @@ class Config:
         import pytest
         with pytest.raises(NotImplementedError, match="Final\\[str\\] class attributes are not supported"):
             compile_source(source, "test")
+# Test: Lambda Expression Support
+# ============================================================================
+
+
+class TestLambdaCompilation:
+    """Test lambda expression compilation to C code."""
+
+    def test_simple_lambda(self):
+        """Test basic lambda compiles to C function."""
+        source = '''
+def use_lambda() -> int:
+    add = lambda x, y: x + y
+    return add(2, 3)
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Lambda should be compiled as separate function
+        assert "test__lambda_0" in result
+        assert "MP_DEFINE_CONST_FUN_OBJ_2" in result or "mp_obj_t" in result
+
+    def test_lambda_with_closure_int(self):
+        """Test lambda capturing int variable boxes correctly."""
+        source = '''
+def use_closure(n: int) -> int:
+    multiplier: int = 10
+    fn = lambda x: x * multiplier
+    return fn(n)
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should have closure creation with boxed int
+        assert "mp_obj_new_closure" in result
+        assert "mp_obj_new_int(multiplier)" in result
+
+    def test_lambda_with_closure_obj(self):
+        """Test lambda capturing object variable passes directly."""
+        source = '''
+def use_closure(n: object) -> object:
+    handler: object = n
+    fn = lambda x: handler
+    return fn(1)
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should have closure creation
+        assert "mp_obj_new_closure" in result
+        # handler is already mp_obj_t, no boxing needed
+        assert "mp_obj_new_int(handler)" not in result
+
+    def test_lambda_no_capture(self):
+        """Test lambda without closures doesn't use mp_obj_new_closure."""
+        source = '''
+def use_lambda() -> int:
+    add = lambda x, y: x + y
+    return add(2, 3)
+'''
+        result = compile_source(source, "test", type_check=False)
+        # No closure needed - direct function reference
+        assert "MP_OBJ_FROM_PTR(&test__lambda_0_obj)" in result
+        # No closure wrapping without captured vars
+        # (check the assignment line specifically)
+        lines = result.split('\n')
+        add_assignment = [line for line in lines if 'add = ' in line]
+        assert len(add_assignment) == 1
+        assert "mp_obj_new_closure" not in add_assignment[0]
+
+    def test_multiple_lambdas(self):
+        """Test multiple lambdas get unique IDs."""
+        source = '''
+def use_lambdas() -> int:
+    add = lambda x, y: x + y
+    sub = lambda x, y: x - y
+    return add(5, 3) + sub(5, 3)
+'''
+        result = compile_source(source, "test", type_check=False)
+        # Should have two lambda functions
+        assert "test__lambda_0" in result
+        assert "test__lambda_1" in result

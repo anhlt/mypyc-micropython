@@ -954,7 +954,6 @@ t("GenericBox str val", box2.get_value(), "hello")
 t("GenericBox str lbl", box2.get_label(), "str")
 gc.collect()
 
-
 # ---- class_constants ----
 suite("class_constants")
 import class_constants as cc
@@ -975,6 +974,34 @@ t("check_event(99)", cc.check_event(99), "False")
 t("compare_events eq", cc.compare_events(5, 5), "10")  # Returns CLICKED
 t("compare_events neq", cc.compare_events(5, 10), "30")  # Returns RELEASED
 gc.collect()
+
+# ---- lambda_closures ----
+suite("lambda_closures")
+import lambda_closures as lc
+
+# Simple lambda (no closure)
+t("simple_lambda", lc.simple_lambda(), "5")
+
+# Lambda with closure (captures multiplier and base)
+t("lambda_with_closure(0)", lc.lambda_with_closure(0), "50")
+t("lambda_with_closure(5)", lc.lambda_with_closure(5), "55")
+
+# Multiple lambdas in same function
+# add(10,5)=15 + sub(10,5)=5 + mul(10,5)=50 = 70
+t("multiple_lambdas", lc.multiple_lambdas(), "70")
+
+# Lambda capturing multiple variables
+# x = a+1 = 10+1 = 11
+# y = b+2 = 20+2 = 22
+# fn(100) = x + y + z = 11 + 22 + 100 = 133
+t("lambda_multi_capture(10,20)", lc.lambda_multi_capture(10, 20), "133")
+
+# Higher-order function with lambda
+# double = lambda x: x * 2
+# higher_order(double, 21) = 42
+t("use_higher_order", lc.use_higher_order(), "42")
+gc.collect()
+
 # ---- summary ----
 gc.collect()
 print("@D:" + str(_total) + "|" + str(_passed) + "|" + str(_failed))

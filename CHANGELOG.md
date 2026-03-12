@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Lambda expression support with closure capture
+  - `lambda x, y: x + y` syntax now compiles to MicroPython C code
+  - Captured variables from enclosing scope automatically boxed for closure
+  - Multiple lambdas in same function get unique IDs (`_lambda_0`, `_lambda_1`, etc.)
+  - Uses MicroPython's `mp_obj_new_closure()` for closure creation
+- `LambdaIR` now fully implemented with `captured_vars: list[tuple[str, CType]]`
+- `_build_lambda()` method in `ir_builder.py` for AST to IR translation
+- `lambda_funcs` property on `IRBuilder` exposes generated lambda FuncIRs
+- 9 new tests for lambda/closure support (IR builder, compiler, C runtime)
+- `examples/lambda_closures.py` demonstrating lambda features
+
 ### Changed
 - Convert all IR dispatch from `isinstance` chains to Python 3.12 `match`/`case` with `assert_never` exhaustive checking (#54)
 - Add union type aliases (`ValueNode`, `StmtNode`, `InstrNode`) to `ir.py` for precise IR node typing

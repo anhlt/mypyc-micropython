@@ -25,7 +25,7 @@ static const char *TAG = "gt911_touch";
 // GT911 I2C configuration
 #define TOUCH_I2C_SDA       GPIO_NUM_7
 #define TOUCH_I2C_SCL       GPIO_NUM_8
-#define TOUCH_I2C_ADDR      0x5D        // GT911 address (INT pin LOW at power-on)
+#define TOUCH_I2C_ADDR      0x14        // GT911 alternate address (INT pin HIGH at power-on)
 #define TOUCH_I2C_FREQ_HZ   400000      // 400kHz I2C
 
 // Touch RST/INT pins (not connected on GUITION board per docs)

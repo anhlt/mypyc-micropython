@@ -93,7 +93,7 @@ def Button(text: str = "") -> WidgetBuilder:
 
     Args:
         text: Optional button label text. If provided, a label child
-              is added automatically.
+              is added automatically via BUTTON_TEXT attribute.
 
     Returns:
         WidgetBuilder configured for BUTTON type.
@@ -104,5 +104,7 @@ def Button(text: str = "") -> WidgetBuilder:
     """
     builder = WidgetBuilder(WidgetKey.BUTTON)
     if text != "":
-        builder = builder.set_attr(AttrKey.TEXT, text)
+        # Use BUTTON_TEXT instead of TEXT to create a child label
+        # TEXT would call lv_label_set_text which crashes on buttons
+        builder = builder.set_attr(AttrKey.BUTTON_TEXT, text)
     return builder

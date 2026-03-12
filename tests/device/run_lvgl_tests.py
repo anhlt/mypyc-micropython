@@ -788,6 +788,63 @@ t("app sub timer torn", _timer_torn_down[0], "1")
 
 gc.collect()
 
+# ---- events_callback (test compiled closure callbacks with LVGL) ----
+suite("events_callback")
+
+try:
+    import lvgl as lv
+    import lvgl_mvu
+    EventBinder = lvgl_mvu.events.EventBinder
+    LvEvent = lvgl_mvu.events.LvEvent
+
+    # Track callback invocations
+    _callback_count = [0]
+    _last_msg = [None]
+
+    def test_dispatch(msg):
+        _callback_count[0] += 1
+        _last_msg[0] = msg
+
+    # Create EventBinder with our test dispatch function
+    binder = EventBinder(test_dispatch)
+    t("EventBinder created", binder is not None, "True")
+
+    # Create a test screen and button
+    scr = lv.lv_obj_create(None)
+    btn = lv.lv_button_create(scr)
+    t("Button created", btn is not None, "True")
+
+    # Bind event using compiled closure
+    MSG_TEST = 42
+    handler = binder.bind(btn, LvEvent.CLICKED, MSG_TEST)
+    t("Event bound", handler is not None, "True")
+    t("Handler active", handler.active, "True")
+
+    # NOTE: Cannot trigger events programmatically - lv_obj_send_event is not
+    # exposed in our LVGL bindings. The event binding is verified to work via
+    # manual testing and the counter_mvu app which handles real button clicks.
+    #
+    # To fully test event dispatch, we would need to add lv_obj_send_event
+    # to the LVGL C bindings generator.
+
+    # Test unbind functionality
+    binder.unbind(btn, LvEvent.CLICKED, handler)
+    t("Handler inactive after unbind", handler.active, "False")
+
+    # Clean up
+    lv.lv_obj_delete(scr)
+    t("Cleanup done", True, "True")
+
+except ImportError as e:
+    print("SKIP: events modules not available - " + str(e))
+except Exception as e:
+    print("ERROR: events_callback tests failed - " + str(e))
+    import sys
+    sys.print_exception(e)
+    _failed += 1
+gc.collect()
+
+
 # ---- counter_mvu (real MVU app with display) ----
 suite("counter_mvu")
 

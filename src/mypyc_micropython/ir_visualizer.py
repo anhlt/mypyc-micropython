@@ -48,6 +48,7 @@ from .ir import (
     GetItemIR,
     IfExprIR,
     IfIR,
+    ImportedClassAttrIR,
     InstrIR,
     InstrNode,
     IsInstanceIR,
@@ -688,9 +689,10 @@ class IRPrinter:
             case FuncRefIR():
                 return f"<func:{value.py_name}>"
             case LambdaIR():
-                captured = (
-                    f", captures=[{', '.join(value.captured_vars)}]" if value.captured_vars else ""
-                )
+                captured = ""
+                if value.captured_vars:
+                    var_names = [name for name, _ in value.captured_vars]
+                    captured = f", captures=[{', '.join(var_names)}]"
                 return f"<lambda_{value.lambda_id}{captured}>"
             case BinOpIR():
                 left = self.print_value(value.left)
@@ -749,6 +751,8 @@ class IRPrinter:
                 return f"{value.module_name}.{value.func_name}({all_args})"
             case ModuleAttrIR():
                 return f"{value.module_name}.{value.attr_name}"
+            case ImportedClassAttrIR():
+                return f"{value.class_name}.{value.attr_name}  # from {value.source_module}"
             case SiblingModuleCallIR():
                 args = ", ".join(self.print_value(a) for a in value.args)
                 return f"{value.c_prefix}.{value.func_name}({args})"

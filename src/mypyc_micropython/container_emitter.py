@@ -25,11 +25,13 @@ from .ir import (
     CLibEnumIR,
     CompareIR,
     ConstIR,
+    CType,
     DictNewIR,
     DynamicCallIR,
     FuncRefIR,
     GetItemIR,
     IfExprIR,
+    ImportedClassAttrIR,
     InstrNode,
     IRType,
     IsInstanceIR,
@@ -659,6 +661,11 @@ class ContainerEmitter:
                 # Import module and load attribute at runtime (supports dotted names)
                 mod_import = _emit_dotted_module_import(value.module_name)
                 return f"mp_load_attr({mod_import}, MP_QSTR_{value.attr_name})"
+            case ImportedClassAttrIR():
+                # Import module, get class, load attribute at runtime
+                mod_import = _emit_dotted_module_import(value.source_module)
+                class_load = f"mp_load_attr({mod_import}, MP_QSTR_{value.class_name})"
+                return f"mp_load_attr({class_load}, MP_QSTR_{value.attr_name})"
             case ConstIR():
                 return self._const_to_c(value)
             case BinOpIR():
@@ -860,8 +867,17 @@ class ContainerEmitter:
                 # Lambda as first-class value (same as function reference)
                 if value.captured_vars:
                     captured_parts = [f"MP_OBJ_FROM_PTR(&{value.c_name}_obj)"]
-                    for var in value.captured_vars:
-                        captured_parts.append(var)
+                    for var_name, c_type in value.captured_vars:
+                        # Box captured variables based on their type
+                        if c_type == CType.MP_INT_T:
+                            captured_parts.append(f"mp_obj_new_int({var_name})")
+                        elif c_type == CType.MP_FLOAT_T:
+                            captured_parts.append(f"mp_obj_new_float({var_name})")
+                        elif c_type == CType.BOOL:
+                            captured_parts.append(f"mp_obj_new_bool({var_name})")
+                        else:
+                            # Already boxed (mp_obj_t)
+                            captured_parts.append(var_name)
                     n_closed = len(value.captured_vars)
                     closed_arr = ", ".join(captured_parts[1:])
                     return (

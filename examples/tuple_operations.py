@@ -1,4 +1,3 @@
-from typing import Any
 
 
 def make_point() -> tuple[int, int]:

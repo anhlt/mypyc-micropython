@@ -94,9 +94,15 @@ class ViewNode:
         if self._disposed:
             return
 
-        for change in diff.scalar_changes:
+        # WORKAROUND: Use index-based while loop instead of for loop.
+        # for change in diff.scalar_changes: may crash on ESP32-P4 due to
+        # struct-cast optimization issue in compiled C code.
+        scalar_changes = diff.scalar_changes
+        idx: int = 0
+        while idx < len(scalar_changes):
+            change = scalar_changes[idx]
             self.apply_scalar_change(change)
-
+            idx += 1
     def update_widget(self, widget: Widget) -> None:
         """Update the cached widget snapshot.
 

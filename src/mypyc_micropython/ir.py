@@ -683,7 +683,7 @@ class LambdaIR(ValueIR):
     lambda_id: int  # Unique ID for this lambda (e.g., 0, 1, 2)
     c_name: str  # C function name (e.g., 'module__lambda_0')
     func_ir: "FuncIR"  # The generated FuncIR for this lambda
-    captured_vars: list[str]  # Names of captured variables (read-only closure)
+    captured_vars: list[tuple[str, CType]]  # Captured vars with types for proper boxing
 
 
 @dataclass
@@ -1486,6 +1486,26 @@ class ModuleRefIR(ExprIR):
 
 
 @dataclass
+class ImportedClassAttrIR(ExprIR):
+    """Access an attribute on a class imported via 'from module import Class'.
+
+    Example: from lvgl_mvu.events import LvEvent; LvEvent.CLICKED
+
+    Generated C:
+        mp_load_attr(
+            mp_load_attr(
+                mp_import_name(MP_QSTR_lvgl_mvu, mp_const_none, MP_OBJ_NEW_SMALL_INT(0)),
+                MP_QSTR_events),
+            MP_QSTR_LvEvent),
+        MP_QSTR_CLICKED)
+    """
+
+    source_module: str  # Full module path (e.g., 'lvgl_mvu.events')
+    class_name: str  # Imported class name (e.g., 'LvEvent')
+    attr_name: str  # Attribute on the class (e.g., 'CLICKED')
+
+
+@dataclass
 class SiblingModuleRefIR(ExprIR):
     """Reference to a sibling module within the same package.
 
@@ -1801,6 +1821,7 @@ ValueNode: TypeAlias = Union[
     ModuleCallIR,
     ModuleAttrIR,
     ModuleRefIR,
+    ImportedClassAttrIR,
     SiblingModuleRefIR,
     SiblingModuleCallIR,
     SiblingClassInstantiationIR,

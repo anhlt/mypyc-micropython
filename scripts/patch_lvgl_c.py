@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 INCLUDE_LINE = '#include "display_driver.h"'
+TOUCH_INCLUDE_LINE = '#include "touch_driver.h"'
 HEADER_MARKER = '#include "lvgl.h"'
 GLOBALS_DICT_MARKER = "static MP_DEFINE_CONST_DICT(lvgl_module_globals, lvgl_module_globals_table);"
 DRIVER_ENTRIES = (
@@ -14,6 +15,9 @@ DRIVER_ENTRIES = (
     "    { MP_ROM_QSTR(MP_QSTR_deinit_display), MP_ROM_PTR(&lvgl_deinit_display_obj) },\n"
     "    { MP_ROM_QSTR(MP_QSTR_timer_handler), MP_ROM_PTR(&lvgl_timer_handler_obj) },\n"
     "    { MP_ROM_QSTR(MP_QSTR_backlight), MP_ROM_PTR(&lvgl_backlight_obj) },\n"
+    "    { MP_ROM_QSTR(MP_QSTR_init_touch), MP_ROM_PTR(&lvgl_init_touch_obj) },\n"
+    "    { MP_ROM_QSTR(MP_QSTR_deinit_touch), MP_ROM_PTR(&lvgl_deinit_touch_obj) },\n"
+    "    { MP_ROM_QSTR(MP_QSTR_get_touch), MP_ROM_PTR(&lvgl_get_touch_obj) },\n"
 )
 
 
@@ -25,8 +29,11 @@ def patch(path: Path) -> None:
             raise RuntimeError(f"Expected marker not found: {HEADER_MARKER}")
         text = text.replace(HEADER_MARKER, f"{HEADER_MARKER}\n{INCLUDE_LINE}", 1)
 
+    if TOUCH_INCLUDE_LINE not in text:
+        text = text.replace(INCLUDE_LINE, f"{INCLUDE_LINE}\n{TOUCH_INCLUDE_LINE}", 1)
+
     if "MP_QSTR_init_display" not in text:
-        marker = f"}};\n{GLOBALS_DICT_MARKER}"
+        marker = "};\n" + GLOBALS_DICT_MARKER
         if marker not in text:
             raise RuntimeError("Expected lvgl globals table marker not found")
         text = text.replace(marker, DRIVER_ENTRIES + marker, 1)

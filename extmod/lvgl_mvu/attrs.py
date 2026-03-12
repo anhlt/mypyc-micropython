@@ -80,7 +80,7 @@ class AttrKey(IntEnum):
     PLACEHOLDER = 145
     OPTIONS = 146
     SELECTED = 147
-
+    BUTTON_TEXT = 148  # Separate from TEXT - creates child label for buttons
 
 @dataclass
 class AttrDef:

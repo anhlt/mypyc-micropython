@@ -51,6 +51,7 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/device/*" = ["E402"]
+"extmod/lvgl_mvu/*" = ["E731"]  # Lambdas intentional for closure testing
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

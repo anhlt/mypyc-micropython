@@ -63,7 +63,6 @@ class Nav:
         self._size = 0
 
     def init_root(self, screen_id: int) -> object:
-        import lvgl as lv
 
         root = self._build_screen(screen_id)
         old_size = self._size
@@ -95,7 +94,6 @@ class Nav:
         return root
 
     def push(self, screen_id: int) -> object:
-        import lvgl as lv
 
         if self._size == 0:
             return self.init_root(screen_id)
@@ -114,7 +112,6 @@ class Nav:
         return new_screen
 
     def pop(self) -> object:
-        import lvgl as lv
 
         if self._size == 0:
             return lv.lv_screen_active()
@@ -142,7 +139,6 @@ class Nav:
         return prev_screen
 
     def replace(self, screen_id: int) -> object:
-        import lvgl as lv
 
         new_screen = self._build_screen(screen_id)
         if self._size == 0:
@@ -170,7 +166,6 @@ class Nav:
         return self._screen_ids[self._size - 1]
 
     def dispose(self) -> None:
-        import lvgl as lv
 
         if self._size == 0:
             return
@@ -223,13 +218,11 @@ class Nav:
         return False
 
     def _safe_delete(self, screen: object) -> None:
-        import lvgl as lv
 
         if screen is not lv.lv_screen_active():
             lv.lv_obj_delete(screen)
 
     def _pump(self, duration_ms: int) -> None:
-        import time
         import lvgl_screens as ls
 
         start: int = int(time.ticks_ms())  # type: ignore[attr-defined]

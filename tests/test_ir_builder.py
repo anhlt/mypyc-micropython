@@ -2611,3 +2611,98 @@ def f(g: Callable[..., Callable[..., object]]) -> object:
             assert found_temp, (
                 "Expected TempAssignIR in body statement preludes for callable-call-result"
             )
+
+
+class TestLambdaIR:
+    """Test lambda expression IR building."""
+
+    def test_simple_lambda(self):
+        """Test basic lambda without closures."""
+        source = '''
+def use_lambda() -> int:
+    add = lambda x, y: x + y
+    return add(2, 3)
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, ast.FunctionDef):
+                builder.build_function(node)
+
+        # Check lambda was generated
+        assert len(builder.lambda_funcs) == 1
+        lambda_func = builder.lambda_funcs[0]
+        assert "_lambda_0" in lambda_func.name
+        assert len(lambda_func.params) == 2  # x, y
+
+    def test_lambda_with_closure(self):
+        """Test lambda capturing variable from enclosing scope."""
+        source = '''
+def use_closure(n: int) -> int:
+    multiplier: int = 10
+    fn = lambda x: x * multiplier
+    return fn(n)
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, ast.FunctionDef):
+                builder.build_function(node)
+
+        # Check lambda was generated with captured var
+        assert len(builder.lambda_funcs) == 1
+        lambda_func = builder.lambda_funcs[0]
+        # Lambda should have 2 params: multiplier (captured) + x
+        assert len(lambda_func.params) == 2
+        # First param is the captured variable
+        assert lambda_func.params[0][0] == "multiplier"
+
+    def test_lambda_multiple_captures(self):
+        """Test lambda capturing multiple variables."""
+        source = '''
+def test_multi_capture(a: int, b: int) -> int:
+    x: int = a + 1
+    y: int = b + 2
+    fn = lambda z: x + y + z
+    return fn(100)
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, ast.FunctionDef):
+                builder.build_function(node)
+
+        # Check lambda has 3 params: x, y (captured) + z
+        assert len(builder.lambda_funcs) == 1
+        lambda_func = builder.lambda_funcs[0]
+        assert len(lambda_func.params) == 3
+        captured_names = [p[0] for p in lambda_func.params[:2]]
+        assert "x" in captured_names
+        assert "y" in captured_names
+
+    def test_lambda_no_capture_module_constant(self):
+        """Test that module constants don't count as captured vars."""
+        source = '''
+CONST: int = 42
+
+def test_const() -> int:
+    fn = lambda x: x + CONST
+    return fn(1)
+'''
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        # First scan for module-level constants
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, ast.AnnAssign):
+                if isinstance(node.target, ast.Name) and isinstance(node.value, ast.Constant):
+                    builder._module_constants[node.target.id] = node.value.value
+
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, ast.FunctionDef):
+                builder.build_function(node)
+
+        # Lambda should only have 1 param (x), not CONST
+        assert len(builder.lambda_funcs) == 1
+        lambda_func = builder.lambda_funcs[0]
+        assert len(lambda_func.params) == 1
+        assert lambda_func.params[0][0] == "x"
