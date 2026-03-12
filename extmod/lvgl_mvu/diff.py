@@ -189,13 +189,20 @@ def diff_widgets(prev: Widget | None, next_w: Widget) -> WidgetDiff:
     """
     if prev is None:
         scalar_changes: list[AttrChange] = []
-        for a in next_w.scalar_attrs:
+        # WORKAROUND: Use index-based while loop instead of for loop
+        scalar_attrs = next_w.scalar_attrs
+        sa_idx: int = 0
+        while sa_idx < len(scalar_attrs):
+            a = scalar_attrs[sa_idx]
             scalar_changes.append(AttrChange(CHANGE_ADDED, a.key, None, a.value))
+            sa_idx += 1
         child_changes: list[ChildChange] = []
-        i: int = 0
-        for c in next_w.children:
-            child_changes.append(ChildChange(CHILD_INSERT, i, c, None))
-            i += 1
+        children = next_w.children
+        c_idx: int = 0
+        while c_idx < len(children):
+            c = children[c_idx]
+            child_changes.append(ChildChange(CHILD_INSERT, c_idx, c, None))
+            c_idx += 1
         has_events: bool = len(next_w.event_handlers) > 0
         return WidgetDiff(scalar_changes, child_changes, has_events)
 

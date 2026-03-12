@@ -144,21 +144,27 @@ class EventHandler:
         active: Whether the handler should dispatch messages.
         kind: HandlerKind.MSG or HandlerKind.VALUE.
         payload: The message (MSG) or message factory (VALUE).
+        _callback: Reference to the callback to prevent GC.
     """
 
     active: bool
     kind: int
     payload: object
+    _callback: object  # prevent GC of the lambda
 
     def __init__(self, kind: int, payload: object) -> None:
         self.active = True
         self.kind = kind
         self.payload = payload
+        self._callback = None  # set by EventBinder.bind()
+
+    def store_callback(self, callback: object) -> None:
+        """Store callback reference to prevent garbage collection."""
+        self._callback = callback
 
     def deactivate(self) -> None:
         """Deactivate this handler. The LVGL callback becomes a no-op."""
         self.active = False
-
 
 # ---------------------------------------------------------------------------
 # EventBinder
@@ -205,6 +211,9 @@ class EventBinder:
         # Closure captures: handler, dispatch_fn, msg
         callback: Callable[[object], None] = lambda event: _dispatch_msg(handler, dispatch_fn, msg)
 
+        # Store callback in handler to prevent garbage collection
+        handler.store_callback(callback)
+
         lv.lv_obj_add_event_cb(lv_obj, callback, event_type, None)
         return handler
 
@@ -236,6 +245,9 @@ class EventBinder:
         callback: Callable[[object], None] = lambda event: _dispatch_value(
             event, handler, dispatch_fn, msg_fn
         )
+
+        # Store callback in handler to prevent garbage collection
+        handler.store_callback(callback)
 
         lv.lv_obj_add_event_cb(lv_obj, callback, event_type, None)
         return handler

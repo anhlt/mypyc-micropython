@@ -95,26 +95,26 @@ def view(model: Model) -> Widget:
 
     # Buttons row
     btn_dec: Widget = (
-        Button("-").size(80, 50).bg_color(0xFF6B6B).on(LvEvent.CLICKED, MSG_DECREMENT).build()
+        Button("-").size(70, 45).bg_color(0xFF6B6B).on(LvEvent.CLICKED, MSG_DECREMENT).build()
     )
     btn_reset: Widget = (
-        Button("0").size(80, 50).bg_color(0x4ECDC4).on(LvEvent.CLICKED, MSG_RESET).build()
+        Button("0").size(70, 45).bg_color(0x4ECDC4).on(LvEvent.CLICKED, MSG_RESET).build()
     )
     btn_inc: Widget = (
-        Button("+").size(80, 50).bg_color(0x45B7D1).on(LvEvent.CLICKED, MSG_INCREMENT).build()
+        Button("+").size(70, 45).bg_color(0x45B7D1).on(LvEvent.CLICKED, MSG_INCREMENT).build()
     )
 
-    buttons: Widget = HStack(10).with_children([btn_dec, btn_reset, btn_inc])
+    buttons: Widget = HStack(10).width(280).with_children([btn_dec, btn_reset, btn_inc])
 
     # VStack container - sized, centered, styled
     stack: Widget = (
-        VStack(20)
-        .width(340)
-        .height(280)
-        .align(9, 0, 0)  # LV_ALIGN_CENTER = 9
+        VStack(15)
+        .width(320)
+        .height(200)
+        .align(9, 0, -30)  # LV_ALIGN_CENTER = 9, offset up by 30px
         .bg_color(0x2D2D44)  # Dark purple-gray
         .bg_opa(255)
-        .padding(30, 30, 30, 30)
+        .padding(15, 15, 15, 15)
         .radius(16)
         .with_children([title, counter, buttons])
     )

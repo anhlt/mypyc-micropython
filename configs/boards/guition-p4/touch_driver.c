@@ -155,7 +155,7 @@ esp_err_t gt911_touch_init(void) {
     // Initialize I2C bus
     i2c_master_bus_config_t bus_config = {
         .clk_source = I2C_CLK_SRC_DEFAULT,
-        .i2c_port = I2C_NUM_1,
+        .i2c_port = I2C_NUM_0,
         .sda_io_num = TOUCH_I2C_SDA,
         .scl_io_num = TOUCH_I2C_SCL,
         .glitch_ignore_cnt = 7,
