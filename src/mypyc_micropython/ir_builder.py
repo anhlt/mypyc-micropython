@@ -1338,6 +1338,18 @@ class IRBuilder:
                     attr_name = expr.attr
 
                     if var_name == "self":
+                        # First check for Final class constants - resolve to literal value
+                        for fld in class_ir.fields:
+                            if fld.name == attr_name and fld.is_final and fld.final_value is not None:
+                                # Return the constant value directly (constant folding)
+                                value = fld.final_value
+                                if isinstance(value, bool):
+                                    return ConstIR(ir_type=IRType.BOOL, value=value), []
+                                elif isinstance(value, int):
+                                    return ConstIR(ir_type=IRType.INT, value=value), []
+                                elif isinstance(value, float):
+                                    return ConstIR(ir_type=IRType.FLOAT, value=value), []
+                        # Then check instance fields
                         for fld, path in class_ir.get_all_fields_with_path():
                             if fld.name == attr_name:
                                 result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
@@ -2466,7 +2478,8 @@ class IRBuilder:
         # Check for class constant/classvar access: ClassName.ATTR
         if isinstance(expr.value, ast.Name):
             class_name = expr.value.id
-            if class_name in self._known_classes:
+            # Respect Python name shadowing: do not treat a local variable named like a class as the class itself
+            if class_name in self._known_classes and class_name not in locals_:
                 class_ir = self._known_classes[class_name]
                 attr_name = expr.attr
                 # Look for Final or ClassVar fields
@@ -3543,6 +3556,11 @@ class IRBuilder:
                     default_value = stmt.value.value
                     if is_final_field:
                         final_value = stmt.value.value
+                        # Reject Final[str] - strings cannot be safely emitted as C macros
+                        if isinstance(final_value, str):
+                            raise NotImplementedError(
+                                f"Final[str] class attributes are not supported: {class_ir.name}.{field_name}"
+                            )
 
                 field_ir = FieldIR(
                     name=field_name,

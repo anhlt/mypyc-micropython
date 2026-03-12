@@ -7,6 +7,7 @@ including structs, vtables, constructors, and method wrappers.
 
 from __future__ import annotations
 
+from .compiler import sanitize_name
 from .ir import ClassIR, CType, MethodIR, PropertyInfo
 
 
@@ -149,11 +150,14 @@ class ClassEmitter:
 
         Generates:
             #define LvEvent_CLICKED ((mp_int_t)10)
+
+        Note: Final[str] is not supported and will be skipped with a warning comment.
         """
         lines: list[str] = []
         for field in self.class_ir.fields:
             if field.is_final and field.final_value is not None:
-                c_name = f"{self.c_name}_{field.name}"
+                # Use sanitize_name to ensure consistent macro naming with IRBuilder
+                c_name = f"{self.c_name}_{sanitize_name(field.name)}"
                 c_type = field.c_type.to_c_type_str()
                 value = field.final_value
                 if isinstance(value, bool):
@@ -163,10 +167,10 @@ class ClassEmitter:
                 elif isinstance(value, float):
                     c_value = f"{value}"
                 elif isinstance(value, str):
-                    # String constants need special handling
-                    escaped = value.replace('\\', '\\\\').replace('"', '\\"')
-                    c_value = f'"{escaped}"'
-                    c_type = "const char*"
+                    # Final[str] should have been rejected at IR build time
+                    raise NotImplementedError(
+                        f"Final[str] class attributes are not supported: {field.name}"
+                    )
                 else:
                     continue  # Skip unsupported types
                 lines.append(f"#define {c_name} (({c_type}){c_value})")
@@ -202,14 +206,17 @@ class ClassEmitter:
         # Emit fields from traits (traits don't have inheritance, so fields are flat)
         for trait in self.class_ir.traits:
             for fld in trait.fields:
+                # Skip Final and ClassVar fields (class-level, not instance-level)
+                if fld.is_final or fld.is_classvar:
+                    continue
                 # Only emit if not already present in own fields or base
-                if not any(f.name == fld.name for f in self.class_ir.fields):
+                if not any(f.name == fld.name for f in self.class_ir.get_instance_fields()):
                     lines.append(
                         f"    {fld.get_c_type_str()} {fld.name};  // from trait {trait.name}"
                     )
 
-        # Emit this class's own fields
-        for fld in self.class_ir.fields:
+        # Emit this class's own instance fields (excluding Final and ClassVar)
+        for fld in self.class_ir.get_instance_fields():
             lines.append(f"    {fld.get_c_type_str()} {fld.name};")
 
         lines.append("};")
@@ -459,7 +466,8 @@ class ClassEmitter:
             else:
                 lines.append(f"    self->{vtable_path} = &{self.c_name}_vtable_inst;")
 
-        for fld in self.class_ir.fields:
+        # Initialize only instance fields (not Final or ClassVar)
+        for fld in self.class_ir.get_instance_fields():
             if fld.c_type in (CType.MP_OBJ_T, CType.GENERAL):
                 lines.append(f"    self->{fld.name} = mp_const_none;")
             elif fld.c_type == CType.MP_INT_T:
@@ -1120,16 +1128,19 @@ class ClassEmitter:
         for field in final_fields:
             value = field.final_value
             if isinstance(value, bool):
-                lines.append(f"    {{ MP_ROM_QSTR(MP_QSTR_{field.name}), MP_ROM_INT({1 if value else 0}) }},")
+                # Use MP_ROM_PTR with mp_const_true/false to preserve boolean semantics
+                mp_val = "mp_const_true" if value else "mp_const_false"
+                lines.append(
+                    f"    {{ MP_ROM_QSTR(MP_QSTR_{field.name}), MP_ROM_PTR({mp_val}) }},"
+                )
             elif isinstance(value, int):
                 lines.append(f"    {{ MP_ROM_QSTR(MP_QSTR_{field.name}), MP_ROM_INT({value}) }},")
             elif isinstance(value, str):
-                # For string constants, we need to create a qstr or use MP_ROM_QSTR
-                # For simplicity, skip strings in locals dict (they're accessible via #define)
+                # Final[str] is not supported - skip
                 pass
 
-        # Add ClassVar fields (mutable class variables) - these need runtime storage
-        # For now, skip mutable ClassVar in locals_dict (would need separate storage)
+        # ClassVar fields are not yet supported in locals_dict
+        # They would require mutable runtime storage which is not implemented
 
         # Add methods
         for name in method_names:

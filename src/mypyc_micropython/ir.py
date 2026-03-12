@@ -357,20 +357,30 @@ class ClassIR:
     ast_node: ast.ClassDef | None = None
 
     def get_all_fields(self) -> list[FieldIR]:
-        """Get fields including inherited and trait fields (base first, then traits)."""
+        """Get instance fields including inherited and trait fields (base first, then traits).
+
+        Excludes Final and ClassVar fields as they are class-level, not instance-level.
+        """
         result: list[FieldIR] = []
         if self.base:
             result.extend(self.base.get_all_fields())
         # Include fields from traits (merge in order)
         for trait in self.traits:
             for fld in trait.fields:
+                # Skip Final and ClassVar fields
+                if fld.is_final or fld.is_classvar:
+                    continue
                 if not any(f.name == fld.name for f in result):
                     result.append(fld)
-        result.extend(self.fields)
+        # Add own instance fields (excluding Final and ClassVar)
+        result.extend(f for f in self.fields if not f.is_final and not f.is_classvar)
         return result
 
     def get_all_fields_with_path(self) -> list[tuple[FieldIR, str]]:
-        """Get fields with their C access path (e.g., 'super.x' for inherited)."""
+        """Get instance fields with their C access path (e.g., 'super.x' for inherited).
+
+        Excludes Final and ClassVar fields as they are class-level, not instance-level.
+        """
         result: list[tuple[FieldIR, str]] = []
         if self.base:
             for fld, path in self.base.get_all_fields_with_path():
@@ -378,15 +388,24 @@ class ClassIR:
         # Include fields from traits (direct access, no super prefix)
         for trait in self.traits:
             for fld in trait.fields:
+                # Skip Final and ClassVar fields
+                if fld.is_final or fld.is_classvar:
+                    continue
                 if not any(f.name == fld for f, _ in result):
                     result.append((fld, fld.name))
+        # Add own instance fields (excluding Final and ClassVar)
         for fld in self.fields:
-            result.append((fld, fld.name))
+            if not fld.is_final and not fld.is_classvar:
+                result.append((fld, fld.name))
         return result
 
     def get_own_fields(self) -> list[FieldIR]:
         """Get only this class's fields (not inherited)."""
         return list(self.fields)
+
+    def get_instance_fields(self) -> list[FieldIR]:
+        """Get only instance fields (excludes Final and ClassVar)."""
+        return [f for f in self.fields if not f.is_final and not f.is_classvar]
 
     def get_vtable_entries(self) -> list[tuple[str, MethodIR]]:
         """Get ordered vtable entries including inherited."""

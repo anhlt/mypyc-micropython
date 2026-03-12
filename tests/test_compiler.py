@@ -5649,15 +5649,19 @@ class Flags:
         result = compile_source(source, "test", type_check=False)
         assert "return true" in result
 
-    def test_final_field_still_in_struct(self):
-        """Final fields should still appear in the struct (for initialization)."""
+    def test_final_field_not_in_struct(self):
+        """Final fields should NOT appear in the struct (they're compile-time constants)."""
         source = """
 class Cfg:
     RATE: Final[int] = 100
     name: str
 """
         result = compile_source(source, "test", type_check=False)
-        assert "mp_int_t RATE;" in result
+        # Final field should NOT be in struct (it's a compile-time constant)
+        assert "mp_int_t RATE;" not in result
+        # But should have #define for the constant
+        assert "#define test_Cfg_RATE" in result
+        # Instance fields should still be in struct
         assert "mp_obj_t name;" in result
 
     def test_non_final_field_not_folded(self):
@@ -7240,8 +7244,10 @@ def my_key(x: int) -> int:
         """Class method uses a function defined after the class (builders.py pattern)."""
         source = """
 class Builder:
+    items: list
+
     def __init__(self) -> None:
-        self.items: list = [3, 1, 2]
+        self.items = [3, 1, 2]
 
     def build(self) -> list:
         return sorted(self.items, key=sort_key)
@@ -7551,6 +7557,7 @@ def get_click_event() -> int:
         assert "#define test_LvEvent_LONG_PRESSED" in result
         # Should use constant directly (not mp_load_attr)
         assert "test_LvEvent_CLICKED" in result
+        assert "mp_load_attr" not in result
 
     def test_final_bool_constant(self):
         """Final[bool] class attribute should generate #define."""
@@ -7633,3 +7640,15 @@ def get_default() -> int:
         # Instance fields should be in struct
         assert "mp_int_t width" in result
         assert "mp_int_t height" in result
+
+    def test_final_str_not_supported(self):
+        """Final[str] should raise NotImplementedError."""
+        source = '''
+from typing import Final
+
+class Config:
+    NAME: Final[str] = "test"
+'''
+        import pytest
+        with pytest.raises(NotImplementedError, match="Final\\[str\\] class attributes are not supported"):
+            compile_source(source, "test")

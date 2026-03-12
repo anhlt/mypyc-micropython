@@ -50,7 +50,7 @@ Python's typing module distinguishes two patterns:
 | Annotation | Meaning | Compiler Strategy |
 |------------|---------|-------------------|
 | `attr: Final[T] = value` | Immutable constant | Compile-time `#define` |
-| `attr: ClassVar[T] = value` | Mutable class variable | Runtime module-level storage |
+| `attr: ClassVar[T] = value` | Mutable class variable | Runtime lookup (limited support) |
 | `attr: T` (no annotation) | Instance attribute | Per-instance field |
 
 For `Final` attributes, the compiler can replace all references with the literal value. For `ClassVar` attributes, we need runtime storage but can still optimize the access path.
@@ -75,10 +75,13 @@ ClassConstIR(
 ClassVarIR(
     class_name='Config',
     attr_name='counter',
-    c_name='Config_counter',
-    value_ctype=CType.MP_INT_T
+    class_c_name='Config'
 )
 ```
+
+Note: `ClassVar` support is currently limited. The IR is generated but runtime
+storage/mutation is not fully implemented. `Final` constants are the primary
+supported pattern for class-level attributes.
 
 ### Constant Folding at IR Build Time
 
