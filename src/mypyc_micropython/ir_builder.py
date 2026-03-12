@@ -31,8 +31,10 @@ from .ir import (
     BoxIR,
     BreakIR,
     CallIR,
+    ClassConstIR,
     ClassInstantiationIR,
     ClassIR,
+    ClassVarIR,
     CompareIR,
     ConstIR,
     ContinueIR,
@@ -1336,6 +1338,18 @@ class IRBuilder:
                     attr_name = expr.attr
 
                     if var_name == "self":
+                        # First check for Final class constants - resolve to literal value
+                        for fld in class_ir.fields:
+                            if fld.name == attr_name and fld.is_final and fld.final_value is not None:
+                                # Return the constant value directly (constant folding)
+                                value = fld.final_value
+                                if isinstance(value, bool):
+                                    return ConstIR(ir_type=IRType.BOOL, value=value), []
+                                elif isinstance(value, int):
+                                    return ConstIR(ir_type=IRType.INT, value=value), []
+                                elif isinstance(value, float):
+                                    return ConstIR(ir_type=IRType.FLOAT, value=value), []
+                        # Then check instance fields
                         for fld, path in class_ir.get_all_fields_with_path():
                             if fld.name == attr_name:
                                 result_type = IRType.from_c_type_str(fld.c_type.to_c_type_str())
@@ -2461,6 +2475,43 @@ class IRBuilder:
                 # Unknown member on known enum -- return 0 as fallback
                 return ConstIR(ir_type=IRType.INT, value=0), []
 
+        # Check for class constant/classvar access: ClassName.ATTR
+        if isinstance(expr.value, ast.Name):
+            class_name = expr.value.id
+            # Respect Python name shadowing: do not treat a local variable named like a class as the class itself
+            if class_name in self._known_classes and class_name not in locals_:
+                class_ir = self._known_classes[class_name]
+                attr_name = expr.attr
+                # Look for Final or ClassVar fields
+                for fld in class_ir.fields:
+                    if fld.name == attr_name:
+                        if fld.is_final and fld.final_value is not None:
+                            # Final class constant - emit ClassConstIR
+                            c_name = f"{class_ir.c_name}_{sanitize_name(attr_name)}"
+                            return ClassConstIR(
+                                ir_type=IRType.from_c_type_str(fld.c_type.to_c_type_str()),
+                                class_name=class_name,
+                                attr_name=attr_name,
+                                c_name=c_name,
+                                value=fld.final_value,
+                                value_ctype=fld.c_type,
+                            ), []
+                        elif fld.is_classvar:
+                            # ClassVar - emit ClassVarIR for runtime lookup
+                            return ClassVarIR(
+                                ir_type=IRType.OBJ,
+                                class_name=class_name,
+                                attr_name=attr_name,
+                                class_c_name=class_ir.c_name,
+                            ), []
+                        else:
+                            # Regular field without ClassVar - error per mypyc rules
+                            # Instance attributes cannot be accessed via Class.attr
+                            raise TypeError(
+                                f"Cannot access instance attribute '{attr_name}' via class '{class_name}'. "
+                                f"Use ClassVar[{fld.py_type}] for class-level access or access via instance."
+                            )
+
         if isinstance(expr.value, ast.Name):
             var_name = expr.value.id
             if var_name in self._import_aliases:
@@ -3438,8 +3489,9 @@ class IRBuilder:
             if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
                 field_name = stmt.target.id
 
-                # Detect Final[type] or bare Final annotation
+                # Detect Final[type], ClassVar[type], or bare Final annotation
                 is_final_field = False
+                is_classvar_field = False
                 inner_annotation: ast.expr | None = stmt.annotation
                 if isinstance(stmt.annotation, ast.Subscript):
                     if (
@@ -3448,8 +3500,17 @@ class IRBuilder:
                     ):
                         is_final_field = True
                         inner_annotation = stmt.annotation.slice
+                    elif (
+                        isinstance(stmt.annotation.value, ast.Name)
+                        and stmt.annotation.value.id == "ClassVar"
+                    ):
+                        is_classvar_field = True
+                        inner_annotation = stmt.annotation.slice
                 elif isinstance(stmt.annotation, ast.Name) and stmt.annotation.id == "Final":
                     is_final_field = True
+                    inner_annotation = None  # type inferred from value
+                elif isinstance(stmt.annotation, ast.Name) and stmt.annotation.id == "ClassVar":
+                    is_classvar_field = True
                     inner_annotation = None  # type inferred from value
 
                 if field_name in mypy_field_types:
@@ -3495,6 +3556,11 @@ class IRBuilder:
                     default_value = stmt.value.value
                     if is_final_field:
                         final_value = stmt.value.value
+                        # Reject Final[str] - strings cannot be safely emitted as C macros
+                        if isinstance(final_value, str):
+                            raise NotImplementedError(
+                                f"Final[str] class attributes are not supported: {class_ir.name}.{field_name}"
+                            )
 
                 field_ir = FieldIR(
                     name=field_name,
@@ -3505,6 +3571,7 @@ class IRBuilder:
                     default_ast=stmt.value,
                     is_final=is_final_field,
                     final_value=final_value,
+                    is_classvar=is_classvar_field,
                 )
                 class_ir.fields.append(field_ir)
 

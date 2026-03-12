@@ -40,6 +40,7 @@ class _ModuleCompileParts:
     forward_decls: list[str]
     struct_code: list[str]
     class_code: list[str]
+    class_constants: list[str]  # #define constants for Final class attrs
     uses_print: bool
     uses_list_opt: bool
     uses_builtins: bool
@@ -343,6 +344,7 @@ def _compile_module_parts(
     forward_decls: list[str] = []
     struct_code: list[str] = []
     class_code: list[str] = []
+    class_constants: list[str] = []  # #define constants for Final class attrs
 
     uses_print = False
     uses_list_opt = False
@@ -427,6 +429,10 @@ def _compile_module_parts(
         forward_decls.extend(class_emitter.emit_method_obj_forward_declarations())
         struct_code.extend(class_emitter.emit_struct())
 
+        # Collect #define constants for Final class attributes
+        # These must be emitted before function code that uses them
+        class_constants.extend(class_emitter.emit_class_constants())
+
         # Process methods in order: non-__init__ first, then __init__
         # This ensures bound method objects (e.g., self._build_home) are defined
         # before being referenced in __init__
@@ -485,6 +491,7 @@ def _compile_module_parts(
         forward_decls=forward_decls,
         struct_code=struct_code,
         class_code=class_code,
+        class_constants=class_constants,
         uses_print=uses_print,
         uses_list_opt=uses_list_opt,
         uses_builtins=uses_builtins,
@@ -541,6 +548,7 @@ def compile_source(
     return module_emitter.emit(
         forward_decls=parts.forward_decls,
         struct_code=parts.struct_code,
+        class_constants=parts.class_constants,
         function_code=parts.function_code,
         class_code=parts.class_code,
         functions=parts.function_irs,
@@ -874,6 +882,7 @@ def compile_package(
         c_code = module_emitter.emit_package(
             forward_decls=parent_parts.forward_decls,
             struct_code=parent_parts.struct_code,
+            class_constants=parent_parts.class_constants,
             function_code=parent_parts.function_code,
             class_code=parent_parts.class_code,
             parent_functions=parent_parts.function_irs,

@@ -7,6 +7,7 @@ including structs, vtables, constructors, and method wrappers.
 
 from __future__ import annotations
 
+from .compiler import sanitize_name
 from .ir import ClassIR, CType, MethodIR, PropertyInfo
 
 
@@ -140,6 +141,43 @@ class ClassEmitter:
             lines.append("")
         return lines
 
+    def emit_class_constants(self) -> list[str]:
+        """Emit #define constants for Final class attributes.
+
+        For class attributes declared with typing.Final:
+            class LvEvent:
+                CLICKED: Final[int] = 10
+
+        Generates:
+            #define LvEvent_CLICKED ((mp_int_t)10)
+
+        Note: Final[str] is not supported and will be skipped with a warning comment.
+        """
+        lines: list[str] = []
+        for field in self.class_ir.fields:
+            if field.is_final and field.final_value is not None:
+                # Use sanitize_name to ensure consistent macro naming with IRBuilder
+                c_name = f"{self.c_name}_{sanitize_name(field.name)}"
+                c_type = field.c_type.to_c_type_str()
+                value = field.final_value
+                if isinstance(value, bool):
+                    c_value = "true" if value else "false"
+                elif isinstance(value, int):
+                    c_value = str(value)
+                elif isinstance(value, float):
+                    c_value = f"{value}"
+                elif isinstance(value, str):
+                    # Final[str] should have been rejected at IR build time
+                    raise NotImplementedError(
+                        f"Final[str] class attributes are not supported: {field.name}"
+                    )
+                else:
+                    continue  # Skip unsupported types
+                lines.append(f"#define {c_name} (({c_type}){c_value})")
+        if lines:
+            lines.append("")
+        return lines
+
     def emit_struct(self) -> list[str]:
         lines = []
         vtable_entries = self.class_ir.get_vtable_entries()
@@ -168,14 +206,17 @@ class ClassEmitter:
         # Emit fields from traits (traits don't have inheritance, so fields are flat)
         for trait in self.class_ir.traits:
             for fld in trait.fields:
+                # Skip Final and ClassVar fields (class-level, not instance-level)
+                if fld.is_final or fld.is_classvar:
+                    continue
                 # Only emit if not already present in own fields or base
-                if not any(f.name == fld.name for f in self.class_ir.fields):
+                if not any(f.name == fld.name for f in self.class_ir.get_instance_fields()):
                     lines.append(
                         f"    {fld.get_c_type_str()} {fld.name};  // from trait {trait.name}"
                     )
 
-        # Emit this class's own fields
-        for fld in self.class_ir.fields:
+        # Emit this class's own instance fields (excluding Final and ClassVar)
+        for fld in self.class_ir.get_instance_fields():
             lines.append(f"    {fld.get_c_type_str()} {fld.name};")
 
         lines.append("};")
@@ -425,7 +466,8 @@ class ClassEmitter:
             else:
                 lines.append(f"    self->{vtable_path} = &{self.c_name}_vtable_inst;")
 
-        for fld in self.class_ir.fields:
+        # Initialize only instance fields (not Final or ClassVar)
+        for fld in self.class_ir.get_instance_fields():
             if fld.c_type in (CType.MP_OBJ_T, CType.GENERAL):
                 lines.append(f"    self->{fld.name} = mp_const_none;")
             elif fld.c_type == CType.MP_INT_T:
@@ -1052,10 +1094,15 @@ class ClassEmitter:
             )
         ]
 
-        if not method_names:
+        # Collect Final constants and ClassVar fields for locals dict
+        final_fields = [f for f in self.class_ir.fields if f.is_final and f.final_value is not None]
+        classvar_fields = [f for f in self.class_ir.fields if f.is_classvar and not f.is_final]
+
+        # Check if we have anything to emit
+        if not method_names and not final_fields and not classvar_fields:
             return []
 
-        lines = []
+        lines: list[str] = []
         for name in method_names:
             method = all_methods[name]
             if method.is_static or method.is_classmethod:
@@ -1076,6 +1123,26 @@ class ClassEmitter:
             lines.append("")
 
         lines.append(f"static const mp_rom_map_elem_t {self.c_name}_locals_dict_table[] = {{")
+
+        # Add Final constants to locals dict
+        for field in final_fields:
+            value = field.final_value
+            if isinstance(value, bool):
+                # Use MP_ROM_PTR with mp_const_true/false to preserve boolean semantics
+                mp_val = "mp_const_true" if value else "mp_const_false"
+                lines.append(
+                    f"    {{ MP_ROM_QSTR(MP_QSTR_{field.name}), MP_ROM_PTR({mp_val}) }},"
+                )
+            elif isinstance(value, int):
+                lines.append(f"    {{ MP_ROM_QSTR(MP_QSTR_{field.name}), MP_ROM_INT({value}) }},")
+            elif isinstance(value, str):
+                # Final[str] is not supported - skip
+                pass
+
+        # ClassVar fields are not yet supported in locals_dict
+        # They would require mutable runtime storage which is not implemented
+
+        # Add methods
         for name in method_names:
             method = all_methods[name]
             # Check if this method needs a trait wrapper
@@ -1194,8 +1261,9 @@ class ClassEmitter:
         return lines
 
     def emit_all(self) -> str:
-        sections = []
+        sections: list[str] = []
 
+        sections.extend(self.emit_class_constants())
         sections.extend(self.emit_struct())
         sections.extend(self.emit_field_descriptors())
         sections.extend(self.emit_attr_handler())
@@ -1213,8 +1281,15 @@ class ClassEmitter:
         return "\n".join(sections)
 
     def emit_all_except_struct(self) -> str:
-        sections = []
+        """Emit all class code except struct definition and constants.
 
+        Constants are emitted separately via emit_class_constants() since
+        they must appear before function code that uses them.
+        """
+        sections: list[str] = []
+
+        # NOTE: Do NOT include emit_class_constants() here!
+        # Constants must be emitted BEFORE function code.
         sections.extend(self.emit_field_descriptors())
         sections.extend(self.emit_attr_handler())
         sections.extend(self.emit_print_handler())

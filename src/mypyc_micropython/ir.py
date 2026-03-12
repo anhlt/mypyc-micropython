@@ -206,6 +206,7 @@ class FieldIR:
     default_ast: ast.expr | None = None  # AST node for default value
     is_final: bool = False  # typing.Final -- constant, cannot be reassigned
     final_value: Any = None  # Resolved literal value for Final fields (for constant folding)
+    is_classvar: bool = False  # typing.ClassVar -- class-level attribute, not instance
 
     def get_c_type_str(self) -> str:
         """Get the C type string for this field."""
@@ -356,20 +357,30 @@ class ClassIR:
     ast_node: ast.ClassDef | None = None
 
     def get_all_fields(self) -> list[FieldIR]:
-        """Get fields including inherited and trait fields (base first, then traits)."""
+        """Get instance fields including inherited and trait fields (base first, then traits).
+
+        Excludes Final and ClassVar fields as they are class-level, not instance-level.
+        """
         result: list[FieldIR] = []
         if self.base:
             result.extend(self.base.get_all_fields())
         # Include fields from traits (merge in order)
         for trait in self.traits:
             for fld in trait.fields:
+                # Skip Final and ClassVar fields
+                if fld.is_final or fld.is_classvar:
+                    continue
                 if not any(f.name == fld.name for f in result):
                     result.append(fld)
-        result.extend(self.fields)
+        # Add own instance fields (excluding Final and ClassVar)
+        result.extend(f for f in self.fields if not f.is_final and not f.is_classvar)
         return result
 
     def get_all_fields_with_path(self) -> list[tuple[FieldIR, str]]:
-        """Get fields with their C access path (e.g., 'super.x' for inherited)."""
+        """Get instance fields with their C access path (e.g., 'super.x' for inherited).
+
+        Excludes Final and ClassVar fields as they are class-level, not instance-level.
+        """
         result: list[tuple[FieldIR, str]] = []
         if self.base:
             for fld, path in self.base.get_all_fields_with_path():
@@ -377,15 +388,24 @@ class ClassIR:
         # Include fields from traits (direct access, no super prefix)
         for trait in self.traits:
             for fld in trait.fields:
+                # Skip Final and ClassVar fields
+                if fld.is_final or fld.is_classvar:
+                    continue
                 if not any(f.name == fld for f, _ in result):
                     result.append((fld, fld.name))
+        # Add own instance fields (excluding Final and ClassVar)
         for fld in self.fields:
-            result.append((fld, fld.name))
+            if not fld.is_final and not fld.is_classvar:
+                result.append((fld, fld.name))
         return result
 
     def get_own_fields(self) -> list[FieldIR]:
         """Get only this class's fields (not inherited)."""
         return list(self.fields)
+
+    def get_instance_fields(self) -> list[FieldIR]:
+        """Get only instance fields (excludes Final and ClassVar)."""
+        return [f for f in self.fields if not f.is_final and not f.is_classvar]
 
     def get_vtable_entries(self) -> list[tuple[str, MethodIR]]:
         """Get ordered vtable entries including inherited."""
@@ -665,6 +685,46 @@ class LambdaIR(ValueIR):
     func_ir: "FuncIR"  # The generated FuncIR for this lambda
     captured_vars: list[str]  # Names of captured variables (read-only closure)
 
+
+@dataclass
+class ClassConstIR(ValueIR):
+    """Access a Final class constant (compile-time constant).
+
+    Used for class attributes declared with typing.Final:
+        class LvEvent:
+            CLICKED: Final[int] = 10
+
+        LvEvent.CLICKED  -> ClassConstIR(class_name='LvEvent', attr_name='CLICKED', value=10)
+
+    Generated C: direct constant access (no runtime lookup)
+        #define LvEvent_CLICKED ((mp_int_t)10)
+        ... LvEvent_CLICKED ...  // Direct use
+    """
+
+    class_name: str  # Python class name (e.g., 'LvEvent')
+    attr_name: str  # Attribute name (e.g., 'CLICKED')
+    c_name: str  # C constant name (e.g., 'LvEvent_CLICKED')
+    value: object  # Literal value (int, str, bool, float)
+    value_ctype: CType  # C type of the value
+
+
+@dataclass
+class ClassVarIR(ValueIR):
+    """Access a mutable ClassVar class variable (runtime lookup).
+
+    Used for class attributes declared with typing.ClassVar:
+        class Counter:
+            count: ClassVar[int] = 0
+
+        Counter.count  -> ClassVarIR(class_name='Counter', attr_name='count')
+
+    Generated C: runtime attribute lookup
+        mp_load_attr(MP_OBJ_FROM_PTR(&Counter_type), MP_QSTR_count)
+    """
+
+    class_name: str  # Python class name
+    attr_name: str  # Attribute name
+    class_c_name: str  # C type name (e.g., 'Counter')
 
 # ---------------------------------------------------------------------------
 # Expression-level IR instructions
@@ -1720,6 +1780,8 @@ ValueNode: TypeAlias = Union[
     NameIR,
     FuncRefIR,
     LambdaIR,
+    ClassConstIR,
+    ClassVarIR,
     # ExprIR subclasses
     BinOpIR,
     UnaryOpIR,

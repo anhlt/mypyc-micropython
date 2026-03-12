@@ -26,8 +26,10 @@ from .ir import (
     BoxIR,
     BreakIR,
     CallIR,
+    ClassConstIR,
     ClassInstantiationIR,
     ClassIR,
+    ClassVarIR,
     CLibCallIR,
     CLibEnumIR,
     CompareIR,
@@ -760,6 +762,10 @@ class IRPrinter:
                 return f"<module:{value.module_name}>"
             case SiblingModuleRefIR():
                 return f"<sibling:{value.c_prefix}>"
+            case ClassConstIR():
+                return f"{value.class_name}.{value.attr_name}  # Final constant"
+            case ClassVarIR():
+                return f"{value.class_name}.{value.attr_name}  # ClassVar"
             case _:
                 assert_never(value)
 

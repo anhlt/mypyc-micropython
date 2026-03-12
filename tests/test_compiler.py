@@ -5649,15 +5649,19 @@ class Flags:
         result = compile_source(source, "test", type_check=False)
         assert "return true" in result
 
-    def test_final_field_still_in_struct(self):
-        """Final fields should still appear in the struct (for initialization)."""
+    def test_final_field_not_in_struct(self):
+        """Final fields should NOT appear in the struct (they're compile-time constants)."""
         source = """
 class Cfg:
     RATE: Final[int] = 100
     name: str
 """
         result = compile_source(source, "test", type_check=False)
-        assert "mp_int_t RATE;" in result
+        # Final field should NOT be in struct (it's a compile-time constant)
+        assert "mp_int_t RATE;" not in result
+        # But should have #define for the constant
+        assert "#define test_Cfg_RATE" in result
+        # Instance fields should still be in struct
         assert "mp_obj_t name;" in result
 
     def test_non_final_field_not_folded(self):
@@ -7240,8 +7244,10 @@ def my_key(x: int) -> int:
         """Class method uses a function defined after the class (builders.py pattern)."""
         source = """
 class Builder:
+    items: list
+
     def __init__(self) -> None:
-        self.items: list = [3, 1, 2]
+        self.items = [3, 1, 2]
 
     def build(self) -> list:
         return sorted(self.items, key=sort_key)
@@ -7519,3 +7525,130 @@ def f() -> object:
         assert "mp_import_name(MP_QSTR_ui" in result
         assert "MP_QSTR_Button" in result
         assert "MP_QSTR_size" in result
+
+
+# ============================================================================
+# Test: Class Constants (Final) and ClassVar Support
+# ============================================================================
+
+
+class TestClassConstants:
+    """Test Final class constants are compiled to #define constants.
+
+    This enables `LvEvent.CLICKED` syntax instead of `LvEvent_CLICKED`.
+    Final fields emit compile-time constants accessed directly.
+    """
+
+    def test_final_int_constant(self):
+        """Final[int] class attribute should generate #define."""
+        source = '''
+from typing import Final
+
+class LvEvent:
+    CLICKED: Final[int] = 10
+    LONG_PRESSED: Final[int] = 20
+
+def get_click_event() -> int:
+    return LvEvent.CLICKED
+'''
+        result = compile_source(source, "test")
+        # Should generate #define constants (with module prefix)
+        assert "#define test_LvEvent_CLICKED" in result
+        assert "#define test_LvEvent_LONG_PRESSED" in result
+        # Should use constant directly (not mp_load_attr)
+        assert "test_LvEvent_CLICKED" in result
+        assert "mp_load_attr" not in result
+
+    def test_final_bool_constant(self):
+        """Final[bool] class attribute should generate #define."""
+        source = '''
+from typing import Final
+
+class Config:
+    DEBUG: Final[bool] = True
+    VERBOSE: Final[bool] = False
+
+def is_debug() -> bool:
+    return Config.DEBUG
+'''
+        result = compile_source(source, "test")
+        assert "#define test_Config_DEBUG" in result
+        assert "true" in result or "1" in result
+
+    def test_final_in_locals_dict(self):
+        """Final constants should be accessible via class dict."""
+        source = '''
+from typing import Final
+
+class LvEvent:
+    CLICKED: Final[int] = 10
+'''
+        result = compile_source(source, "test")
+        # Should be in locals dict for Python access
+        assert "MP_QSTR_CLICKED" in result
+        assert "MP_ROM_INT(10)" in result
+
+    def test_classvar_mutable(self):
+        """ClassVar[T] fields should use runtime lookup."""
+        source = '''
+from typing import ClassVar
+
+class Counter:
+    count: ClassVar[int] = 0
+
+def get_count() -> object:
+    return Counter.count
+'''
+        result = compile_source(source, "test")
+        # Should use mp_load_attr for runtime lookup
+        assert "mp_load_attr" in result
+        assert "MP_QSTR_count" in result
+
+    def test_non_classvar_instance_attr_error(self):
+        """Accessing non-ClassVar field via Class.attr should raise error."""
+        source = '''
+class Point:
+    x: int = 0
+
+def get_x() -> int:
+    return Point.x
+'''
+        import pytest
+        with pytest.raises(TypeError, match="Cannot access instance attribute"):
+            compile_source(source, "test")
+
+    def test_mixed_final_and_instance_fields(self):
+        """Class with both Final constants and instance fields."""
+        source = '''
+from typing import Final
+
+class Widget:
+    DEFAULT_SIZE: Final[int] = 100
+    width: int
+    height: int
+
+    def __init__(self, w: int, h: int) -> None:
+        self.width = w
+        self.height = h
+
+def get_default() -> int:
+    return Widget.DEFAULT_SIZE
+'''
+        result = compile_source(source, "test")
+        # Final constant should be a #define (with module prefix)
+        assert "#define test_Widget_DEFAULT_SIZE" in result
+        # Instance fields should be in struct
+        assert "mp_int_t width" in result
+        assert "mp_int_t height" in result
+
+    def test_final_str_not_supported(self):
+        """Final[str] should raise NotImplementedError."""
+        source = '''
+from typing import Final
+
+class Config:
+    NAME: Final[str] = "test"
+'''
+        import pytest
+        with pytest.raises(NotImplementedError, match="Final\\[str\\] class attributes are not supported"):
+            compile_source(source, "test")
