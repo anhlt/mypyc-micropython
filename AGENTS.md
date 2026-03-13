@@ -26,42 +26,22 @@ make benchmark PORT=/dev/cu.usbmodem2101         # Benchmark native vs vanilla M
 
 **IMPORTANT**: Always use `make` commands for compiling and testing. Never call `mpy-compile` directly.
 
-## Incremental Compilation
+## Incremental Firmware Build
 
-The compiler supports incremental compilation to speed up the edit-compile-test cycle:
-
-### Python-to-C Compilation (mpy-compile)
-
-- **Mypy incremental mode**: Type checking results are cached in `.mypy_cache/`
-- **Source hash tracking**: Generated .c files include a hash comment; unchanged sources skip recompilation
-- **Force flag**: Use `--force` or `-f` to bypass cache
-
-```bash
-# First compile (cold): ~1.5s per file
-mpy-compile examples/factorial.py -o modules/usermod_factorial
-
-# Second compile (warm): ~0.02s if source unchanged
-mpy-compile examples/factorial.py -o modules/usermod_factorial
-
-# Force recompile even if unchanged
-mpy-compile examples/factorial.py -o modules/usermod_factorial --force
-```
-
-### Batch Compilation (make compile-all)
-
-```bash
-# Incremental mode (default): only recompiles changed files
-make compile-all BOARD=ESP32_GENERIC_C6
-
-# Force mode: recompiles everything
-make compile-all BOARD=ESP32_GENERIC_C6 FORCE=1
-```
-
-### ESP-IDF Firmware Build
+The firmware build process supports incremental compilation to speed up the edit-compile-test cycle:
 
 - **ccache**: Automatically enabled if installed (`brew install ccache` on macOS)
 - **Ninja incremental**: ESP-IDF's build system only recompiles changed .c files
-- **Key insight**: When source .py files are unchanged, the generated .c files have the same content and timestamp, so ninja skips them
+- **FORCE flag**: Use `FORCE=1` with make commands to force full recompilation
+
+```bash
+# Incremental build (default): only recompiles changed .c files
+make compile-all BOARD=ESP32_GENERIC_C6
+make build BOARD=ESP32_GENERIC_C6
+
+# Force full recompilation
+make compile-all BOARD=ESP32_GENERIC_C6 FORCE=1
+```
 
 
 ## Project Layout
@@ -69,13 +49,12 @@ make compile-all BOARD=ESP32_GENERIC_C6 FORCE=1
 ```
 src/mypyc_micropython/
 ├── __init__.py          # Public API: compile_source, compile_to_micropython
-├── cli.py               # CLI entry point (mpy-compile command, --dump-ir, --force)
+├── cli.py               # CLI entry point (mpy-compile command, --dump-ir)
 ├── compiler.py          # Top-level compilation orchestration
-├── cache.py             # Incremental compilation cache (source hashing)
 ├── ir.py                # IR definitions: FuncIR, ClassIR, StmtIR, ValueIR, etc.
 ├── ir_builder.py        # AST → IR translation (builds FuncIR, ClassIR from AST)
 ├── ir_visualizer.py     # IR debugging: dump IR as text/tree/JSON
-├── type_checker.py      # mypy integration for type checking (incremental mode)
+├── type_checker.py      # mypy integration for type checking
 ├── base_emitter.py      # Base emitter class, sanitize_name, C_RESERVED_WORDS
 ├── function_emitter.py  # FuncIR → C code emission
 ├── method_emitter.py    # MethodIR → C code emission for class methods

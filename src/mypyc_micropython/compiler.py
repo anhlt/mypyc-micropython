@@ -11,11 +11,11 @@ Output structure:
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
-from .base_emitter import C_RESERVED_WORDS, sanitize_name
 from .ir import CType, FuncIR, ModuleIR, RTuple
 from .type_checker import TypeCheckResult, type_check_file, type_check_package, type_check_source
 
@@ -58,6 +58,55 @@ class _PackageSubmodule:
     functions: list[FuncIR]
     children: list[_PackageSubmodule] = field(default_factory=list)  # nested sub-packages
 
+
+C_RESERVED_WORDS = {
+    "auto",
+    "break",
+    "case",
+    "char",
+    "const",
+    "continue",
+    "default",
+    "do",
+    "double",
+    "else",
+    "enum",
+    "extern",
+    "float",
+    "for",
+    "goto",
+    "if",
+    "int",
+    "long",
+    "register",
+    "return",
+    "short",
+    "signed",
+    "sizeof",
+    "static",
+    "struct",
+    "switch",
+    "typedef",
+    "union",
+    "unsigned",
+    "void",
+    "volatile",
+    "while",
+    "inline",
+    "restrict",
+    "_Bool",
+    "_Complex",
+    "_Imaginary",
+}
+
+
+def sanitize_name(name: str) -> str:
+    result = re.sub(r"[^a-zA-Z0-9_]", "_", name)
+    if result and result[0].isdigit():
+        result = "_" + result
+    if result in C_RESERVED_WORDS:
+        result = result + "_"
+    return result
 
 
 def _get_return_type_from_annotation(returns: ast.expr | None) -> CType:
@@ -113,8 +162,6 @@ def compile_to_micropython(
     type_check: bool = True,
     strict_type_check: bool = True,
     external_libs: dict[str, Any] | None = None,
-    incremental: bool = True,
-    force: bool = False,
 ) -> CompilationResult:
     """Compile typed Python file to MicroPython usermod folder.
 
@@ -123,14 +170,10 @@ def compile_to_micropython(
         output_dir: Output directory for the usermod folder (default: alongside source)
         type_check: Enable mypy type checking before compilation (default: True)
         strict_type_check: Enable strict mypy type checking (default: True)
-        incremental: Enable incremental compilation - skip if source unchanged (default: True)
-        force: Force recompilation even if source unchanged (default: False)
 
     Returns:
         CompilationResult with generated C code and any errors
     """
-    from .cache import hash_file, get_compiler_version
-
     source_path = Path(source_path)
 
     if not source_path.exists():
@@ -149,31 +192,6 @@ def compile_to_micropython(
         output_dir = source_path.parent / f"usermod_{module_name}"
     output_dir = Path(output_dir)
 
-    # Incremental compilation: check if output is up-to-date
-    c_file = output_dir / f"{module_name}.c"
-    if incremental and not force and c_file.exists():
-        # Compare source hash with hash stored in generated C file
-        source_hash = hash_file(source_path)
-        try:
-            c_content = c_file.read_text()
-            # Look for hash comment in generated C
-            import re
-            match = re.search(r'/\* source_hash: ([a-f0-9]+) \*/', c_content)
-            if match and match.group(1) == source_hash:
-                # Source unchanged, skip compilation
-                mk_code = (output_dir / "micropython.mk").read_text() if (output_dir / "micropython.mk").exists() else ""
-                cmake_code = (output_dir / "micropython.cmake").read_text() if (output_dir / "micropython.cmake").exists() else ""
-                return CompilationResult(
-                    module_name=module_name,
-                    c_code=c_content,
-                    h_code=None,
-                    mk_code=mk_code,
-                    cmake_code=cmake_code,
-                    success=True,
-                )
-        except Exception:
-            pass  # Fall through to recompile
-
     tc_result: TypeCheckResult | None = None
     if type_check:
         tc_result = type_check_file(source_path, strict=strict_type_check)
@@ -191,7 +209,6 @@ def compile_to_micropython(
 
     try:
         source_code = source_path.read_text()
-        source_hash = hash_file(source_path)
         c_code = compile_source(
             source_code,
             module_name,
@@ -199,9 +216,6 @@ def compile_to_micropython(
             strict=strict_type_check,
             external_libs=external_libs,
         )
-        # Add source hash as comment at the top of generated C
-        c_code = f"/* source_hash: {source_hash} */\n{c_code}"
-
         mk_code = generate_micropython_mk(module_name)
         cmake_code = generate_micropython_cmake(module_name)
 
@@ -283,10 +297,8 @@ def _compile_module_parts(
     mypy_type_result: TypeCheckResult | None = None,
 ) -> _ModuleCompileParts:
     from .async_emitter import AsyncEmitter
-    from .base_emitter import BaseEmitter
     from .class_emitter import ClassEmitter
-    from .function_emitter import FunctionEmitter
-    from .method_emitter import MethodEmitter
+    from .function_emitter import BaseEmitter, FunctionEmitter, MethodEmitter
     from .generator_emitter import GeneratorEmitter
     from .ir_builder import IRBuilder, MypyTypeInfo
 
@@ -781,7 +793,6 @@ def compile_package(
     *,
     type_check: bool = True,
     strict_type_check: bool = True,
-    force: bool = False,
 ) -> CompilationResult:
     from .module_emitter import ModuleEmitter
 

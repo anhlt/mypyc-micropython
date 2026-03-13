@@ -29,11 +29,6 @@ def main() -> int:
     parser.add_argument(
         "--ir-function", help="Dump IR for specific function only (use with --dump-ir)"
     )
-    parser.add_argument(
-        "--force", "-f",
-        action="store_true",
-        help="Force recompilation even if source unchanged (bypass incremental cache)",
-    )
 
     args = parser.parse_args()
 
@@ -48,11 +43,9 @@ def main() -> int:
     output_dir = Path(args.output) if args.output else None
 
     type_check = not args.no_type_check
-    force = args.force
     if source_path.is_dir():
         result = compile_package(
-            source_path, output_dir, type_check=type_check, strict_type_check=type_check,
-            force=force,
+            source_path, output_dir, type_check=type_check, strict_type_check=type_check
         )
     else:
         result = compile_to_micropython(
@@ -60,7 +53,6 @@ def main() -> int:
             output_dir,
             type_check=type_check,
             strict_type_check=type_check,
-            force=force,
         )
 
     if not result.success:
@@ -93,10 +85,10 @@ def dump_ir_command(source_path: Path, format: str, function_name: str | None) -
         print(f"Syntax error: {e}", file=sys.stderr)
         return 1
 
-    from mypyc_micropython.base_emitter import sanitize_name
-    from mypyc_micropython.ir import ClassIR, ModuleIR
+    from mypyc_micropython.compiler import sanitize_name
+    from mypyc_micropython.ir import ModuleIR
 
-    classes: dict[str, ClassIR] = {}
+    classes: dict = {}
     for py_file in sorted(source_path.parent.glob("*.py")):
         sibling_source = py_file.read_text()
         sibling_tree = ast.parse(sibling_source)
@@ -136,13 +128,16 @@ def dump_ir_command(source_path: Path, format: str, function_name: str | None) -
                     method_ir = cls.methods[function_name]
                     # Build method body IR for full dump
                     body = builder.build_method_body(method_ir, cls)
-                    from mypyc_micropython.ir import FuncIR
+                    from typing import cast
+
+                    from mypyc_micropython.ir import FuncIR, StmtNode
+
                     func_ir = FuncIR(
                         name=method_ir.name,
                         c_name=method_ir.c_name,
                         params=method_ir.params,
                         return_type=method_ir.return_type,
-                        body=body,
+                        body=cast(list[StmtNode], body),
                         is_method=True,
                         class_ir=cls,
                         max_temp=builder._temp_counter,
