@@ -22,7 +22,7 @@ from pathlib import Path
 
 from mypy import build as mypy_build
 from mypy.errors import CompileError
-from mypy.nodes import AssignmentStmt, ClassDef, FuncDef, MypyFile, NameExpr, Var
+from mypy.nodes import AssignmentStmt, ClassDef, FuncDef, MypyFile, NameExpr, Statement, Var
 from mypy.nodes import TypeInfo as MypyTypeInfo
 from mypy.options import Options
 from mypy.types import CallableType, Type
@@ -97,6 +97,8 @@ def create_mypy_options(
     python_version: tuple[int, int] = (3, 10),
     strict: bool = False,
     check_untyped: bool = True,
+    incremental: bool = True,
+    cache_dir: str | None = None,
 ) -> Options:
     """Create mypy Options configured for mypyc-micropython.
 
@@ -104,6 +106,8 @@ def create_mypy_options(
         python_version: Target Python version tuple (major, minor)
         strict: Enable strict mode (all strict checks)
         check_untyped: Require type annotations on all definitions
+        incremental: Enable incremental type checking (caches results)
+        cache_dir: Directory for mypy cache (default: .mpy_cache/mypy)
 
     Returns:
         Configured mypy Options object
@@ -111,7 +115,9 @@ def create_mypy_options(
     options = Options()
 
     options.python_version = python_version
-    options.incremental = False
+    options.incremental = incremental
+    if cache_dir:
+        options.cache_dir = cache_dir
     options.strict_optional = True
     options.preserve_asts = True  # Keep AST bodies for local type extraction
     options.ignore_missing_imports = True  # MicroPython/user modules have no stubs
@@ -144,6 +150,8 @@ def type_check_source(
     python_version: tuple[int, int] = (3, 10),
     strict: bool = False,
     check_untyped: bool = False,
+    incremental: bool = True,
+    cache_dir: str | None = None,
 ) -> TypeCheckResult:
     """Type check Python source code using mypy.
 
@@ -156,6 +164,8 @@ def type_check_source(
         python_version: Target Python version tuple
         strict: Enable strict type checking mode
         check_untyped: Require type annotations on all definitions
+        incremental: Enable incremental type checking (caches results)
+        cache_dir: Directory for mypy cache (default: .mpy_cache/mypy)
 
     Returns:
         TypeCheckResult with success status, errors, and type information
@@ -179,7 +189,10 @@ def type_check_source(
         temp_path = f.name
 
     try:
-        return _run_type_check(temp_path, module_name, python_version, strict, check_untyped)
+        return _run_type_check(
+            temp_path, module_name, python_version, strict, check_untyped,
+            incremental=incremental, cache_dir=cache_dir
+        )
     finally:
         # Clean up temp file
         Path(temp_path).unlink(missing_ok=True)
@@ -191,6 +204,8 @@ def type_check_file(
     python_version: tuple[int, int] = (3, 10),
     strict: bool = False,
     check_untyped: bool = False,
+    incremental: bool = True,
+    cache_dir: str | None = None,
 ) -> TypeCheckResult:
     """Type check a Python file using mypy.
 
@@ -199,6 +214,8 @@ def type_check_file(
         python_version: Target Python version tuple
         strict: Enable strict type checking mode
         check_untyped: Require type annotations on all definitions
+        incremental: Enable incremental type checking (caches results)
+        cache_dir: Directory for mypy cache (default: .mpy_cache/mypy)
 
     Returns:
         TypeCheckResult with success status, errors, and type information
@@ -211,7 +228,10 @@ def type_check_file(
         )
 
     module_name = file_path.stem
-    return _run_type_check(str(file_path), module_name, python_version, strict, check_untyped)
+    return _run_type_check(
+        str(file_path), module_name, python_version, strict, check_untyped,
+        incremental=incremental, cache_dir=cache_dir
+    )
 
 
 def type_check_package(
@@ -221,6 +241,8 @@ def type_check_package(
     python_version: tuple[int, int] = (3, 10),
     strict: bool = False,
     check_untyped: bool = False,
+    incremental: bool = True,
+    cache_dir: str | None = None,
 ) -> dict[str, TypeCheckResult]:
     """Type check an entire Python package using mypy.
 
@@ -233,6 +255,8 @@ def type_check_package(
         python_version: Target Python version tuple
         strict: Enable strict type checking mode
         check_untyped: Require type annotations
+        incremental: Enable incremental type checking (caches results)
+        cache_dir: Directory for mypy cache (default: .mpy_cache/mypy)
 
     Returns:
         Dict mapping submodule stem (e.g., 'app', 'program') to TypeCheckResult.
@@ -257,6 +281,8 @@ def type_check_package(
         python_version=python_version,
         strict=strict,
         check_untyped=check_untyped,
+        incremental=incremental,
+        cache_dir=cache_dir,
     )
     # Override: follow imports within the package so cross-module types resolve
     options.follow_imports = "normal"
@@ -332,12 +358,17 @@ def _run_type_check(
     python_version: tuple[int, int],
     strict: bool,
     check_untyped: bool,
+    *,
+    incremental: bool = True,
+    cache_dir: str | None = None,
 ) -> TypeCheckResult:
     """Internal function to run mypy type checking."""
     options = create_mypy_options(
         python_version=python_version,
         strict=strict,
         check_untyped=check_untyped,
+        incremental=incremental,
+        cache_dir=cache_dir,
     )
 
     # Create BuildSource
@@ -442,7 +473,8 @@ def _extract_function_info(func_def: FuncDef) -> FunctionTypeInfo:
     return_type = "Any"
     local_types: dict[str, str] = {}
 
-    if func_def.arguments:
+    # Check arguments - may be undefined for cached nodes
+    if hasattr(func_def, 'arguments') and func_def.arguments:
         for arg in func_def.arguments:
             param_name = arg.variable.name
             if arg.type_annotation:
@@ -470,7 +502,7 @@ def _extract_function_info(func_def: FuncDef) -> FunctionTypeInfo:
     )
 
 
-def _extract_local_types(stmts: list, local_types: dict[str, str]) -> None:
+def _extract_local_types(stmts: list[Statement], local_types: dict[str, str]) -> None:
     """Recursively extract local variable types from mypy AST statements."""
     from mypy.nodes import Block, ForStmt, IfStmt, WhileStmt, WithStmt
 

@@ -8,6 +8,17 @@ PORT ?= /dev/ttyACM0
 BAUD ?= 460800
 LVGL ?= 1
 
+# Incremental compilation settings
+# Set FORCE=1 to bypass cache and force full recompilation
+FORCE ?= 0
+
+# Enable ccache for faster C compilation (if available)
+# Install with: brew install ccache (macOS) or apt install ccache (Linux)
+CCACHE := $(shell which ccache 2>/dev/null)
+ifneq ($(CCACHE),)
+export IDF_CCACHE_ENABLE := 1
+endif
+
 # Board profile and variant auto-detection
 # Override with: make build BOARD_PROFILE=waveshare-c6 BOARD_VARIANT=C6_WIFI
 ifeq ($(BOARD),ESP32_GENERIC_P4)
@@ -185,38 +196,45 @@ endif
 	@echo "Don't forget to add to $(MODULES_DIR)/micropython.cmake!"
 
 compile-all: check-board
-	@echo "Cleaning old usermod directories..."
-	@rm -rf $(MODULES_DIR)/usermod_*
-	@rm -f $(MODULES_DIR)/micropython.cmake
+	@if [ "$(FORCE)" = "1" ]; then \
+		echo "Force mode: cleaning old usermod directories..."; \
+		rm -rf $(MODULES_DIR)/usermod_*; \
+		rm -f $(MODULES_DIR)/micropython.cmake; \
+	else \
+		echo "Incremental mode: reusing unchanged modules..."; \
+	fi
 	@echo "Compiling all examples in parallel..."
-	@printf '%s\n' examples/*.py | xargs -P $$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4) -n1 sh -c '\
+	@FORCE_FLAG=""; if [ "$(FORCE)" = "1" ]; then FORCE_FLAG="--force"; fi; \
+	printf '%s\n' examples/*.py | xargs -P $$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4) -n1 sh -c '\
 		f="$$1"; \
 		MOD_NAME=$$(basename "$$f" .py); \
 		case "$$MOD_NAME" in \
 			usermod_*|lvgl_app) exit 0 ;; \
 		esac; \
 		echo "Compiling $$f -> $(MODULES_DIR)/usermod_$$MOD_NAME/"; \
-		mpy-compile "$$f" -o "$(MODULES_DIR)/usermod_$$MOD_NAME" \
+		mpy-compile "$$f" -o "$(MODULES_DIR)/usermod_$$MOD_NAME" '"$$FORCE_FLAG"' \
 	' _
-	@for d in examples/*/; do \
+	@FORCE_FLAG=""; if [ "$(FORCE)" = "1" ]; then FORCE_FLAG="--force"; fi; \
+	for d in examples/*/; do \
 		if [ -f "$${d}__init__.py" ]; then \
 			PKG_NAME=$$(basename "$$d"); \
 			echo "Compiling package $$d -> $(MODULES_DIR)/usermod_$$PKG_NAME/"; \
-			mpy-compile "$$d" -o "$(MODULES_DIR)/usermod_$$PKG_NAME" || exit 1; \
+			mpy-compile "$$d" -o "$(MODULES_DIR)/usermod_$$PKG_NAME" $$FORCE_FLAG || exit 1; \
 		fi; \
 	done
 	@echo ""
-	@if [ "$(LVGL)" = "1" ]; then \
+	@FORCE_FLAG=""; if [ "$(FORCE)" = "1" ]; then FORCE_FLAG="--force"; fi; \
+	if [ "$(LVGL)" = "1" ]; then \
 		echo "Compiling extmod/lvui package..."; \
 		if [ -f "$(EXTMOD_DIR)/lvui/__init__.py" ]; then \
 			echo "Compiling package $(EXTMOD_DIR)/lvui/ -> $(MODULES_DIR)/usermod_lvui/"; \
-			mpy-compile "$(EXTMOD_DIR)/lvui/" -o "$(MODULES_DIR)/usermod_lvui" || exit 1; \
+			mpy-compile "$(EXTMOD_DIR)/lvui/" -o "$(MODULES_DIR)/usermod_lvui" $$FORCE_FLAG || exit 1; \
 		fi; \
 		echo ""; \
 		echo "Compiling extmod/lvgl_mvu package..."; \
 		if [ -f "$(EXTMOD_DIR)/lvgl_mvu/__init__.py" ]; then \
 			echo "Compiling package $(EXTMOD_DIR)/lvgl_mvu/ -> $(MODULES_DIR)/usermod_lvgl_mvu/"; \
-			mpy-compile "$(EXTMOD_DIR)/lvgl_mvu/" -o "$(MODULES_DIR)/usermod_lvgl_mvu" || exit 1; \
+			mpy-compile "$(EXTMOD_DIR)/lvgl_mvu/" -o "$(MODULES_DIR)/usermod_lvgl_mvu" $$FORCE_FLAG || exit 1; \
 		fi; \
 	else \
 		echo "Skipping LVGL packages (LVGL=0)"; \
