@@ -351,7 +351,8 @@ def add(a: int, b: int) -> int:
     return a + b
 ''',
         })
-        results = type_check_package(tmp_path)
+        # Disable incremental mode for tests to avoid cache corruption in parallel runs
+        results = type_check_package(tmp_path, incremental=False)
         assert "models" in results
         assert "utils" in results
         assert results["models"].success
@@ -385,7 +386,7 @@ class App:
         return self.config.name
 '''.replace("{pkg}", tmp_path.name),
         })
-        results = type_check_package(tmp_path)
+        results = type_check_package(tmp_path, incremental=False)
         assert results["app"].success
         # The key test: Config should resolve to real type, not Any
         app_class = results["app"].classes.get("App")
@@ -399,7 +400,7 @@ class App:
     def test_missing_init_returns_error(self, tmp_path):
         """Package dir without __init__.py should return error."""
         (tmp_path / "mod.py").write_text("x: int = 1")
-        results = type_check_package(tmp_path)
+        results = type_check_package(tmp_path, incremental=False)
         assert "__init__" in results
         assert not results["__init__"].success
 
@@ -407,7 +408,7 @@ class App:
         """Non-directory path should return error."""
         fake = tmp_path / "not_a_dir.py"
         fake.write_text("x = 1")
-        results = type_check_package(fake)
+        results = type_check_package(fake, incremental=False)
         assert "__init__" in results
         assert not results["__init__"].success
 
@@ -424,7 +425,7 @@ def broken(a: int, b: str) -> int:
     return a + b
 ''',
         })
-        results = type_check_package(tmp_path)
+        results = type_check_package(tmp_path, incremental=False)
         assert results["good"].success
         assert not results["bad"].success
         assert any("Unsupported operand" in e for e in results["bad"].errors)
@@ -438,6 +439,6 @@ def f(x: int) -> int:
     return x
 ''',
         })
-        results = type_check_package(tmp_path, package_name="custom_pkg")
+        results = type_check_package(tmp_path, package_name="custom_pkg", incremental=False)
         assert "mod" in results
         assert results["mod"].success

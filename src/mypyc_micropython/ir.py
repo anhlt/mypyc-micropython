@@ -391,7 +391,7 @@ class ClassIR:
                 # Skip Final and ClassVar fields
                 if fld.is_final or fld.is_classvar:
                     continue
-                if not any(f.name == fld for f, _ in result):
+                if not any(f.name == fld.name for f, _ in result):
                     result.append((fld, fld.name))
         # Add own instance fields (excluding Final and ClassVar)
         for fld in self.fields:

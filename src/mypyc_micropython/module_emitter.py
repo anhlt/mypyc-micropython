@@ -7,7 +7,6 @@ function code, class code, and module registration.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -17,55 +16,7 @@ if TYPE_CHECKING:
 from .c_bindings.core.c_ir import CType
 from .ir import FuncIR, ModuleIR, RTuple
 
-C_RESERVED_WORDS = {
-    "auto",
-    "break",
-    "case",
-    "char",
-    "const",
-    "continue",
-    "default",
-    "do",
-    "double",
-    "else",
-    "enum",
-    "extern",
-    "float",
-    "for",
-    "goto",
-    "if",
-    "int",
-    "long",
-    "register",
-    "return",
-    "short",
-    "signed",
-    "sizeof",
-    "static",
-    "struct",
-    "switch",
-    "typedef",
-    "union",
-    "unsigned",
-    "void",
-    "volatile",
-    "while",
-    "inline",
-    "restrict",
-    "_Bool",
-    "_Complex",
-    "_Imaginary",
-}
-
-
-def sanitize_name(name: str) -> str:
-    result = re.sub(r"[^a-zA-Z0-9_]", "_", name)
-    if result and result[0].isdigit():
-        result = "_" + result
-    if result in C_RESERVED_WORDS:
-        result = result + "_"
-    return result
-
+from .base_emitter import C_RESERVED_WORDS, sanitize_name
 
 class ModuleEmitter:
     """Assembles complete C module code from parts."""

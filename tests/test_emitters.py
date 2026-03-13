@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import ast
 
-from mypyc_micropython.function_emitter import FunctionEmitter, MethodEmitter
+from mypyc_micropython.function_emitter import FunctionEmitter
+from mypyc_micropython.method_emitter import MethodEmitter
 from mypyc_micropython.generator_emitter import GeneratorEmitter
 from mypyc_micropython.ir import (
     AnnAssignIR,

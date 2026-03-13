@@ -7,7 +7,7 @@ including structs, vtables, constructors, and method wrappers.
 
 from __future__ import annotations
 
-from .compiler import sanitize_name
+from .base_emitter import sanitize_name
 from .ir import ClassIR, CType, MethodIR, PropertyInfo
 
 
