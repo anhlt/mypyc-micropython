@@ -8,7 +8,6 @@ The IR is then consumed by emitters to generate C code.
 from __future__ import annotations
 
 import ast
-import re
 import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -18,6 +17,7 @@ if TYPE_CHECKING:
 
     from .type_checker import ClassTypeInfo, FunctionTypeInfo
 
+from .base_emitter import sanitize_name
 from .ir import (
     AnnAssignIR,
     ArgKind,
@@ -101,47 +101,6 @@ from .ir import (
     YieldIR,
 )
 
-C_RESERVED_WORDS = {
-    "auto",
-    "break",
-    "case",
-    "char",
-    "const",
-    "continue",
-    "default",
-    "do",
-    "double",
-    "else",
-    "enum",
-    "extern",
-    "float",
-    "for",
-    "goto",
-    "if",
-    "int",
-    "long",
-    "register",
-    "return",
-    "short",
-    "signed",
-    "sizeof",
-    "static",
-    "struct",
-    "switch",
-    "typedef",
-    "union",
-    "unsigned",
-    "void",
-    "volatile",
-    "while",
-    "inline",
-    "restrict",
-    "_Bool",
-    "_Complex",
-    "_Imaginary",
-}
-
-
 # Builtin functions recognized by the compiler
 BUILTIN_FUNCTIONS = {
     "abs",
@@ -177,15 +136,6 @@ def _builtin_ir_type(func_name: str) -> IRType:
     elif func_name == "bool":
         return IRType.BOOL
     return IRType.OBJ
-
-
-def sanitize_name(name: str) -> str:
-    result = re.sub(r"[^a-zA-Z0-9_]", "_", name)
-    if result and result[0].isdigit():
-        result = "_" + result
-    if result in C_RESERVED_WORDS:
-        result = result + "_"
-    return result
 
 
 @dataclass

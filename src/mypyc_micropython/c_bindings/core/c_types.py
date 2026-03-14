@@ -17,7 +17,7 @@ Usage in .pyi files:
 
 from __future__ import annotations
 
-from typing import Generic, TypeVar
+from typing import Callable, Generic, TypeVar
 
 T = TypeVar("T")
 
@@ -107,7 +107,7 @@ class c_str:
     pass
 
 
-def c_struct(c_name: str, opaque: bool = True):
+def c_struct(c_name: str, opaque: bool = True) -> Callable[[type], type]:
     """Decorator to mark a class as a C struct.
 
     Args:
@@ -123,7 +123,7 @@ def c_struct(c_name: str, opaque: bool = True):
     return decorator
 
 
-def c_enum(c_name: str):
+def c_enum(c_name: str) -> Callable[[type], type]:
     """Decorator to mark a class as a C enum.
 
     Args:

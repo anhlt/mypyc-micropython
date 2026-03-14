@@ -25,12 +25,12 @@ class c_bool:
 class c_str:
     pass
 
-def c_struct(c_name: str, opaque: bool = True):
+def c_struct(c_name: str, opaque: bool = True) -> Callable[[type], type]:
     def decorator(cls: type) -> type:
         return cls
     return decorator
 
-def c_enum(c_name: str):
+def c_enum(c_name: str) -> Callable[[type], type]:
     def decorator(cls: type) -> type:
         return cls
     return decorator

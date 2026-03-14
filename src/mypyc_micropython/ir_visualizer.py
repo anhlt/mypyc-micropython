@@ -777,7 +777,7 @@ class IRPrinter:
 class IRTreePrinter:
     """Render IR as ASCII tree diagrams."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._lines: list[str] = []
 
     def print_tree(self, node: Any, name: str = "root") -> str:

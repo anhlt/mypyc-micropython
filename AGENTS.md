@@ -26,6 +26,24 @@ make benchmark PORT=/dev/cu.usbmodem2101         # Benchmark native vs vanilla M
 
 **IMPORTANT**: Always use `make` commands for compiling and testing. Never call `mpy-compile` directly.
 
+## Incremental Firmware Build
+
+The firmware build process supports incremental compilation to speed up the edit-compile-test cycle:
+
+- **ccache**: Automatically enabled if installed (`brew install ccache` on macOS)
+- **Ninja incremental**: ESP-IDF's build system only recompiles changed .c files
+- **FORCE flag**: Use `FORCE=1` with make commands to force full recompilation
+
+```bash
+# Incremental build (default): only recompiles changed .c files
+make compile-all BOARD=ESP32_GENERIC_C6
+make build BOARD=ESP32_GENERIC_C6
+
+# Force full recompilation
+make compile-all BOARD=ESP32_GENERIC_C6 FORCE=1
+```
+
+
 ## Project Layout
 
 ```
@@ -37,7 +55,9 @@ src/mypyc_micropython/
 ├── ir_builder.py        # AST → IR translation (builds FuncIR, ClassIR from AST)
 ├── ir_visualizer.py     # IR debugging: dump IR as text/tree/JSON
 ├── type_checker.py      # mypy integration for type checking
+├── base_emitter.py      # Base emitter class, sanitize_name, C_RESERVED_WORDS
 ├── function_emitter.py  # FuncIR → C code emission
+├── method_emitter.py    # MethodIR → C code emission for class methods
 ├── module_emitter.py    # ModuleIR → complete C module assembly
 ├── class_emitter.py     # ClassIR → C structs, vtables, methods
 ├── container_emitter.py # IR emission helpers for list/dict operations

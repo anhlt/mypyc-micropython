@@ -221,6 +221,7 @@ def type_check_package(
     python_version: tuple[int, int] = (3, 10),
     strict: bool = False,
     check_untyped: bool = False,
+    incremental: bool = False,
 ) -> dict[str, TypeCheckResult]:
     """Type check an entire Python package using mypy.
 
@@ -233,6 +234,7 @@ def type_check_package(
         python_version: Target Python version tuple
         strict: Enable strict type checking mode
         check_untyped: Require type annotations
+        incremental: Enable mypy incremental mode (default False to avoid cache issues)
 
     Returns:
         Dict mapping submodule stem (e.g., 'app', 'program') to TypeCheckResult.
@@ -240,15 +242,17 @@ def type_check_package(
     """
     package_path = Path(package_dir)
     if not package_path.is_dir():
-        return {"__init__": TypeCheckResult(
-            success=False, errors=[f"Not a directory: {package_path}"]
-        )}
+        return {
+            "__init__": TypeCheckResult(success=False, errors=[f"Not a directory: {package_path}"])
+        }
 
     init_file = package_path / "__init__.py"
     if not init_file.exists():
-        return {"__init__": TypeCheckResult(
-            success=False, errors=[f"Missing __init__.py in {package_path}"]
-        )}
+        return {
+            "__init__": TypeCheckResult(
+                success=False, errors=[f"Missing __init__.py in {package_path}"]
+            )
+        }
 
     pkg_name = package_name or package_path.name
 
@@ -258,6 +262,7 @@ def type_check_package(
         strict=strict,
         check_untyped=check_untyped,
     )
+    options.incremental = incremental
     # Override: follow imports within the package so cross-module types resolve
     options.follow_imports = "normal"
     options.namespace_packages = True
@@ -282,10 +287,7 @@ def type_check_package(
         build_result = mypy_build.build(sources=sources, options=options)
     except CompileError as e:
         err_msgs = list(e.messages) if hasattr(e, "messages") else [str(e)]
-        return {
-            stem: TypeCheckResult(success=False, errors=err_msgs)
-            for stem in submodule_names
-        }
+        return {stem: TypeCheckResult(success=False, errors=err_msgs) for stem in submodule_names}
 
     # Partition errors by file
     errors_by_stem: dict[str, list[str]] = {stem: [] for stem in submodule_names}
@@ -325,6 +327,7 @@ def type_check_package(
         )
 
     return results
+
 
 def _run_type_check(
     file_path: str,

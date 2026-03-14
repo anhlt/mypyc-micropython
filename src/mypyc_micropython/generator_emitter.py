@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .function_emitter import BaseEmitter, sanitize_name
+from .base_emitter import BaseEmitter, sanitize_name
 from .ir import (
     AnnAssignIR,
     AssignIR,
