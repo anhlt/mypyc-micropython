@@ -1338,6 +1338,7 @@ class TestEmitMethodCall:
         # Should NOT use set.add optimization
         assert "mp_obj_set_store" not in c_code
 
+
 # ============================================================================
 # Test: Edge Cases
 # ============================================================================
@@ -1604,6 +1605,7 @@ class TestClassEmitterTypeDefinition:
         assert "test_Widget_type" in type_code
         assert "MP_QSTR_Widget" in type_code
 
+
 class TestClassEmitterMakeNew:
     """Tests for make_new emission with kwargs support."""
 
@@ -1846,7 +1848,6 @@ class TestClassEmitterMakeNew:
         assert "parsed[ARG_a]" in make_new_code
         assert "parsed[ARG_b]" in make_new_code
         assert "parsed[ARG_c]" in make_new_code
-
 
 
 class TestGeneratorEmitter:
@@ -2256,6 +2257,7 @@ class TestObjAttrAssignEmission:
     def test_prelude_emitted_before_assignment(self):
         """Prelude instructions should appear before the assignment."""
         from mypyc_micropython.ir import ListNewIR
+
         prelude_instr = ListNewIR(
             result=TempIR(name="_tmp1", ir_type=IRType.OBJ),
             items=[make_const_int(1), make_const_int(2)],
@@ -2291,7 +2293,8 @@ class TestMypyAnyFieldTypeFallback:
         """self.config.name should use self->config->name, not mp_load_attr.
         This verifies Bug 5 fix: field typed as known class enables native path."""
         from mypyc_micropython.compiler import compile_source
-        source = '''
+
+        source = """
 class Config:
     name: str
     value: int
@@ -2308,7 +2311,7 @@ class App:
 
     def get_name(self) -> str:
         return self.config.name
-'''
+"""
         c_code = compile_source(source, "test")
         # With proper type resolution, self.config.name should use native
         # struct access: self->config->name (not mp_load_attr)
@@ -2319,8 +2322,9 @@ class App:
     def test_any_typed_field_falls_back_to_generic_access(self):
         """When field type is unresolved (object), chained access uses mp_load_attr."""
         from mypyc_micropython.compiler import compile_source
+
         # Use 'object' typed field (simulates unresolved Any)
-        source = '''
+        source = """
 class Container:
     item: object
 
@@ -2329,7 +2333,7 @@ class Container:
 
     def get_label(self) -> object:
         return self.item
-'''
+"""
         c_code = compile_source(source, "test")
         # 'object' typed field: cannot do chained native access
         # self.item access should still work but won't chain natively
@@ -2362,7 +2366,7 @@ class TestFuncRefIREmission:
         """Function reference passed as method argument should not produce 'unknown value'."""
         from mypyc_micropython.compiler import compile_source
 
-        source = '''
+        source = """
 class Registry:
     def register(self, key: int, handler: object) -> None:
         pass
@@ -2372,7 +2376,7 @@ def my_handler(x: int) -> int:
 
 def setup(reg: Registry) -> None:
     reg.register(1, my_handler)
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         # Should have the function pointer reference, not /* unknown value */
         assert "MP_OBJ_FROM_PTR(&test_my_handler_obj)" in result
@@ -2382,7 +2386,7 @@ def setup(reg: Registry) -> None:
         """Multiple function references passed to same method call."""
         from mypyc_micropython.compiler import compile_source
 
-        source = '''
+        source = """
 class Dispatcher:
     def register(self, success_cb: object, error_cb: object) -> None:
         pass
@@ -2395,7 +2399,7 @@ def on_error(x: int) -> int:
 
 def init(d: Dispatcher) -> None:
     d.register(on_success, on_error)
-'''
+"""
         result = compile_source(source, "test", type_check=False)
         assert "MP_OBJ_FROM_PTR(&test_on_success_obj)" in result
         assert "MP_OBJ_FROM_PTR(&test_on_error_obj)" in result

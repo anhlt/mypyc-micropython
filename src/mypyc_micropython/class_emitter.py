@@ -129,8 +129,6 @@ class ClassEmitter:
                 if (method_ir.has_defaults or num_args > 3)
                 else "mp_obj_fun_builtin_fixed_t"
             )
-            # Use mp_obj_fun_builtin_fixed_t for forward declarations
-            # (both real MicroPython and mock runtime define this type)
             lines.append(f"extern const {obj_type} {method_ir.c_name}_obj;")
 
         if lines:
@@ -415,14 +413,18 @@ class ClassEmitter:
                                 f"        {{ MP_QSTR_{param_name}, MP_ARG_INT, {{.u_int = {default_arg.value}}} }},"
                             )
                         else:
-                            lines.append(f"        {{ MP_QSTR_{param_name}, MP_ARG_REQUIRED | MP_ARG_INT }},")
+                            lines.append(
+                                f"        {{ MP_QSTR_{param_name}, MP_ARG_REQUIRED | MP_ARG_INT }},"
+                            )
                     elif param_type == CType.MP_FLOAT_T:
                         if default_arg is not None:
                             lines.append(
                                 f"        {{ MP_QSTR_{param_name}, MP_ARG_OBJ, {{.u_obj = mp_const_none}} }},"
                             )
                         else:
-                            lines.append(f"        {{ MP_QSTR_{param_name}, MP_ARG_REQUIRED | MP_ARG_OBJ }},")
+                            lines.append(
+                                f"        {{ MP_QSTR_{param_name}, MP_ARG_REQUIRED | MP_ARG_OBJ }},"
+                            )
                     elif param_type == CType.BOOL:
                         if default_arg is not None and default_arg.value is not None:
                             default_val = "true" if default_arg.value else "false"
@@ -430,14 +432,18 @@ class ClassEmitter:
                                 f"        {{ MP_QSTR_{param_name}, MP_ARG_BOOL, {{.u_bool = {default_val}}} }},"
                             )
                         else:
-                            lines.append(f"        {{ MP_QSTR_{param_name}, MP_ARG_REQUIRED | MP_ARG_BOOL }},")
+                            lines.append(
+                                f"        {{ MP_QSTR_{param_name}, MP_ARG_REQUIRED | MP_ARG_BOOL }},"
+                            )
                     else:
                         if default_arg is not None and default_arg.c_expr is not None:
                             lines.append(
                                 f"        {{ MP_QSTR_{param_name}, MP_ARG_OBJ, {{.u_obj = {default_arg.c_expr}}} }},"
                             )
                         else:
-                            lines.append(f"        {{ MP_QSTR_{param_name}, MP_ARG_REQUIRED | MP_ARG_OBJ }},")
+                            lines.append(
+                                f"        {{ MP_QSTR_{param_name}, MP_ARG_REQUIRED | MP_ARG_OBJ }},"
+                            )
                 lines.append("    };")
                 lines.append("")
 
@@ -488,11 +494,15 @@ class ClassEmitter:
                 lines.append("    init_args[0] = MP_OBJ_FROM_PTR(self);")
                 for i, (param_name, param_type) in enumerate(init_method.params):
                     if param_type == CType.MP_INT_T:
-                        lines.append(f"    init_args[{i + 1}] = mp_obj_new_int(parsed[ARG_{param_name}].u_int);")
+                        lines.append(
+                            f"    init_args[{i + 1}] = mp_obj_new_int(parsed[ARG_{param_name}].u_int);"
+                        )
                     elif param_type == CType.MP_FLOAT_T:
                         lines.append(f"    init_args[{i + 1}] = parsed[ARG_{param_name}].u_obj;")
                     elif param_type == CType.BOOL:
-                        lines.append(f"    init_args[{i + 1}] = parsed[ARG_{param_name}].u_bool ? mp_const_true : mp_const_false;")
+                        lines.append(
+                            f"    init_args[{i + 1}] = parsed[ARG_{param_name}].u_bool ? mp_const_true : mp_const_false;"
+                        )
                     else:
                         lines.append(f"    init_args[{i + 1}] = parsed[ARG_{param_name}].u_obj;")
                 lines.append(f"    {self.c_name}___init___mp({total_args}, init_args);")
@@ -505,7 +515,9 @@ class ClassEmitter:
                     elif param_type == CType.MP_FLOAT_T:
                         args_list.append(f"parsed[ARG_{param_name}].u_obj")
                     elif param_type == CType.BOOL:
-                        args_list.append(f"parsed[ARG_{param_name}].u_bool ? mp_const_true : mp_const_false")
+                        args_list.append(
+                            f"parsed[ARG_{param_name}].u_bool ? mp_const_true : mp_const_false"
+                        )
                     else:
                         args_list.append(f"parsed[ARG_{param_name}].u_obj")
                 args_str = ", ".join(args_list)
@@ -1126,9 +1138,7 @@ class ClassEmitter:
             if isinstance(value, bool):
                 # Use MP_ROM_PTR with mp_const_true/false to preserve boolean semantics
                 mp_val = "mp_const_true" if value else "mp_const_false"
-                lines.append(
-                    f"    {{ MP_ROM_QSTR(MP_QSTR_{field.name}), MP_ROM_PTR({mp_val}) }},"
-                )
+                lines.append(f"    {{ MP_ROM_QSTR(MP_QSTR_{field.name}), MP_ROM_PTR({mp_val}) }},")
             elif isinstance(value, int):
                 lines.append(f"    {{ MP_ROM_QSTR(MP_QSTR_{field.name}), MP_ROM_INT({value}) }},")
             elif isinstance(value, str):

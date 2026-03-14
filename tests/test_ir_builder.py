@@ -2202,7 +2202,7 @@ class TestObjAttrAssignIR:
 
     def test_local_var_attr_assign_generates_obj_attr_assign(self):
         """Assignment to local_var.attr should produce ObjAttrAssignIR."""
-        source = '''
+        source = """
 class Container:
     items: list
 
@@ -2211,7 +2211,7 @@ class Container:
 
 def fill(c: Container) -> None:
     c.items = [1, 2, 3]
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
 
@@ -2233,7 +2233,7 @@ def fill(c: Container) -> None:
 
     def test_obj_attr_assign_known_class_has_c_name(self):
         """When local var's class is known, obj_class should be set."""
-        source = '''
+        source = """
 class Holder:
     value: int
 
@@ -2242,7 +2242,7 @@ class Holder:
 
 def set_val(h: Holder) -> None:
     h.value = 42
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
 
@@ -2261,10 +2261,10 @@ def set_val(h: Holder) -> None:
 
     def test_obj_attr_assign_unknown_class_has_none(self):
         """When local var's class is NOT known, obj_class should be None."""
-        source = '''
+        source = """
 def modify(obj: object) -> None:
     obj.value = 10
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         func_ir = builder.build_function(tree.body[0])
@@ -2278,7 +2278,8 @@ def modify(obj: object) -> None:
         """self.attr = value should NOT produce mp_store_attr in generated C.
         It should use direct struct field access via AttrAssignIR."""
         from mypyc_micropython.compiler import compile_source
-        source = '''
+
+        source = """
 class Foo:
     x: int
 
@@ -2287,7 +2288,7 @@ class Foo:
 
     def set_x(self, v: int) -> None:
         self.x = v
-'''
+"""
         c_code = compile_source(source, "test", type_check=False)
         # self.x = v in set_x should use direct struct access: self->x = v
         assert "self->x = v" in c_code
@@ -2307,7 +2308,7 @@ class TestMypyAnyFallbackToAnnotation:
         from mypyc_micropython.type_checker import ClassTypeInfo, FunctionTypeInfo
 
         # Simulate a known class 'Config' in a sibling module
-        config_source = '''
+        config_source = """
 class Config:
     name: str
     value: int
@@ -2315,7 +2316,7 @@ class Config:
     def __init__(self, name: str, value: int) -> None:
         self.name = name
         self.value = value
-'''
+"""
         config_tree = ast.parse(config_source)
         config_builder = IRBuilder("config_mod")
         for node in ast.iter_child_nodes(config_tree):
@@ -2323,13 +2324,13 @@ class Config:
                 config_class_ir = config_builder.build_class(node)
 
         # Source with a class that has a field typed as Config
-        app_source = '''
+        app_source = """
 class App:
     config: Config
 
     def __init__(self, config: Config) -> None:
         self.config = config
-'''
+"""
         # Simulate mypy reporting 'Any' for the Config field (unresolved import)
         mypy_types = MypyTypeInfo(
             functions={},
@@ -2337,12 +2338,14 @@ class App:
                 "App": ClassTypeInfo(
                     name="App",
                     fields=[("config", "Any")],  # mypy couldn't resolve
-                    methods=[FunctionTypeInfo(
-                        name="__init__",
-                        params=[("config", "Any")],
-                        return_type="None",
-                        is_method=True,
-                    )],
+                    methods=[
+                        FunctionTypeInfo(
+                            name="__init__",
+                            params=[("config", "Any")],
+                            return_type="None",
+                            is_method=True,
+                        )
+                    ],
                 )
             },
             module_types={},
@@ -2375,13 +2378,13 @@ class App:
         from mypyc_micropython.type_checker import ClassTypeInfo, FunctionTypeInfo
 
         # Build a known class 'Widget'
-        widget_source = '''
+        widget_source = """
 class Widget:
     label: str
 
     def __init__(self, label: str) -> None:
         self.label = label
-'''
+"""
         widget_tree = ast.parse(widget_source)
         widget_builder = IRBuilder("widget_mod")
         for node in ast.iter_child_nodes(widget_tree):
@@ -2389,23 +2392,25 @@ class Widget:
                 widget_class_ir = widget_builder.build_class(node)
 
         # A class with a method that takes Widget parameter
-        view_source = '''
+        view_source = """
 class View:
     def render(self, w: Widget) -> int:
         return 0
-'''
+"""
         mypy_types = MypyTypeInfo(
             functions={},
             classes={
                 "View": ClassTypeInfo(
                     name="View",
                     fields=[],
-                    methods=[FunctionTypeInfo(
-                        name="render",
-                        params=[("w", "Any")],  # mypy couldn't resolve
-                        return_type="int",
-                        is_method=True,
-                    )],
+                    methods=[
+                        FunctionTypeInfo(
+                            name="render",
+                            params=[("w", "Any")],  # mypy couldn't resolve
+                            return_type="int",
+                            is_method=True,
+                        )
+                    ],
                 )
             },
             module_types={},
@@ -2423,6 +2428,7 @@ class View:
 
         # The 'render' method's 'w' param should be typed as Widget, not Any
         from mypyc_micropython.ir import CType
+
         render_method = class_ir.methods.get("render")
         assert render_method is not None
         # Params: [("w", CType)] -- self is excluded in method IR
@@ -2447,13 +2453,13 @@ class TestFromImportNameResolution:
 
     def test_import_module_call_generates_module_call_ir(self):
         """import math; math.sqrt(x) -> ModuleCallIR in prelude."""
-        source = '''
+        source = """
 from __future__ import annotations
 import math
 
 def f(x: float) -> float:
     return math.sqrt(x)
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         for node in ast.iter_child_nodes(tree):
@@ -2480,12 +2486,12 @@ def f(x: float) -> float:
         When `from pkg.sub import Cmd` is used and pkg.sub is not a sibling,
         using `Cmd` should generate ModuleAttrIR, not NameIR.
         """
-        source = '''
+        source = """
 from __future__ import annotations
 
 def f() -> object:
     return Cmd
-'''
+"""
         tree = ast.parse(source)
         # Manually register 'Cmd' as imported from 'pkg.sub' (non-sibling)
         builder = IRBuilder("test")
@@ -2506,12 +2512,12 @@ def f() -> object:
 
         Sibling modules use direct C function calls, not runtime imports.
         """
-        source = '''
+        source = """
 from __future__ import annotations
 
 def f() -> object:
     return helper
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         # Register 'helper' as both imported-from AND a sibling module
@@ -2545,13 +2551,13 @@ class TestCallableCallResult:
 
         Pattern from MVU: Screen()(counter_app, init_model, update, view)
         """
-        source = '''
+        source = """
 from __future__ import annotations
 from typing import Callable
 
 def f(g: Callable[..., Callable[..., object]]) -> object:
     return g()(1)
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         for node in ast.iter_child_nodes(tree):
@@ -2569,13 +2575,13 @@ def f(g: Callable[..., Callable[..., object]]) -> object:
 
     def test_callable_call_result_prelude_has_temp_assign(self):
         """The prelude for g()() should contain a TempAssignIR."""
-        source = '''
+        source = """
 from __future__ import annotations
 from typing import Callable
 
 def f(g: Callable[..., Callable[..., object]]) -> object:
     return g()(1)
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         for node in ast.iter_child_nodes(tree):
@@ -2591,7 +2597,7 @@ def f(g: Callable[..., Callable[..., object]]) -> object:
         # Check that at least one statement before the return is related
         # to temp assignment
         # Actually, preludes for return values are embedded in ReturnIR.prelude
-        if hasattr(ret, 'prelude') and ret.prelude:
+        if hasattr(ret, "prelude") and ret.prelude:
             temp_assigns = [i for i in ret.prelude if isinstance(i, TempAssignIR)]
             assert len(temp_assigns) >= 1
             ta = temp_assigns[0]
@@ -2601,7 +2607,7 @@ def f(g: Callable[..., Callable[..., object]]) -> object:
             # into the stmt list -- scan func_ir.body for TempAssignIR in preludes
             found_temp = False
             for stmt in func_ir.body:
-                prelude = getattr(stmt, 'prelude', None) or []
+                prelude = getattr(stmt, "prelude", None) or []
                 for instr in prelude:
                     if isinstance(instr, TempAssignIR):
                         found_temp = True
@@ -2618,11 +2624,11 @@ class TestLambdaIR:
 
     def test_simple_lambda(self):
         """Test basic lambda without closures."""
-        source = '''
+        source = """
 def use_lambda() -> int:
     add = lambda x, y: x + y
     return add(2, 3)
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         for node in ast.iter_child_nodes(tree):
@@ -2637,12 +2643,12 @@ def use_lambda() -> int:
 
     def test_lambda_with_closure(self):
         """Test lambda capturing variable from enclosing scope."""
-        source = '''
+        source = """
 def use_closure(n: int) -> int:
     multiplier: int = 10
     fn = lambda x: x * multiplier
     return fn(n)
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         for node in ast.iter_child_nodes(tree):
@@ -2659,13 +2665,13 @@ def use_closure(n: int) -> int:
 
     def test_lambda_multiple_captures(self):
         """Test lambda capturing multiple variables."""
-        source = '''
+        source = """
 def test_multi_capture(a: int, b: int) -> int:
     x: int = a + 1
     y: int = b + 2
     fn = lambda z: x + y + z
     return fn(100)
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         for node in ast.iter_child_nodes(tree):
@@ -2682,13 +2688,13 @@ def test_multi_capture(a: int, b: int) -> int:
 
     def test_lambda_no_capture_module_constant(self):
         """Test that module constants don't count as captured vars."""
-        source = '''
+        source = """
 CONST: int = 42
 
 def test_const() -> int:
     fn = lambda x: x + CONST
     return fn(1)
-'''
+"""
         tree = ast.parse(source)
         builder = IRBuilder("test")
         # First scan for module-level constants
@@ -2706,3 +2712,75 @@ def test_const() -> int:
         lambda_func = builder.lambda_funcs[0]
         assert len(lambda_func.params) == 1
         assert lambda_func.params[0][0] == "x"
+
+
+class TestForwardReferenceWarning:
+    def test_forward_reference_to_module_constant_warns(self):
+        source = """
+def use_constant() -> int:
+    return MY_CONST
+
+MY_CONST: int = 42
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        builder.prescan_module_constants(tree)
+
+        import warnings
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            for node in ast.iter_child_nodes(tree):
+                if isinstance(node, ast.FunctionDef):
+                    builder.build_function(node)
+
+            assert len(w) == 1
+            assert "Forward reference" in str(w[0].message)
+            assert "MY_CONST" in str(w[0].message)
+
+    def test_no_warning_for_constant_defined_before_use(self):
+        source = """
+MY_CONST: int = 42
+
+def use_constant() -> int:
+    return MY_CONST
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        builder.prescan_module_constants(tree)
+
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, ast.AnnAssign):
+                builder.register_module_var(node)
+
+        import warnings
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            for node in ast.iter_child_nodes(tree):
+                if isinstance(node, ast.FunctionDef):
+                    builder.build_function(node)
+
+            assert len(w) == 0
+
+    def test_forward_reference_unannotated_constant(self):
+        source = """
+def use_constant() -> int:
+    return MY_CONST
+
+MY_CONST = 42
+"""
+        tree = ast.parse(source)
+        builder = IRBuilder("test")
+        builder.prescan_module_constants(tree)
+
+        import warnings
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            for node in ast.iter_child_nodes(tree):
+                if isinstance(node, ast.FunctionDef):
+                    builder.build_function(node)
+
+            assert len(w) == 1
+            assert "MY_CONST" in str(w[0].message)

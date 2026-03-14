@@ -202,8 +202,12 @@ class IRBuilder:
         self._container_element_types: dict[str, str] = {}
         self._optional_class_params: set[str] = set()  # params typed as X | None
         self._class_field_element_types: dict[tuple[str, str], str] = {}
-        self._typevar_bounds: dict[str, str] = {}  # TypeVar name -> bound type ("object" if unbounded)
-        self._pep695_typevars: set[str] = set()  # PEP 695 function-level TypeVar names (cleared per function)
+        self._typevar_bounds: dict[
+            str, str
+        ] = {}  # TypeVar name -> bound type ("object" if unbounded)
+        self._pep695_typevars: set[str] = (
+            set()
+        )  # PEP 695 function-level TypeVar names (cleared per function)
         for class_ir in self._known_classes.values():
             class_node = class_ir.ast_node
             if class_node is None:
@@ -231,6 +235,9 @@ class IRBuilder:
         self._imported_from: dict[str, str] = {}  # maps imported name -> source module
         self._uses_external_libs: set[str] = set()
         self._module_constants: dict[str, int | float | str | bool | None] = {}
+        self._all_module_constants: dict[
+            str, int | float | str | bool | None
+        ] = {}  # Pre-scanned, for forward ref detection
         self._module_vars: dict[str, str] = {}
         self._sibling_modules: dict[str, str] = (
             sibling_modules or {}
@@ -244,8 +251,9 @@ class IRBuilder:
         # Lambda tracking
         self._lambda_counter = 0  # Module-level counter for unique lambda IDs
         self._lambda_funcs: list[FuncIR] = []  # Lambda FuncIRs to be emitted as module functions
-        self._current_scope_vars: set[str] = set()  # Variables in current function scope (params + locals)
-
+        self._current_scope_vars: set[str] = (
+            set()
+        )  # Variables in current function scope (params + locals)
 
     def _fresh_temp(self) -> str:
         self._temp_counter += 1
@@ -309,7 +317,9 @@ class IRBuilder:
         # Extract literal value
         value = node.value
         if isinstance(value, ast.Constant):
-            self._module_constants[name] = value.value if isinstance(value.value, (int, float, str, bool)) else None
+            self._module_constants[name] = (
+                value.value if isinstance(value.value, (int, float, str, bool)) else None
+            )
             return True
         elif isinstance(value, ast.UnaryOp) and isinstance(value.op, ast.USub):
             # Handle negative numbers: -1, -3.14
@@ -327,7 +337,9 @@ class IRBuilder:
         # First: check if this is a literal constant (NAME: type = literal_value)
         # Register as module constant so functions can resolve the value at compile time
         if isinstance(node.value, ast.Constant):
-            self._module_constants[node.target.id] = node.value.value if isinstance(node.value.value, (int, float, str, bool)) else None
+            self._module_constants[node.target.id] = (
+                node.value.value if isinstance(node.value.value, (int, float, str, bool)) else None
+            )
             return True
         if isinstance(node.value, ast.UnaryOp) and isinstance(node.value.op, ast.USub):
             if isinstance(node.value.operand, ast.Constant) and isinstance(
@@ -364,6 +376,44 @@ class IRBuilder:
             return True
         return False
 
+    def prescan_module_constants(self, tree: ast.Module) -> None:
+        """Pre-scan module to collect ALL constant definitions for forward reference detection.
+
+        This must be called before build_function() to enable warnings when a function
+        references a constant defined later in the file.
+        """
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                    name = node.targets[0].id
+                    value = node.value
+                    if isinstance(value, ast.Constant):
+                        self._all_module_constants[name] = (
+                            value.value
+                            if isinstance(value.value, (int, float, str, bool))
+                            else None
+                        )
+                    elif isinstance(value, ast.UnaryOp) and isinstance(value.op, ast.USub):
+                        if isinstance(value.operand, ast.Constant) and isinstance(
+                            value.operand.value, (int, float)
+                        ):
+                            self._all_module_constants[name] = -value.operand.value
+            elif isinstance(node, ast.AnnAssign):
+                if isinstance(node.target, ast.Name) and node.value is not None:
+                    name = node.target.id
+                    value = node.value
+                    if isinstance(value, ast.Constant):
+                        self._all_module_constants[name] = (
+                            value.value
+                            if isinstance(value.value, (int, float, str, bool))
+                            else None
+                        )
+                    elif isinstance(value, ast.UnaryOp) and isinstance(value.op, ast.USub):
+                        if isinstance(value.operand, ast.Constant) and isinstance(
+                            value.operand.value, (int, float)
+                        ):
+                            self._all_module_constants[name] = -value.operand.value
+
     def register_function_name(
         self, name: str, c_name: str, return_type: CType = CType.MP_INT_T
     ) -> None:
@@ -393,12 +443,11 @@ class IRBuilder:
     def imported_modules(self) -> set[str]:
         """Set of module names that have been imported."""
         return self._imported_modules
+
     @property
     def lambda_funcs(self) -> list[FuncIR]:
         """List of lambda FuncIRs generated during build."""
         return self._lambda_funcs
-
-
 
     def build_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> FuncIR:
         self._temp_counter = 0
@@ -421,7 +470,6 @@ class IRBuilder:
         for tv_name in self._pep695_typevars:
             self._typevar_bounds.pop(tv_name, None)
         self._pep695_typevars = set()
-
 
         # Scan for PEP 695 type parameters: def f[T](x: T) -> T
         self._scan_typevars(node)
@@ -1065,7 +1113,6 @@ class IRBuilder:
         if isinstance(target, ast.Tuple):
             return self._build_tuple_unpack(target, stmt.value, locals_)
 
-
         # Handle local_var.attr = value (not self.attr which is handled above)
         if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
             obj_name = target.value.id
@@ -1305,7 +1352,11 @@ class IRBuilder:
                     if var_name == "self":
                         # First check for Final class constants - resolve to literal value
                         for fld in class_ir.fields:
-                            if fld.name == attr_name and fld.is_final and fld.final_value is not None:
+                            if (
+                                fld.name == attr_name
+                                and fld.is_final
+                                and fld.final_value is not None
+                            ):
                                 # Return the constant value directly (constant folding)
                                 value = fld.final_value
                                 if isinstance(value, bool):
@@ -1669,6 +1720,13 @@ class IRBuilder:
             self._uses_imports = True
             return ModuleRefIR(ir_type=IRType.OBJ, module_name=module_name)
 
+        # Warn on forward references to module-level constants
+        if name in self._all_module_constants and name not in self._module_constants:
+            warnings.warn(
+                f"Forward reference to module-level constant '{name}' - define before use",
+                stacklevel=3,
+            )
+
         c_name = self._star_c_names.get(name, sanitize_name(name))
         var_type = self._var_types.get(name, "mp_int_t")
         ir_type = IRType.from_c_type_str(var_type)
@@ -1717,7 +1775,9 @@ class IRBuilder:
             right_prelude=right_prelude,
         ), left_prelude + right_prelude
 
-    def _build_boolop(self, expr: ast.BoolOp, locals_: list[str]) -> tuple[ValueNode, list[InstrNode]]:
+    def _build_boolop(
+        self, expr: ast.BoolOp, locals_: list[str]
+    ) -> tuple[ValueNode, list[InstrNode]]:
         c_op = "&&" if isinstance(expr.op, ast.And) else "||"
 
         values = expr.values
@@ -1739,7 +1799,9 @@ class IRBuilder:
 
         return left, all_prelude
 
-    def _build_unaryop(self, expr: ast.UnaryOp, locals_: list[str]) -> tuple[UnaryOpIR, list[InstrNode]]:
+    def _build_unaryop(
+        self, expr: ast.UnaryOp, locals_: list[str]
+    ) -> tuple[UnaryOpIR, list[InstrNode]]:
         operand, prelude = self._build_expr(expr.operand, locals_)
         op_map = {ast.USub: "-", ast.Not: "!", ast.UAdd: "+", ast.Invert: "~"}
         c_op = op_map.get(type(expr.op), "-")
@@ -1755,7 +1817,9 @@ class IRBuilder:
             prelude=prelude,
         ), prelude
 
-    def _build_compare(self, expr: ast.Compare, locals_: list[str]) -> tuple[CompareIR, list[InstrNode]]:
+    def _build_compare(
+        self, expr: ast.Compare, locals_: list[str]
+    ) -> tuple[CompareIR, list[InstrNode]]:
         left, left_prelude = self._build_expr(expr.left, locals_)
 
         op_map = {
@@ -1974,7 +2038,9 @@ class IRBuilder:
             builtin_kind=None,
         ), all_preludes
 
-    def _build_isinstance(self, expr: ast.Call, locals_: list[str]) -> tuple[ValueNode, list[InstrNode]]:
+    def _build_isinstance(
+        self, expr: ast.Call, locals_: list[str]
+    ) -> tuple[ValueNode, list[InstrNode]]:
         """Build isinstance(obj, ClassName) -> IsInstanceIR.
 
         Only supports compile-time-known concrete classes.
@@ -2095,7 +2161,9 @@ class IRBuilder:
         """Check if name is a private identifier (__name without trailing __)."""
         return name.startswith("__") and not name.endswith("__")
 
-    def _build_method_call(self, expr: ast.Call, locals_: list[str]) -> tuple[ValueNode, list[InstrNode]]:
+    def _build_method_call(
+        self, expr: ast.Call, locals_: list[str]
+    ) -> tuple[ValueNode, list[InstrNode]]:
         if not isinstance(expr.func, ast.Attribute):
             return ConstIR(ir_type=IRType.OBJ, value=None), []
 
@@ -2325,7 +2393,9 @@ class IRBuilder:
         result = TempIR(ir_type=IRType.OBJ, name=temp_name)
         return result, all_preludes + [ListNewIR(result=result, items=items)]
 
-    def _build_tuple(self, expr: ast.Tuple, locals_: list[str]) -> tuple[ValueNode, list[InstrNode]]:
+    def _build_tuple(
+        self, expr: ast.Tuple, locals_: list[str]
+    ) -> tuple[ValueNode, list[InstrNode]]:
         if not expr.elts:
             return ConstIR(ir_type=IRType.OBJ, value=()), []
 
@@ -2374,7 +2444,9 @@ class IRBuilder:
         result = TempIR(ir_type=IRType.OBJ, name=temp_name)
         return result, all_preludes + [DictNewIR(result=result, entries=entries)]
 
-    def _build_subscript(self, expr: ast.Subscript, locals_: list[str]) -> tuple[SubscriptIR, list[InstrNode]]:
+    def _build_subscript(
+        self, expr: ast.Subscript, locals_: list[str]
+    ) -> tuple[SubscriptIR, list[InstrNode]]:
         value, value_prelude = self._build_expr(expr.value, locals_)
 
         is_rtuple = False
@@ -2423,7 +2495,9 @@ class IRBuilder:
             slice_prelude=slice_prelude,
         ), value_prelude + slice_prelude
 
-    def _build_attribute(self, expr: ast.Attribute, locals_: list[str]) -> tuple[ValueNode, list[InstrNode]]:
+    def _build_attribute(
+        self, expr: ast.Attribute, locals_: list[str]
+    ) -> tuple[ValueNode, list[InstrNode]]:
         if isinstance(expr.value, ast.Attribute) and isinstance(expr.value.value, ast.Name):
             module_alias = expr.value.value.id
             if module_alias in self._import_aliases:
@@ -2637,7 +2711,9 @@ class IRBuilder:
 
         return ConstIR(ir_type=IRType.INT, value=0), []
 
-    def _build_list_comp(self, expr: ast.ListComp, locals_: list[str]) -> tuple[ValueNode, list[InstrNode]]:
+    def _build_list_comp(
+        self, expr: ast.ListComp, locals_: list[str]
+    ) -> tuple[ValueNode, list[InstrNode]]:
         """Build IR for list comprehension: [expr for var in iterable] or [expr for var in iterable if cond]."""
         if not expr.generators:
             return ConstIR(ir_type=IRType.OBJ, value=[]), []
@@ -2726,7 +2802,9 @@ class IRBuilder:
 
         return result, [list_comp]
 
-    def _build_lambda(self, expr: ast.Lambda, locals_: list[str]) -> tuple[ValueNode, list[InstrNode]]:
+    def _build_lambda(
+        self, expr: ast.Lambda, locals_: list[str]
+    ) -> tuple[ValueNode, list[InstrNode]]:
         """Build IR for lambda expression: lambda x, y: x + y
 
         Lambdas are compiled to module-level C functions with unique names.
@@ -3047,7 +3125,7 @@ class IRBuilder:
     def _erase_mypy_literal_to_py_type(self, mypy_type: str) -> str:
         """Erase mypy Literal string to Python type: 'Literal[3]' -> 'int'."""
         # Extract value between Literal[ and ]
-        inner = mypy_type[len("Literal["):-1].strip() if mypy_type.endswith("]") else ""
+        inner = mypy_type[len("Literal[") : -1].strip() if mypy_type.endswith("]") else ""
         if not inner:
             return "object"
         # Handle union literals: Literal[1, 2, 3] - use first value
