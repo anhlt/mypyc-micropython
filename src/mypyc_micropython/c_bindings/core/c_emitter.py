@@ -9,6 +9,7 @@ from mypyc_micropython.c_bindings.core.c_ir import (
     CEnumDef,
     CFuncDef,
     CLibraryDef,
+    CParamDef,
     CStructDef,
     CType,
     CTypeDef,
@@ -357,7 +358,7 @@ class CEmitter:
         c_name_without_suffix = struct.c_name.removesuffix("_t")
         return f"{c_name_without_suffix}_get_user_data"
 
-    def _gen_arg_conversion(self, param, arg_expr: str) -> str:
+    def _gen_arg_conversion(self, param: CParamDef, arg_expr: str) -> str:
         t = param.type_def
         if t.base_type == CType.STRUCT_PTR and t.struct_name:
             struct = self.lib.structs.get(t.struct_name)

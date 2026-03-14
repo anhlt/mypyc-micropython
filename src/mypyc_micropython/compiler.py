@@ -298,7 +298,8 @@ def _compile_module_parts(
 ) -> _ModuleCompileParts:
     from .async_emitter import AsyncEmitter
     from .class_emitter import ClassEmitter
-    from .function_emitter import BaseEmitter, FunctionEmitter, MethodEmitter
+    from .function_emitter import BaseEmitter, FunctionEmitter
+    from .method_emitter import MethodEmitter
     from .generator_emitter import GeneratorEmitter
     from .ir_builder import IRBuilder, MypyTypeInfo
 
@@ -385,7 +386,6 @@ def _compile_module_parts(
             function_irs.append(func_ir)
             module_ir.add_function(func_ir)
 
-
             # Select appropriate emitter based on function type
             if func_ir.is_async:
                 emitter: BaseEmitter = AsyncEmitter(func_ir)
@@ -411,7 +411,6 @@ def _compile_module_parts(
             if func_ir.uses_imports:
                 uses_imports = True
             used_rtuples.update(func_ir.used_rtuples)
-
 
     module_ir.imported_modules = ir_builder.imported_modules
     module_ir.constants = ir_builder.module_constants
@@ -441,7 +440,6 @@ def _compile_module_parts(
             class_ir.methods.values(), key=lambda m: (m.name == "__init__", m.name)
         )
         for method_ir in methods_ordered:
-
             # Private (__method) methods: emit native-only, no MP wrapper.
             # They are only called internally via direct C calls, so boxing/unboxing
             # at the MicroPython boundary is unnecessary.
@@ -583,7 +581,9 @@ def _extract_module_constants(source: str) -> dict[str, int | float | str | bool
                 constants[target.id] = cast(int | float | str | bool | None, node.value.value)
             elif isinstance(target, ast.Name) and isinstance(node.value, ast.UnaryOp):
                 # Handle negative numbers: -1, -3.14
-                if isinstance(node.value.op, ast.USub) and isinstance(node.value.operand, ast.Constant):
+                if isinstance(node.value.op, ast.USub) and isinstance(
+                    node.value.operand, ast.Constant
+                ):
                     if isinstance(node.value.operand.value, (int, float)):
                         constants[target.id] = -node.value.operand.value
 
@@ -592,11 +592,14 @@ def _extract_module_constants(source: str) -> dict[str, int | float | str | bool
             if node.value and isinstance(node.value, ast.Constant):
                 constants[node.target.id] = cast(int | float | str | bool | None, node.value.value)
             elif node.value and isinstance(node.value, ast.UnaryOp):
-                if isinstance(node.value.op, ast.USub) and isinstance(node.value.operand, ast.Constant):
+                if isinstance(node.value.op, ast.USub) and isinstance(
+                    node.value.operand, ast.Constant
+                ):
                     if isinstance(node.value.operand.value, (int, float)):
                         constants[node.target.id] = -node.value.operand.value
 
     return constants
+
 
 def _scan_package_recursive(
     package_path: Path,
@@ -634,7 +637,7 @@ def _scan_package_recursive(
         scanner = _IRBuilder(sanitize_name(f"{parent_prefix}_{py_file.stem}"))
 
         # Extract module-level constants
-        module_name = f"{parent_prefix}.{py_file.stem}".lstrip('.')
+        module_name = f"{parent_prefix}.{py_file.stem}".lstrip(".")
         package_constants[module_name] = _extract_module_constants(source)
 
         for node in ast.iter_child_nodes(tree):
