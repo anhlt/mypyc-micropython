@@ -39,4 +39,5 @@ Compiles to a single MicroPython C module with namespaced submodules::
     lvgl_mvu.events.LvEvent
     lvgl_mvu.events.EventBinder
     lvgl_mvu.events.EventHandler
+    lvgl_mvu.events.setup_events
 """

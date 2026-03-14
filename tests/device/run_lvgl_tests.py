@@ -38,11 +38,13 @@ def refresh(iterations=5):
         lvui.screens.timer_handler()
         time.sleep_ms(10)
 
+
 # ---- Package Import Tests ----
 suite("lvui_package")
 
 try:
     import lvui
+
     t("import lvui", lvui is not None, "True")
 
     # Test submodule access via dot notation
@@ -51,8 +53,8 @@ try:
     t("lvui.screens exists", lvui.screens is not None, "True")
 
     # Test that submodules have expected attributes
-    t("lvui.mvu has App", hasattr(lvui.mvu, 'App'), "True")
-    t("lvui.screens has create_screen", hasattr(lvui.screens, 'create_screen'), "True")
+    t("lvui.mvu has App", hasattr(lvui.mvu, "App"), "True")
+    t("lvui.screens has create_screen", hasattr(lvui.screens, "create_screen"), "True")
 except ImportError as e:
     print("  SKIP: lvui package not available - " + str(e))
 
@@ -237,6 +239,7 @@ except ImportError as e:
 except Exception as e:
     print("ERROR: lvgl_mvu tests failed - " + str(e))
     import sys
+
     sys.print_exception(e)
     _failed += 1
 
@@ -392,7 +395,9 @@ t("diff event eq empty", d5.is_empty(), "True")
 t("diff event eq flag", d5.event_changes, "False")
 
 # -- diff_widgets: prev is None (Optional narrowing path) --
-w_new = Widget(LABEL, "", (ScalarAttr(1, "hi"), ScalarAttr(2, 42)), (Widget(BUTTON, "", (), (), ()),), ())
+w_new = Widget(
+    LABEL, "", (ScalarAttr(1, "hi"), ScalarAttr(2, 42)), (Widget(BUTTON, "", (), (), ()),), ()
+)
 d6 = diff_widgets(None, w_new)
 t("diff None prev not empty", d6.is_empty(), "False")
 t("diff None scalar adds", len(d6.scalar_changes), "2")
@@ -416,11 +421,13 @@ CHANGE_ADDED = lvgl_mvu.diff.CHANGE_ADDED
 CHANGE_UPDATED = lvgl_mvu.diff.CHANGE_UPDATED
 CHANGE_REMOVED = lvgl_mvu.diff.CHANGE_REMOVED
 
+
 # Mock LVGL object - just a dict for testing
 class MockLvObj:
     def __init__(self, name):
         self.name = name
         self.attrs = {}
+
 
 # Create an empty registry for testing
 test_registry = AttrRegistry()
@@ -468,15 +475,20 @@ t("viewnode clear len", len(old), "2")
 t("viewnode after clear", len(node4.handlers), "0")
 
 # Test update_widget
-node5 = ViewNode(MockLvObj("lbl"), Widget(LABEL, "", (ScalarAttr(1, "old"),), (), ()), test_registry)
+node5 = ViewNode(
+    MockLvObj("lbl"), Widget(LABEL, "", (ScalarAttr(1, "old"),), (), ()), test_registry
+)
 new_w = Widget(LABEL, "", (ScalarAttr(1, "new"),), (), ())
 node5.update_widget(new_w)
 t("viewnode update_widget", node5.widget.scalar_attrs[0].value, "new")
 
 # Test dispose
 disposed_list = []
+
+
 def track_delete(obj):
     disposed_list.append(obj.name)
+
 
 root = ViewNode(MockLvObj("root"), Widget(CONTAINER, "", (), (), ()), test_registry)
 c1 = ViewNode(MockLvObj("c1"), Widget(LABEL, "", (), (), ()), test_registry)
@@ -500,23 +512,28 @@ Reconciler = lvgl_mvu.reconciler.Reconciler
 created_objs = []
 deleted_objs = []
 
+
 def make_label(parent):
     obj = MockLvObj("label_" + str(len(created_objs)))
     created_objs.append(obj)
     return obj
+
 
 def make_button(parent):
     obj = MockLvObj("button_" + str(len(created_objs)))
     created_objs.append(obj)
     return obj
 
+
 def make_container(parent):
     obj = MockLvObj("container_" + str(len(created_objs)))
     created_objs.append(obj)
     return obj
 
+
 def delete_obj(obj):
     deleted_objs.append(obj.name)
+
 
 # Test Reconciler creation and factory registration
 rec = Reconciler(test_registry)
@@ -551,7 +568,9 @@ t("reconcile old disposed", old_node.is_disposed(), "True")
 
 # Test reconcile: with children
 created_objs.clear()
-w_parent = Widget(CONTAINER, "", (), (Widget(LABEL, "", (), (), ()), Widget(BUTTON, "", (), (), ())), ())
+w_parent = Widget(
+    CONTAINER, "", (), (Widget(LABEL, "", (), (), ()), Widget(BUTTON, "", (), (), ())), ()
+)
 n_parent = rec.reconcile(None, w_parent, None)
 t("reconcile children", len(n_parent.children), "2")
 t("reconcile child0", "label" in n_parent.children[0].lv_obj.name, "True")
@@ -645,15 +664,19 @@ t("sub batch second key", sub_batch.defs[1].key, "timer_200")
 sub_empty_batch = Sub.batch([])
 t("sub batch empty", len(sub_empty_batch.defs), "0")
 
+
 # -- Program --
 def _test_init():
     return (0, Cmd.none())
 
+
 def _test_update(msg, model):
     return (model + 1, Cmd.none())
 
+
 def _test_view(model):
     return Widget(LABEL, "", (ScalarAttr(1, str(model)),), (), ())
+
 
 prog = Program(_test_init, _test_update, _test_view)
 t("program init_fn", prog.init_fn is not None, "True")
@@ -661,9 +684,11 @@ t("program update_fn", prog.update_fn is not None, "True")
 t("program view_fn", prog.view_fn is not None, "True")
 t("program subscribe_fn", prog.subscribe_fn, "None")
 
+
 # -- Program with subscribe --
 def _test_subscribe(model):
     return Sub.none()
+
 
 prog_sub = Program(_test_init, _test_update, _test_view, _test_subscribe)
 t("program with sub", prog_sub.subscribe_fn is not None, "True")
@@ -675,9 +700,11 @@ suite("lvgl_mvu_app")
 
 App = lvgl_mvu.app.App
 
+
 # -- Helper functions for testing --
 def counter_init():
     return (0, Cmd.none())
+
 
 def counter_update(msg, model):
     if msg == "inc":
@@ -688,8 +715,10 @@ def counter_update(msg, model):
         return (10, Cmd.none())
     return (model, Cmd.none())
 
+
 def counter_view(model):
     return Widget(LABEL, "", (ScalarAttr(1, str(model)),), (), ())
+
 
 counter_prog = Program(counter_init, counter_update, counter_view)
 
@@ -738,6 +767,7 @@ t("app queue after dispose", app.queue_length(), "0")
 
 gc.collect()
 
+
 # -- App with Cmd.of_msg (cascading messages) --
 def cascade_update(msg, model):
     if msg == "start":
@@ -745,6 +775,7 @@ def cascade_update(msg, model):
     if msg == "chain":
         return (model + 10, Cmd.none())
     return (model, Cmd.none())
+
 
 cascade_prog = Program(counter_init, cascade_update, counter_view)
 app2 = App(cascade_prog, rec)
@@ -759,16 +790,21 @@ gc.collect()
 _timer_created = [0]
 _timer_torn_down = [0]
 
+
 def mock_timer_factory(interval_ms, app_ref, msg):
     _timer_created[0] += 1
+
     def teardown():
         _timer_torn_down[0] += 1
+
     return teardown
+
 
 def sub_counter_subscribe(model):
     if model > 0:
         return Sub.timer(100, "tick")
     return Sub.none()
+
 
 sub_prog = Program(counter_init, counter_update, counter_view, sub_counter_subscribe)
 app3 = App(sub_prog, rec)
@@ -794,6 +830,7 @@ suite("events_callback")
 try:
     import lvgl as lv
     import lvgl_mvu
+
     EventBinder = lvgl_mvu.events.EventBinder
     LvEvent = lvgl_mvu.events.LvEvent
 
@@ -831,6 +868,46 @@ try:
     binder.unbind(btn, LvEvent.CLICKED, handler)
     t("Handler inactive after unbind", handler.active, "False")
 
+    # Test bind_value (for slider/bar/arc value extraction)
+    slider = lv.lv_slider_create(scr)
+    lv.lv_slider_set_range(slider, 0, 100)
+    lv.lv_slider_set_value(slider, 50, 0)
+    _value_msgs = []
+
+    def value_msg_fn(v):
+        return ("slider_val", v)
+
+    vh = binder.bind_value(slider, LvEvent.VALUE_CHANGED, value_msg_fn)
+    t("bind_value handler", vh is not None, "True")
+    t("bind_value active", vh.active, "True")
+
+    binder.unbind(slider, LvEvent.VALUE_CHANGED, vh)
+    t("bind_value unbind", vh.active, "False")
+
+    # Test bind_checked (for switch/checkbox boolean state)
+    sw = lv.lv_switch_create(scr)
+    _checked_msgs = []
+
+    def checked_msg_fn(c):
+        return ("switch_state", c)
+
+    ch = binder.bind_checked(sw, LvEvent.VALUE_CHANGED, checked_msg_fn)
+    t("bind_checked handler", ch is not None, "True")
+    t("bind_checked active", ch.active, "True")
+
+    binder.unbind(sw, LvEvent.VALUE_CHANGED, ch)
+    t("bind_checked unbind", ch.active, "False")
+
+    # Test setup_events helper
+    setup_events = lvgl_mvu.events.setup_events
+    from lvgl_mvu.attrs import AttrRegistry
+    from lvgl_mvu.reconciler import Reconciler
+
+    reg = AttrRegistry()
+    rec = Reconciler(reg)
+    b2 = setup_events(rec, test_dispatch)
+    t("setup_events returns binder", b2 is not None, "True")
+
     # Clean up
     lv.lv_obj_delete(scr)
     t("Cleanup done", True, "True")
@@ -840,6 +917,7 @@ except ImportError as e:
 except Exception as e:
     print("ERROR: events_callback tests failed - " + str(e))
     import sys
+
     sys.print_exception(e)
     _failed += 1
 gc.collect()
@@ -924,6 +1002,7 @@ except ImportError as e:
 except Exception as e:
     print("ERROR: counter_mvu tests failed - " + str(e))
     import sys
+
     sys.print_exception(e)
     _failed += 1
 

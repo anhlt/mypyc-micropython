@@ -126,10 +126,16 @@ class LvEvent:
 
 
 class HandlerKind:
-    """Handler type constants for EventHandler."""
+    """Handler type constants for EventHandler.
+
+    MSG: Simple message dispatch (button click, etc.)
+    VALUE: Integer value extraction (slider, bar, arc)
+    CHECKED: Boolean state extraction (switch, checkbox)
+    """
 
     MSG: Final[int] = 0
     VALUE: Final[int] = 1
+    CHECKED: Final[int] = 2
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +171,7 @@ class EventHandler:
     def deactivate(self) -> None:
         """Deactivate this handler. The LVGL callback becomes a no-op."""
         self.active = False
+
 
 # ---------------------------------------------------------------------------
 # EventBinder
@@ -252,6 +259,37 @@ class EventBinder:
         lv.lv_obj_add_event_cb(lv_obj, callback, event_type, None)
         return handler
 
+    def bind_checked(
+        self,
+        lv_obj: object,
+        event_type: int,
+        msg_fn: Callable[[bool], object],
+    ) -> EventHandler:
+        """Bind a boolean state handler for switch/checkbox widgets.
+
+        When the event fires, the widget's checked state is extracted
+        and ``dispatch_fn(msg_fn(checked))`` is called.
+
+        Args:
+            lv_obj: The LVGL object to listen on.
+            event_type: The LVGL event code (from LvEvent).
+            msg_fn: A callable ``(bool) -> Msg`` that wraps the state.
+
+        Returns:
+            An EventHandler reference for later unbinding.
+        """
+        handler = EventHandler(HandlerKind.CHECKED, msg_fn)
+        dispatch_fn = self._dispatch_fn
+
+        callback: Callable[[object], None] = lambda event: _dispatch_checked(
+            event, handler, dispatch_fn, msg_fn
+        )
+
+        handler.store_callback(callback)
+
+        lv.lv_obj_add_event_cb(lv_obj, callback, event_type, None)
+        return handler
+
     def unbind(self, lv_obj: object, event_type: int, handler: object) -> None:
         """Deactivate an event handler.
 
@@ -271,6 +309,8 @@ class EventBinder:
 # Dispatch helper functions (called from closures)
 # ---------------------------------------------------------------------------
 
+CHECKED_STATE: int = 4
+
 
 def _dispatch_msg(handler: EventHandler, dispatch_fn: object, msg: object) -> None:
     """Dispatch a simple message if handler is active."""
@@ -284,17 +324,66 @@ def _dispatch_value(
     dispatch_fn: object,
     msg_fn: object,
 ) -> None:
-    """Extract value and dispatch msg_fn(value) if handler is active."""
+    """Extract integer value from target widget and dispatch msg_fn(value)."""
     if not handler.active:
         return
 
-    # Extract value from target widget
     target: object = lv.lv_event_get_target_obj(event)
+    value: int = _extract_int_value(target)
+
+    dispatch_fn(msg_fn(value))  # type: ignore[operator]
+
+
+def _dispatch_checked(
+    event: object,
+    handler: EventHandler,
+    dispatch_fn: object,
+    msg_fn: object,
+) -> None:
+    """Extract boolean checked state and dispatch msg_fn(checked)."""
+    if not handler.active:
+        return
+
+    target: object = lv.lv_event_get_target_obj(event)
+    checked: bool = lv.lv_obj_has_state(target, CHECKED_STATE)
+
+    dispatch_fn(msg_fn(checked))  # type: ignore[operator]
+
+
+def setup_events(reconciler: object, dispatch_fn: Callable[[object], None]) -> EventBinder:
+    """Wire an EventBinder into a Reconciler.
+
+    Creates an EventBinder from the dispatch function and registers it
+    with the reconciler for automatic event handler management.
+
+    Args:
+        reconciler: A Reconciler instance (uses set_event_binder).
+        dispatch_fn: The MVU dispatch function (typically app.dispatch).
+
+    Returns:
+        The created EventBinder for direct use if needed.
+    """
+    binder = EventBinder(dispatch_fn)
+    reconciler.set_event_binder(binder)  # type: ignore[attr-defined]
+    return binder
+
+
+def _extract_int_value(target: object) -> int:
+    """Try slider -> bar -> arc value extraction, return 0 on failure."""
     value: int = 0
     try:
         value = lv.lv_slider_get_value(target)
+        return value
     except Exception:
         pass
-
-    # Dispatch msg_fn(value)
-    dispatch_fn(msg_fn(value))  # type: ignore[operator]
+    try:
+        value = lv.lv_bar_get_value(target)
+        return value
+    except Exception:
+        pass
+    try:
+        value = lv.lv_arc_get_value(target)
+        return value
+    except Exception:
+        pass
+    return 0
