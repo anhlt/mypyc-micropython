@@ -243,7 +243,7 @@ def apply_flex_grow(lv_obj: object, value: object) -> None:
 # P1 Widget-Specific Appliers (Slider, Bar, Arc, Switch, Checkbox)
 # ---------------------------------------------------------------------------
 
-CHECKED_STATE: int = 4
+CHECKED_STATE: int = 0x0001  # LV_STATE_CHECKED
 
 
 def apply_min_value(lv_obj: object, value: object) -> None:
@@ -359,8 +359,11 @@ def register_p1_appliers(registry: AttrRegistry) -> None:
     """Register P1 attribute appliers (interactive widget attributes)."""
     registry.add(AttrDef(AttrKey.MIN_VALUE, "min_value", 0, apply_min_value))
     registry.add(AttrDef(AttrKey.MAX_VALUE, "max_value", 100, apply_max_value))
-    registry.add(AttrDef(AttrKey.VALUE, "value", 0, apply_slider_value))
+    registry.add(AttrDef(AttrKey.SLIDER_VALUE, "slider_value", 0, apply_slider_value))
+    registry.add(AttrDef(AttrKey.BAR_VALUE, "bar_value", 0, apply_bar_value))
+    registry.add(AttrDef(AttrKey.ARC_VALUE, "arc_value", 0, apply_arc_value))
     registry.add(AttrDef(AttrKey.CHECKED, "checked", False, apply_checked))
+    registry.add(AttrDef(AttrKey.CHECKBOX_TEXT, "checkbox_text", "", apply_checkbox_text))
 
 
 def register_all_appliers(registry: AttrRegistry) -> None:

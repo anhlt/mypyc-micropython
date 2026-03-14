@@ -134,7 +134,7 @@ def Slider(min_val: int = 0, max_val: int = 100, value: int = 0) -> WidgetBuilde
         WidgetBuilder(WidgetKey.SLIDER)
         .set_attr(AttrKey.MIN_VALUE, min_val)
         .set_attr(AttrKey.MAX_VALUE, max_val)
-        .set_attr(AttrKey.VALUE, value)
+        .set_attr(AttrKey.SLIDER_VALUE, value)
     )
 
 
@@ -157,7 +157,7 @@ def Bar(min_val: int = 0, max_val: int = 100, value: int = 0) -> WidgetBuilder:
         WidgetBuilder(WidgetKey.BAR)
         .set_attr(AttrKey.MIN_VALUE, min_val)
         .set_attr(AttrKey.MAX_VALUE, max_val)
-        .set_attr(AttrKey.VALUE, value)
+        .set_attr(AttrKey.BAR_VALUE, value)
     )
 
 
@@ -180,7 +180,7 @@ def Arc(min_val: int = 0, max_val: int = 100, value: int = 0) -> WidgetBuilder:
         WidgetBuilder(WidgetKey.ARC)
         .set_attr(AttrKey.MIN_VALUE, min_val)
         .set_attr(AttrKey.MAX_VALUE, max_val)
-        .set_attr(AttrKey.VALUE, value)
+        .set_attr(AttrKey.ARC_VALUE, value)
     )
 
 
@@ -216,5 +216,5 @@ def Checkbox(text: str = "", checked: bool = False) -> WidgetBuilder:
     """
     builder = WidgetBuilder(WidgetKey.CHECKBOX).set_attr(AttrKey.CHECKED, checked)
     if text != "":
-        builder = builder.set_attr(AttrKey.TEXT, text)
+        builder = builder.set_attr(AttrKey.CHECKBOX_TEXT, text)
     return builder

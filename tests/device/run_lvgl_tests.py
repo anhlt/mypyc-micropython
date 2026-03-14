@@ -1030,9 +1030,11 @@ try:
     WidgetKey_CHECKBOX = lvgl_mvu.widget.WidgetKey_CHECKBOX
     AttrKey_MIN_VALUE = lvgl_mvu.attrs.AttrKey_MIN_VALUE
     AttrKey_MAX_VALUE = lvgl_mvu.attrs.AttrKey_MAX_VALUE
-    AttrKey_VALUE = lvgl_mvu.attrs.AttrKey_VALUE
+    AttrKey_SLIDER_VALUE = lvgl_mvu.attrs.AttrKey_SLIDER_VALUE
+    AttrKey_BAR_VALUE = lvgl_mvu.attrs.AttrKey_BAR_VALUE
+    AttrKey_ARC_VALUE = lvgl_mvu.attrs.AttrKey_ARC_VALUE
     AttrKey_CHECKED = lvgl_mvu.attrs.AttrKey_CHECKED
-    AttrKey_TEXT = lvgl_mvu.attrs.AttrKey_TEXT
+    AttrKey_CHECKBOX_TEXT = lvgl_mvu.attrs.AttrKey_CHECKBOX_TEXT
 
     # Test Slider DSL
     slider_w = Slider(0, 100, 50).build()
@@ -1040,7 +1042,7 @@ try:
     attrs = {a.key: a.value for a in slider_w.scalar_attrs}
     t("Slider min", attrs.get(AttrKey_MIN_VALUE), "0")
     t("Slider max", attrs.get(AttrKey_MAX_VALUE), "100")
-    t("Slider value", attrs.get(AttrKey_VALUE), "50")
+    t("Slider value", attrs.get(AttrKey_SLIDER_VALUE), "50")
 
     # Test Bar DSL
     bar_w = Bar(0, 200, 75).build()
@@ -1048,7 +1050,7 @@ try:
     attrs = {a.key: a.value for a in bar_w.scalar_attrs}
     t("Bar min", attrs.get(AttrKey_MIN_VALUE), "0")
     t("Bar max", attrs.get(AttrKey_MAX_VALUE), "200")
-    t("Bar value", attrs.get(AttrKey_VALUE), "75")
+    t("Bar value", attrs.get(AttrKey_BAR_VALUE), "75")
 
     # Test Arc DSL
     arc_w = Arc(0, 360, 90).build()
@@ -1056,7 +1058,7 @@ try:
     attrs = {a.key: a.value for a in arc_w.scalar_attrs}
     t("Arc min", attrs.get(AttrKey_MIN_VALUE), "0")
     t("Arc max", attrs.get(AttrKey_MAX_VALUE), "360")
-    t("Arc value", attrs.get(AttrKey_VALUE), "90")
+    t("Arc value", attrs.get(AttrKey_ARC_VALUE), "90")
 
     # Test Switch DSL
     switch_w = Switch(True).build()
@@ -1073,7 +1075,7 @@ try:
     t("Checkbox widget key", cb_w.key, str(WidgetKey_CHECKBOX))
     attrs = {a.key: a.value for a in cb_w.scalar_attrs}
     t("Checkbox checked", attrs.get(AttrKey_CHECKED), "True")
-    t("Checkbox text", attrs.get(AttrKey_TEXT), "Remember me")
+    t("Checkbox text", attrs.get(AttrKey_CHECKBOX_TEXT), "Remember me")
 
 except ImportError as e:
     print("SKIP: p1_widgets not available - " + str(e))
@@ -1160,9 +1162,11 @@ try:
     register_all_appliers = lvgl_mvu.appliers.register_all_appliers
     CHECKED_STATE = lvgl_mvu.appliers.CHECKED_STATE
     AttrRegistry = lvgl_mvu.attrs.AttrRegistry
-    AttrKey_VALUE = lvgl_mvu.attrs.AttrKey_VALUE
+    AttrKey_SLIDER_VALUE = lvgl_mvu.attrs.AttrKey_SLIDER_VALUE
     AttrKey_CHECKED = lvgl_mvu.attrs.AttrKey_CHECKED
-    AttrKey_TEXT = lvgl_mvu.attrs.AttrKey_TEXT
+
+    # Verify CHECKED_STATE is correct (LV_STATE_CHECKED = 0x0001)
+    t("CHECKED_STATE value", CHECKED_STATE, "1")
 
     scr = lv.lv_obj_create(None)
 
@@ -1184,24 +1188,25 @@ try:
     apply_arc_value(arc, 180)
     t("apply_arc_value", lv.lv_arc_get_value(arc), "180")
 
-    # Test checked state on switch
+    # Test checked state on switch (verify against 0x0001 = LV_STATE_CHECKED)
     sw = lv.lv_switch_create(scr)
     apply_checked(sw, True)
-    t("apply_checked True", lv.lv_obj_has_state(sw, CHECKED_STATE), "True")
+    t("apply_checked True", lv.lv_obj_has_state(sw, 0x0001), "True")
     apply_checked(sw, False)
-    t("apply_checked False", lv.lv_obj_has_state(sw, CHECKED_STATE), "False")
+    t("apply_checked False", lv.lv_obj_has_state(sw, 0x0001), "False")
 
     # Test register_p1_appliers
     reg = AttrRegistry()
     register_p1_appliers(reg)
-    t("register_p1_appliers VALUE", reg.get(AttrKey_VALUE) is not None, "True")
+    t("register_p1_appliers SLIDER_VALUE", reg.get(AttrKey_SLIDER_VALUE) is not None, "True")
     t("register_p1_appliers CHECKED", reg.get(AttrKey_CHECKED) is not None, "True")
 
     # Test register_all_appliers
+    AttrKey_TEXT = lvgl_mvu.attrs.AttrKey_TEXT
     reg2 = AttrRegistry()
     register_all_appliers(reg2)
     t("register_all_appliers P0", reg2.get(AttrKey_TEXT) is not None, "True")
-    t("register_all_appliers P1", reg2.get(AttrKey_VALUE) is not None, "True")
+    t("register_all_appliers P1", reg2.get(AttrKey_SLIDER_VALUE) is not None, "True")
 
     lv.lv_obj_delete(scr)
 

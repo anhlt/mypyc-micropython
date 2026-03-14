@@ -309,7 +309,7 @@ class EventBinder:
 # Dispatch helper functions (called from closures)
 # ---------------------------------------------------------------------------
 
-CHECKED_STATE: int = 4
+CHECKED_STATE: int = 0x0001  # LV_STATE_CHECKED
 
 
 def _dispatch_msg(handler: EventHandler, dispatch_fn: object, msg: object) -> None:
