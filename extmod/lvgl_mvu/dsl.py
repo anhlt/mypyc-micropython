@@ -108,3 +108,113 @@ def Button(text: str = "") -> WidgetBuilder:
         # TEXT would call lv_label_set_text which crashes on buttons
         builder = builder.set_attr(AttrKey.BUTTON_TEXT, text)
     return builder
+
+
+# ---------------------------------------------------------------------------
+# P1 Widget DSL Functions (Interactive)
+# ---------------------------------------------------------------------------
+
+
+def Slider(min_val: int = 0, max_val: int = 100, value: int = 0) -> WidgetBuilder:
+    """Create a slider widget for value selection.
+
+    Args:
+        min_val: Minimum value (default 0).
+        max_val: Maximum value (default 100).
+        value: Initial value (default 0).
+
+    Returns:
+        WidgetBuilder configured for SLIDER type.
+
+    Example::
+
+        Slider(0, 100, 50).on_value(LV_EVENT_VALUE_CHANGED, SetVolume).build()
+    """
+    return (
+        WidgetBuilder(WidgetKey.SLIDER)
+        .set_attr(AttrKey.MIN_VALUE, min_val)
+        .set_attr(AttrKey.MAX_VALUE, max_val)
+        .set_attr(AttrKey.SLIDER_VALUE, value)
+    )
+
+
+def Bar(min_val: int = 0, max_val: int = 100, value: int = 0) -> WidgetBuilder:
+    """Create a progress bar widget.
+
+    Args:
+        min_val: Minimum value (default 0).
+        max_val: Maximum value (default 100).
+        value: Initial value (default 0).
+
+    Returns:
+        WidgetBuilder configured for BAR type.
+
+    Example::
+
+        Bar(0, 100, 75).size(200, 20).build()
+    """
+    return (
+        WidgetBuilder(WidgetKey.BAR)
+        .set_attr(AttrKey.MIN_VALUE, min_val)
+        .set_attr(AttrKey.MAX_VALUE, max_val)
+        .set_attr(AttrKey.BAR_VALUE, value)
+    )
+
+
+def Arc(min_val: int = 0, max_val: int = 100, value: int = 0) -> WidgetBuilder:
+    """Create an arc widget for circular value display/selection.
+
+    Args:
+        min_val: Minimum value (default 0).
+        max_val: Maximum value (default 100).
+        value: Initial value (default 0).
+
+    Returns:
+        WidgetBuilder configured for ARC type.
+
+    Example::
+
+        Arc(0, 360, 90).on_value(LV_EVENT_VALUE_CHANGED, SetAngle).build()
+    """
+    return (
+        WidgetBuilder(WidgetKey.ARC)
+        .set_attr(AttrKey.MIN_VALUE, min_val)
+        .set_attr(AttrKey.MAX_VALUE, max_val)
+        .set_attr(AttrKey.ARC_VALUE, value)
+    )
+
+
+def Switch(checked: bool = False) -> WidgetBuilder:
+    """Create a switch (toggle) widget.
+
+    Args:
+        checked: Initial checked state (default False).
+
+    Returns:
+        WidgetBuilder configured for SWITCH type.
+
+    Example::
+
+        Switch(True).on_checked(LV_EVENT_VALUE_CHANGED, SetEnabled).build()
+    """
+    return WidgetBuilder(WidgetKey.SWITCH).set_attr(AttrKey.CHECKED, checked)
+
+
+def Checkbox(text: str = "", checked: bool = False) -> WidgetBuilder:
+    """Create a checkbox widget with optional label.
+
+    Args:
+        text: Checkbox label text (default empty).
+        checked: Initial checked state (default False).
+
+    Returns:
+        WidgetBuilder configured for CHECKBOX type.
+
+    Example::
+
+        Checkbox("Remember me", False).on_checked(LV_EVENT_VALUE_CHANGED, SetRemember).build()
+    """
+    builder = WidgetBuilder(WidgetKey.CHECKBOX).set_attr(AttrKey.CHECKED, checked)
+    if text != "":
+        builder = builder.set_attr(AttrKey.CHECKBOX_TEXT, text)
+    return builder

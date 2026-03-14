@@ -60,8 +60,13 @@ class WidgetBuilder:
         return self
 
     def on_value(self, event: int, msg_fn: object) -> WidgetBuilder:
-        """Register an event handler with value extraction."""
+        """Register an event handler with value extraction (slider, bar, arc)."""
         self._handlers.append((event, ("value", msg_fn)))
+        return self
+
+    def on_checked(self, event: int, msg_fn: object) -> WidgetBuilder:
+        """Register an event handler with checked state extraction (switch, checkbox)."""
+        self._handlers.append((event, ("checked", msg_fn)))
         return self
 
     def add_child(self, child: Widget) -> WidgetBuilder:

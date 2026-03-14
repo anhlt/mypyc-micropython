@@ -266,15 +266,26 @@ class Reconciler:
         if self._event_binder is None:
             return
 
-        # Use while loop to iterate event handlers - avoid for-loop crash
         event_handlers = widget.event_handlers
         eh_idx: int = 0
         while eh_idx < len(event_handlers):
             event_type_msg = event_handlers[eh_idx]
             event_type: int = event_type_msg[0]
             msg: object = event_type_msg[1]
-            # Use event binder to register
-            handler = self._event_binder.bind(node.lv_obj, event_type, msg)  # type: ignore[attr-defined]
+
+            handler: object
+            if isinstance(msg, tuple) and len(msg) == 2:
+                tag: object = msg[0]
+                msg_fn: object = msg[1]
+                if tag == "value":
+                    handler = self._event_binder.bind_value(node.lv_obj, event_type, msg_fn)  # type: ignore[attr-defined]
+                elif tag == "checked":
+                    handler = self._event_binder.bind_checked(node.lv_obj, event_type, msg_fn)  # type: ignore[attr-defined]
+                else:
+                    handler = self._event_binder.bind(node.lv_obj, event_type, msg)  # type: ignore[attr-defined]
+            else:
+                handler = self._event_binder.bind(node.lv_obj, event_type, msg)  # type: ignore[attr-defined]
+
             node.register_handler(event_type, handler)
             eh_idx += 1
 

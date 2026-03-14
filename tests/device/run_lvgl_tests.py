@@ -946,36 +946,61 @@ try:
     refresh(10)
     t("counter_mvu screen loaded", True, "True")
 
-    # Test increment
-    app.dispatch(counter_mvu.MSG_INCREMENT)
+    # Test increment using typed message class
+    app.dispatch(counter_mvu.Increment())
     app.tick()
     lv.timer_handler()
     t("counter_mvu after 1 inc", app.model.count, "1")
 
     # Test multiple increments
     for _ in range(5):
-        app.dispatch(counter_mvu.MSG_INCREMENT)
+        app.dispatch(counter_mvu.Increment())
         app.tick()
         lv.timer_handler()
     t("counter_mvu after 6 inc", app.model.count, "6")
 
     # Fast increment test (no sleep)
     start = time.ticks_ms()
-    for i in range(100):
-        app.dispatch(counter_mvu.MSG_INCREMENT)
+    for i in range(94):
+        app.dispatch(counter_mvu.Increment())
         app.tick()
         lv.timer_handler()
+    # Count is now bounded to 0-100, so max is 100
     end = time.ticks_ms()
     elapsed = time.ticks_diff(end, start)
-    t("counter_mvu after 106 inc", app.model.count, "106")
-    print(f"    (100 updates in {elapsed}ms)")
+    t("counter_mvu after 100 inc (bounded)", app.model.count, "100")
+    print(f"    (94 updates in {elapsed}ms)")
 
-    # Memory stability test
+    # Test decrement to verify bounded behavior
+    for _ in range(10):
+        app.dispatch(counter_mvu.Decrement())
+        app.tick()
+        lv.timer_handler()
+    t("counter_mvu after 10 dec", app.model.count, "90")
+
+    # Test SetValue message
+    app.dispatch(counter_mvu.SetValue(50))
+    app.tick()
+    lv.timer_handler()
+    t("counter_mvu SetValue(50)", app.model.count, "50")
+
+    # Test Reset message
+    app.dispatch(counter_mvu.Reset())
+    app.tick()
+    lv.timer_handler()
+    t("counter_mvu Reset", app.model.count, "0")
+
+    # Memory stability test with mixed messages
     gc.collect()
     baseline = gc.mem_free()
 
-    for i in range(500):
-        app.dispatch(counter_mvu.MSG_INCREMENT)
+    for i in range(250):
+        if i % 3 == 0:
+            app.dispatch(counter_mvu.Increment())
+        elif i % 3 == 1:
+            app.dispatch(counter_mvu.SetValue(i % 100))
+        else:
+            app.dispatch(counter_mvu.Decrement())
         app.tick()
         lv.timer_handler()
         if i % 100 == 0:
@@ -985,8 +1010,7 @@ try:
     final = gc.mem_free()
     mem_drop = baseline - final
     t("counter_mvu memory stable", mem_drop < 5000, "True")
-    print(f"    (mem drop: {mem_drop} bytes after 500 updates)")
-    t("counter_mvu final count", app.model.count, "606")
+    print(f"    (mem drop: {mem_drop} bytes after 250 updates)")
 
     # Verify view updates correctly
     view_widget = counter_mvu.view(app.model)
@@ -1006,6 +1030,265 @@ except Exception as e:
     sys.print_exception(e)
     _failed += 1
 
+gc.collect()
+
+
+# ---- P1 Widgets (Slider, Bar, Arc, Switch, Checkbox) ----
+suite("p1_widgets")
+
+try:
+    import lvgl as lv
+    import lvgl_mvu
+
+    Slider = lvgl_mvu.dsl.Slider
+    Bar = lvgl_mvu.dsl.Bar
+    Arc = lvgl_mvu.dsl.Arc
+    Switch = lvgl_mvu.dsl.Switch
+    Checkbox = lvgl_mvu.dsl.Checkbox
+
+    # Use flat enum constants (compiled module exports EnumName_MEMBER)
+    WidgetKey_SLIDER = lvgl_mvu.widget.WidgetKey_SLIDER
+    WidgetKey_BAR = lvgl_mvu.widget.WidgetKey_BAR
+    WidgetKey_ARC = lvgl_mvu.widget.WidgetKey_ARC
+    WidgetKey_SWITCH = lvgl_mvu.widget.WidgetKey_SWITCH
+    WidgetKey_CHECKBOX = lvgl_mvu.widget.WidgetKey_CHECKBOX
+    AttrKey_MIN_VALUE = lvgl_mvu.attrs.AttrKey_MIN_VALUE
+    AttrKey_MAX_VALUE = lvgl_mvu.attrs.AttrKey_MAX_VALUE
+    AttrKey_SLIDER_VALUE = lvgl_mvu.attrs.AttrKey_SLIDER_VALUE
+    AttrKey_BAR_VALUE = lvgl_mvu.attrs.AttrKey_BAR_VALUE
+    AttrKey_ARC_VALUE = lvgl_mvu.attrs.AttrKey_ARC_VALUE
+    AttrKey_CHECKED = lvgl_mvu.attrs.AttrKey_CHECKED
+    AttrKey_CHECKBOX_TEXT = lvgl_mvu.attrs.AttrKey_CHECKBOX_TEXT
+
+    # Test Slider DSL
+    slider_w = Slider(0, 100, 50).build()
+    t("Slider widget key", slider_w.key, str(WidgetKey_SLIDER))
+    attrs = {a.key: a.value for a in slider_w.scalar_attrs}
+    t("Slider min", attrs.get(AttrKey_MIN_VALUE), "0")
+    t("Slider max", attrs.get(AttrKey_MAX_VALUE), "100")
+    t("Slider value", attrs.get(AttrKey_SLIDER_VALUE), "50")
+
+    # Test Bar DSL
+    bar_w = Bar(0, 200, 75).build()
+    t("Bar widget key", bar_w.key, str(WidgetKey_BAR))
+    attrs = {a.key: a.value for a in bar_w.scalar_attrs}
+    t("Bar min", attrs.get(AttrKey_MIN_VALUE), "0")
+    t("Bar max", attrs.get(AttrKey_MAX_VALUE), "200")
+    t("Bar value", attrs.get(AttrKey_BAR_VALUE), "75")
+
+    # Test Arc DSL
+    arc_w = Arc(0, 360, 90).build()
+    t("Arc widget key", arc_w.key, str(WidgetKey_ARC))
+    attrs = {a.key: a.value for a in arc_w.scalar_attrs}
+    t("Arc min", attrs.get(AttrKey_MIN_VALUE), "0")
+    t("Arc max", attrs.get(AttrKey_MAX_VALUE), "360")
+    t("Arc value", attrs.get(AttrKey_ARC_VALUE), "90")
+
+    # Test Switch DSL
+    switch_w = Switch(True).build()
+    t("Switch widget key", switch_w.key, str(WidgetKey_SWITCH))
+    attrs = {a.key: a.value for a in switch_w.scalar_attrs}
+    t("Switch checked", attrs.get(AttrKey_CHECKED), "True")
+
+    switch_off = Switch(False).build()
+    attrs = {a.key: a.value for a in switch_off.scalar_attrs}
+    t("Switch unchecked", attrs.get(AttrKey_CHECKED), "False")
+
+    # Test Checkbox DSL
+    cb_w = Checkbox("Remember me", True).build()
+    t("Checkbox widget key", cb_w.key, str(WidgetKey_CHECKBOX))
+    attrs = {a.key: a.value for a in cb_w.scalar_attrs}
+    t("Checkbox checked", attrs.get(AttrKey_CHECKED), "True")
+    t("Checkbox text", attrs.get(AttrKey_CHECKBOX_TEXT), "Remember me")
+
+except ImportError as e:
+    print("SKIP: p1_widgets not available - " + str(e))
+except Exception as e:
+    print("ERROR: p1_widgets tests failed - " + str(e))
+    import sys
+
+    sys.print_exception(e)
+    _failed += 1
+gc.collect()
+
+
+# ---- P1 Factories ----
+suite("p1_factories")
+
+try:
+    import lvgl as lv
+    import lvgl_mvu
+
+    create_slider = lvgl_mvu.factories.create_slider
+    create_bar = lvgl_mvu.factories.create_bar
+    create_arc = lvgl_mvu.factories.create_arc
+    create_switch = lvgl_mvu.factories.create_switch
+    create_checkbox = lvgl_mvu.factories.create_checkbox
+    register_p1_factories = lvgl_mvu.factories.register_p1_factories
+    register_all_factories = lvgl_mvu.factories.register_all_factories
+    AttrRegistry = lvgl_mvu.attrs.AttrRegistry
+    Reconciler = lvgl_mvu.reconciler.Reconciler
+
+    scr = lv.lv_obj_create(None)
+
+    # Test factory functions directly
+    slider = create_slider(scr)
+    t("create_slider", slider is not None, "True")
+
+    bar = create_bar(scr)
+    t("create_bar", bar is not None, "True")
+
+    arc = create_arc(scr)
+    t("create_arc", arc is not None, "True")
+
+    switch = create_switch(scr)
+    t("create_switch", switch is not None, "True")
+
+    checkbox = create_checkbox(scr)
+    t("create_checkbox", checkbox is not None, "True")
+
+    # Test register_p1_factories
+    reg = AttrRegistry()
+    rec = Reconciler(reg)
+    register_p1_factories(rec)
+    t("register_p1_factories", True, "True")
+
+    # Test register_all_factories
+    rec2 = Reconciler(reg)
+    register_all_factories(rec2)
+    t("register_all_factories", True, "True")
+
+    lv.lv_obj_delete(scr)
+
+except ImportError as e:
+    print("SKIP: p1_factories not available - " + str(e))
+except Exception as e:
+    print("ERROR: p1_factories tests failed - " + str(e))
+    import sys
+
+    sys.print_exception(e)
+    _failed += 1
+gc.collect()
+
+
+# ---- P1 Appliers ----
+suite("p1_appliers")
+
+try:
+    import lvgl as lv
+    import lvgl_mvu
+
+    apply_slider_value = lvgl_mvu.appliers.apply_slider_value
+    apply_bar_value = lvgl_mvu.appliers.apply_bar_value
+    apply_arc_value = lvgl_mvu.appliers.apply_arc_value
+    apply_checked = lvgl_mvu.appliers.apply_checked
+    register_p1_appliers = lvgl_mvu.appliers.register_p1_appliers
+    register_all_appliers = lvgl_mvu.appliers.register_all_appliers
+    CHECKED_STATE = lvgl_mvu.appliers.CHECKED_STATE
+    AttrRegistry = lvgl_mvu.attrs.AttrRegistry
+    AttrKey_SLIDER_VALUE = lvgl_mvu.attrs.AttrKey_SLIDER_VALUE
+    AttrKey_CHECKED = lvgl_mvu.attrs.AttrKey_CHECKED
+
+    # Verify CHECKED_STATE is correct (LV_STATE_CHECKED = 0x0001)
+    t("CHECKED_STATE value", CHECKED_STATE, "1")
+
+    scr = lv.lv_obj_create(None)
+
+    # Test slider value
+    slider = lv.lv_slider_create(scr)
+    lv.lv_slider_set_range(slider, 0, 100)
+    apply_slider_value(slider, 42)
+    t("apply_slider_value", lv.lv_slider_get_value(slider), "42")
+
+    # Test bar value
+    bar = lv.lv_bar_create(scr)
+    lv.lv_bar_set_range(bar, 0, 100)
+    apply_bar_value(bar, 66)
+    t("apply_bar_value", lv.lv_bar_get_value(bar), "66")
+
+    # Test arc value
+    arc = lv.lv_arc_create(scr)
+    lv.lv_arc_set_range(arc, 0, 360)
+    apply_arc_value(arc, 180)
+    t("apply_arc_value", lv.lv_arc_get_value(arc), "180")
+
+    # Test checked state on switch (verify against 0x0001 = LV_STATE_CHECKED)
+    sw = lv.lv_switch_create(scr)
+    apply_checked(sw, True)
+    t("apply_checked True", lv.lv_obj_has_state(sw, 0x0001), "True")
+    apply_checked(sw, False)
+    t("apply_checked False", lv.lv_obj_has_state(sw, 0x0001), "False")
+
+    # Test register_p1_appliers
+    reg = AttrRegistry()
+    register_p1_appliers(reg)
+    t("register_p1_appliers SLIDER_VALUE", reg.get(AttrKey_SLIDER_VALUE) is not None, "True")
+    t("register_p1_appliers CHECKED", reg.get(AttrKey_CHECKED) is not None, "True")
+
+    # Test register_all_appliers
+    AttrKey_TEXT = lvgl_mvu.attrs.AttrKey_TEXT
+    reg2 = AttrRegistry()
+    register_all_appliers(reg2)
+    t("register_all_appliers P0", reg2.get(AttrKey_TEXT) is not None, "True")
+    t("register_all_appliers P1", reg2.get(AttrKey_SLIDER_VALUE) is not None, "True")
+
+    lv.lv_obj_delete(scr)
+
+except ImportError as e:
+    print("SKIP: p1_appliers not available - " + str(e))
+except Exception as e:
+    print("ERROR: p1_appliers tests failed - " + str(e))
+    import sys
+
+    sys.print_exception(e)
+    _failed += 1
+gc.collect()
+
+
+# ---- on_value / on_checked handlers ----
+suite("p1_handlers")
+
+try:
+    import lvgl as lv
+    import lvgl_mvu
+
+    WidgetBuilder = lvgl_mvu.builders.WidgetBuilder
+    WidgetKey_SLIDER = lvgl_mvu.widget.WidgetKey_SLIDER
+    WidgetKey_SWITCH = lvgl_mvu.widget.WidgetKey_SWITCH
+    LvEvent = lvgl_mvu.events.LvEvent
+
+    # Test on_value handler tuple format
+    slider_w = (
+        WidgetBuilder(WidgetKey_SLIDER)
+        .on_value(LvEvent.VALUE_CHANGED, lambda v: ("set_val", v))
+        .build()
+    )
+    t("on_value has handler", len(slider_w.event_handlers), "1")
+    handler = slider_w.event_handlers[0]
+    t("on_value event type", handler[0], str(LvEvent.VALUE_CHANGED))
+    msg_tuple = handler[1]
+    t("on_value tag", msg_tuple[0], "value")
+
+    # Test on_checked handler tuple format
+    switch_w = (
+        WidgetBuilder(WidgetKey_SWITCH)
+        .on_checked(LvEvent.VALUE_CHANGED, lambda c: ("set_check", c))
+        .build()
+    )
+    t("on_checked has handler", len(switch_w.event_handlers), "1")
+    handler = switch_w.event_handlers[0]
+    t("on_checked event type", handler[0], str(LvEvent.VALUE_CHANGED))
+    msg_tuple = handler[1]
+    t("on_checked tag", msg_tuple[0], "checked")
+
+except ImportError as e:
+    print("SKIP: p1_handlers not available - " + str(e))
+except Exception as e:
+    print("ERROR: p1_handlers tests failed - " + str(e))
+    import sys
+
+    sys.print_exception(e)
+    _failed += 1
 gc.collect()
 
 

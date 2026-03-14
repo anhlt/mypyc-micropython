@@ -81,6 +81,11 @@ class AttrKey(IntEnum):
     OPTIONS = 146
     SELECTED = 147
     BUTTON_TEXT = 148  # Separate from TEXT - creates child label for buttons
+    CHECKBOX_TEXT = 149  # Separate from TEXT - lv_checkbox_set_text
+    SLIDER_VALUE = 150
+    BAR_VALUE = 151
+    ARC_VALUE = 152
+
 
 @dataclass
 class AttrDef:

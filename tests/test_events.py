@@ -105,6 +105,18 @@ class CapturingEventBinder:
 
         return self._real_binder.bind(lv_obj, event_type, msg)
 
+    def bind_value(
+        self, lv_obj: object, event_type: int, msg_fn: Callable[[int], object]
+    ) -> object:
+        self.bind_calls.append((lv_obj, event_type, ("value", msg_fn)))
+        return self._real_binder.bind_value(lv_obj, event_type, msg_fn)
+
+    def bind_checked(
+        self, lv_obj: object, event_type: int, msg_fn: Callable[[bool], object]
+    ) -> object:
+        self.bind_calls.append((lv_obj, event_type, ("checked", msg_fn)))
+        return self._real_binder.bind_checked(lv_obj, event_type, msg_fn)
+
     def unbind(self, lv_obj: object, event_type: int, handler: object) -> None:
         self.unbind_calls.append((lv_obj, event_type, handler))
         self._real_binder.unbind(lv_obj, event_type, handler)
@@ -453,7 +465,7 @@ class TestEventBinderBindChecked:
     def test_checked_handler_extracts_true_state(self, events_mod):
         dispatched: list[object] = []
         obj = MockLvObj()
-        obj.states.add(4)
+        obj.states.add(1)
         binder = events_mod.EventBinder(dispatched.append)
         binder.bind_checked(obj, events_mod.LvEvent.VALUE_CHANGED, lambda c: ("set", c))
 
@@ -472,7 +484,7 @@ class TestEventBinderBindChecked:
     def test_checked_handler_does_not_fire_when_deactivated(self, events_mod):
         dispatched: list[object] = []
         obj = MockLvObj()
-        obj.states.add(4)
+        obj.states.add(1)
         binder = events_mod.EventBinder(dispatched.append)
         handler = binder.bind_checked(obj, events_mod.LvEvent.VALUE_CHANGED, lambda c: ("set", c))
 
@@ -545,7 +557,7 @@ class TestDispatchHelpers:
         handler = events_mod.EventHandler(events_mod.HandlerKind.CHECKED, lambda v: v)
         target = MockLvObj()
 
-        target.states.add(4)
+        target.states.add(1)
         events_mod._dispatch_checked(
             MockLvEvent(target),
             handler,
@@ -566,7 +578,7 @@ class TestDispatchHelpers:
         handler = events_mod.EventHandler(events_mod.HandlerKind.CHECKED, lambda v: v)
         handler.deactivate()
         target = MockLvObj()
-        target.states.add(4)
+        target.states.add(1)
 
         events_mod._dispatch_checked(
             MockLvEvent(target),
@@ -686,6 +698,14 @@ class TestEventIntegrationWithApp:
                 setattr(real, "_dispatch_fn", app_ref.dispatch)
                 return super().bind(lv_obj, event_type, msg)
 
+            def bind_value(
+                self, lv_obj: object, event_type: int, msg_fn: Callable[[int], object]
+            ) -> object:
+                if app_ref is None:
+                    raise RuntimeError("app not initialized")
+                setattr(real, "_dispatch_fn", app_ref.dispatch)
+                return super().bind_value(lv_obj, event_type, msg_fn)
+
         binder = AppDispatchBinder(real)
         reconciler.set_event_binder(binder)
 
@@ -726,6 +746,14 @@ class TestEventIntegrationWithApp:
                 setattr(real, "_dispatch_fn", app_ref.dispatch)
                 return super().bind(lv_obj, event_type, msg)
 
+            def bind_checked(
+                self, lv_obj: object, event_type: int, msg_fn: Callable[[bool], object]
+            ) -> object:
+                if app_ref is None:
+                    raise RuntimeError("app not initialized")
+                setattr(real, "_dispatch_fn", app_ref.dispatch)
+                return super().bind_checked(lv_obj, event_type, msg_fn)
+
         binder = AppDispatchBinder(real)
         reconciler.set_event_binder(binder)
 
@@ -746,7 +774,7 @@ class TestEventIntegrationWithApp:
 
         app_ref.tick()
         switch_node = app_ref.root_node.get_child(1)
-        switch_node.lv_obj.states.add(4)
+        switch_node.lv_obj.states.add(1)
         _fire_event(switch_node.lv_obj)
 
         assert app_ref.queue_length() == 1

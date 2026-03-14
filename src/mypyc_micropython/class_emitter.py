@@ -539,52 +539,64 @@ class ClassEmitter:
             f"static mp_obj_t {self.c_name}_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args) {{"
         )
 
-        lines.append("    enum {")
-        for fld, _ in fields_with_path:
-            lines.append(f"        ARG_{fld.name},")
-        lines.append("    };")
+        if fields_with_path:
+            lines.append("    enum {")
+            for fld, _ in fields_with_path:
+                lines.append(f"        ARG_{fld.name},")
+            lines.append("    };")
 
-        lines.append("    static const mp_arg_t allowed_args[] = {")
-        for fld, _ in fields_with_path:
-            if fld.c_type == CType.MP_INT_T:
-                if fld.has_default:
-                    lines.append(
-                        f"        {{ MP_QSTR_{fld.name}, MP_ARG_INT, {{.u_int = {fld.default_value}}} }},"
-                    )
+            lines.append("    static const mp_arg_t allowed_args[] = {")
+            for fld, _ in fields_with_path:
+                if fld.c_type == CType.MP_INT_T:
+                    if fld.has_default:
+                        lines.append(
+                            f"        {{ MP_QSTR_{fld.name}, MP_ARG_INT, {{.u_int = {fld.default_value}}} }},"
+                        )
+                    else:
+                        lines.append(
+                            f"        {{ MP_QSTR_{fld.name}, MP_ARG_REQUIRED | MP_ARG_INT }},"
+                        )
+                elif fld.c_type == CType.MP_FLOAT_T:
+                    if fld.has_default:
+                        lines.append(
+                            f"        {{ MP_QSTR_{fld.name}, MP_ARG_OBJ, {{.u_obj = mp_const_none}} }},"
+                        )
+                    else:
+                        lines.append(
+                            f"        {{ MP_QSTR_{fld.name}, MP_ARG_REQUIRED | MP_ARG_OBJ }},"
+                        )
+                elif fld.c_type == CType.BOOL:
+                    if fld.has_default:
+                        default_val = "true" if fld.default_value else "false"
+                        lines.append(
+                            f"        {{ MP_QSTR_{fld.name}, MP_ARG_BOOL, {{.u_bool = {default_val}}} }},"
+                        )
+                    else:
+                        lines.append(
+                            f"        {{ MP_QSTR_{fld.name}, MP_ARG_REQUIRED | MP_ARG_BOOL }},"
+                        )
                 else:
-                    lines.append(f"        {{ MP_QSTR_{fld.name}, MP_ARG_REQUIRED | MP_ARG_INT }},")
-            elif fld.c_type == CType.MP_FLOAT_T:
-                if fld.has_default:
-                    lines.append(
-                        f"        {{ MP_QSTR_{fld.name}, MP_ARG_OBJ, {{.u_obj = mp_const_none}} }},"
-                    )
-                else:
-                    lines.append(f"        {{ MP_QSTR_{fld.name}, MP_ARG_REQUIRED | MP_ARG_OBJ }},")
-            elif fld.c_type == CType.BOOL:
-                if fld.has_default:
-                    default_val = "true" if fld.default_value else "false"
-                    lines.append(
-                        f"        {{ MP_QSTR_{fld.name}, MP_ARG_BOOL, {{.u_bool = {default_val}}} }},"
-                    )
-                else:
-                    lines.append(
-                        f"        {{ MP_QSTR_{fld.name}, MP_ARG_REQUIRED | MP_ARG_BOOL }},"
-                    )
-            else:
-                if fld.has_default:
-                    lines.append(
-                        f"        {{ MP_QSTR_{fld.name}, MP_ARG_OBJ, {{.u_obj = mp_const_none}} }},"
-                    )
-                else:
-                    lines.append(f"        {{ MP_QSTR_{fld.name}, MP_ARG_REQUIRED | MP_ARG_OBJ }},")
-        lines.append("    };")
-        lines.append("")
+                    if fld.has_default:
+                        lines.append(
+                            f"        {{ MP_QSTR_{fld.name}, MP_ARG_OBJ, {{.u_obj = mp_const_none}} }},"
+                        )
+                    else:
+                        lines.append(
+                            f"        {{ MP_QSTR_{fld.name}, MP_ARG_REQUIRED | MP_ARG_OBJ }},"
+                        )
+            lines.append("    };")
+            lines.append("")
 
-        lines.append(f"    mp_arg_val_t parsed[{len(fields_with_path)}];")
-        lines.append(
-            f"    mp_arg_parse_all_kw_array(n_args, n_kw, args, {len(fields_with_path)}, allowed_args, parsed);"
-        )
-        lines.append("")
+            lines.append(f"    mp_arg_val_t parsed[{len(fields_with_path)}];")
+            lines.append(
+                f"    mp_arg_parse_all_kw_array(n_args, n_kw, args, {len(fields_with_path)}, allowed_args, parsed);"
+            )
+            lines.append("")
+        else:
+            lines.append("    (void)n_args;")
+            lines.append("    (void)n_kw;")
+            lines.append("    (void)args;")
+            lines.append("")
 
         lines.append(f"    {self.c_name}_obj_t *self = mp_obj_malloc({self.c_name}_obj_t, type);")
 
