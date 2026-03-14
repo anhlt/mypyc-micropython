@@ -82,6 +82,36 @@ def create_button(parent: object) -> object:
 
 
 # ---------------------------------------------------------------------------
+# Factory Functions for P1 Widgets (Interactive)
+# ---------------------------------------------------------------------------
+
+
+def create_slider(parent: object) -> object:
+    """Create a slider widget."""
+    return lv.lv_slider_create(parent)
+
+
+def create_bar(parent: object) -> object:
+    """Create a progress bar widget."""
+    return lv.lv_bar_create(parent)
+
+
+def create_arc(parent: object) -> object:
+    """Create an arc widget."""
+    return lv.lv_arc_create(parent)
+
+
+def create_switch(parent: object) -> object:
+    """Create a switch widget."""
+    return lv.lv_switch_create(parent)
+
+
+def create_checkbox(parent: object) -> object:
+    """Create a checkbox widget."""
+    return lv.lv_checkbox_create(parent)
+
+
+# ---------------------------------------------------------------------------
 # Factory Registration
 # ---------------------------------------------------------------------------
 
@@ -106,6 +136,21 @@ def register_p0_factories(reconciler: Reconciler) -> None:
     reconciler.register_factory(WidgetKey.CONTAINER, create_container)
     reconciler.register_factory(WidgetKey.LABEL, create_label)
     reconciler.register_factory(WidgetKey.BUTTON, create_button)
+
+
+def register_p1_factories(reconciler: Reconciler) -> None:
+    """Register P1 widget factories (interactive widgets)."""
+    reconciler.register_factory(WidgetKey.SLIDER, create_slider)
+    reconciler.register_factory(WidgetKey.BAR, create_bar)
+    reconciler.register_factory(WidgetKey.ARC, create_arc)
+    reconciler.register_factory(WidgetKey.SWITCH, create_switch)
+    reconciler.register_factory(WidgetKey.CHECKBOX, create_checkbox)
+
+
+def register_all_factories(reconciler: Reconciler) -> None:
+    """Register all widget factories (P0 + P1)."""
+    register_p0_factories(reconciler)
+    register_p1_factories(reconciler)
 
 
 def delete_lv_obj(lv_obj: object) -> None:

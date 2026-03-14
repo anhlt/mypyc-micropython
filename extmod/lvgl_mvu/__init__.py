@@ -27,13 +27,24 @@ Compiles to a single MicroPython C module with namespaced submodules::
     lvgl_mvu.dsl.Label
     lvgl_mvu.dsl.Button
 
+    # P1 Widget DSL (Milestone 7)
+    lvgl_mvu.dsl.Slider
+    lvgl_mvu.dsl.Bar
+    lvgl_mvu.dsl.Arc
+    lvgl_mvu.dsl.Switch
+    lvgl_mvu.dsl.Checkbox
+
     # Layouts
     lvgl_mvu.layouts.VStack
     lvgl_mvu.layouts.HStack
 
     # Factories and appliers
     lvgl_mvu.factories.register_p0_factories
+    lvgl_mvu.factories.register_p1_factories
+    lvgl_mvu.factories.register_all_factories
     lvgl_mvu.appliers.register_p0_appliers
+    lvgl_mvu.appliers.register_p1_appliers
+    lvgl_mvu.appliers.register_all_appliers
 
     # Event system (Milestone 6)
     lvgl_mvu.events.LvEvent

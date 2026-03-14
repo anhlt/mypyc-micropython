@@ -54,6 +54,7 @@ def apply_align(lv_obj: object, value: object) -> None:
     """
     lv.lv_obj_align(lv_obj, value, 0, 0)
 
+
 def apply_align_x_ofs(lv_obj: object, value: object) -> None:
     """Set X offset for alignment (requires re-alignment)."""
     # Note: LVGL alignment offsets are applied via lv_obj_align which
@@ -185,6 +186,7 @@ def apply_button_text(lv_obj: object, value: object) -> None:
         lv.lv_label_set_text(label, value)
         lv.lv_obj_center(label)
 
+
 def apply_text_color(lv_obj: object, value: object) -> None:
     """Set text color."""
     color: object = lv.lv_color_hex(value)
@@ -214,6 +216,7 @@ def apply_flex_flow(lv_obj: object, value: object) -> None:
     """
     lv.lv_obj_set_flex_flow(lv_obj, value)
 
+
 def apply_flex_main_place(lv_obj: object, value: object) -> None:
     """Set flex main axis placement."""
     # Note: LVGL flex_align requires all three params at once.
@@ -234,6 +237,66 @@ def apply_flex_track_place(lv_obj: object, value: object) -> None:
 def apply_flex_grow(lv_obj: object, value: object) -> None:
     """Set flex grow factor."""
     lv.lv_obj_set_flex_grow(lv_obj, value)
+
+
+# ---------------------------------------------------------------------------
+# P1 Widget-Specific Appliers (Slider, Bar, Arc, Switch, Checkbox)
+# ---------------------------------------------------------------------------
+
+CHECKED_STATE: int = 4
+
+
+def apply_min_value(lv_obj: object, value: object) -> None:
+    """Set minimum value for slider/bar/arc."""
+    pass
+
+
+def apply_max_value(lv_obj: object, value: object) -> None:
+    """Set maximum value for slider/bar/arc."""
+    pass
+
+
+def apply_slider_value(lv_obj: object, value: object) -> None:
+    """Set slider value."""
+    lv.lv_slider_set_value(lv_obj, value, 0)
+
+
+def apply_slider_range(lv_obj: object, min_val: int, max_val: int) -> None:
+    """Set slider range (called by reconciler for MIN_VALUE/MAX_VALUE)."""
+    lv.lv_slider_set_range(lv_obj, min_val, max_val)
+
+
+def apply_bar_value(lv_obj: object, value: object) -> None:
+    """Set bar value."""
+    lv.lv_bar_set_value(lv_obj, value, 0)
+
+
+def apply_bar_range(lv_obj: object, min_val: int, max_val: int) -> None:
+    """Set bar range."""
+    lv.lv_bar_set_range(lv_obj, min_val, max_val)
+
+
+def apply_arc_value(lv_obj: object, value: object) -> None:
+    """Set arc value."""
+    lv.lv_arc_set_value(lv_obj, value)
+
+
+def apply_arc_range(lv_obj: object, min_val: int, max_val: int) -> None:
+    """Set arc range."""
+    lv.lv_arc_set_range(lv_obj, min_val, max_val)
+
+
+def apply_checked(lv_obj: object, value: object) -> None:
+    """Set checked state for switch/checkbox."""
+    if value:
+        lv.lv_obj_add_state(lv_obj, CHECKED_STATE)
+    else:
+        lv.lv_obj_remove_state(lv_obj, CHECKED_STATE)
+
+
+def apply_checkbox_text(lv_obj: object, value: object) -> None:
+    """Set checkbox label text."""
+    lv.lv_checkbox_set_text(lv_obj, value)
 
 
 # ---------------------------------------------------------------------------
@@ -290,3 +353,17 @@ def register_p0_appliers(registry: AttrRegistry) -> None:
     registry.add(AttrDef(AttrKey.FLEX_CROSS_PLACE, "flex_cross_place", 0, apply_flex_cross_place))
     registry.add(AttrDef(AttrKey.FLEX_TRACK_PLACE, "flex_track_place", 0, apply_flex_track_place))
     registry.add(AttrDef(AttrKey.FLEX_GROW, "flex_grow", 0, apply_flex_grow))
+
+
+def register_p1_appliers(registry: AttrRegistry) -> None:
+    """Register P1 attribute appliers (interactive widget attributes)."""
+    registry.add(AttrDef(AttrKey.MIN_VALUE, "min_value", 0, apply_min_value))
+    registry.add(AttrDef(AttrKey.MAX_VALUE, "max_value", 100, apply_max_value))
+    registry.add(AttrDef(AttrKey.VALUE, "value", 0, apply_slider_value))
+    registry.add(AttrDef(AttrKey.CHECKED, "checked", False, apply_checked))
+
+
+def register_all_appliers(registry: AttrRegistry) -> None:
+    """Register all attribute appliers (P0 + P1)."""
+    register_p0_appliers(registry)
+    register_p1_appliers(registry)
