@@ -13,10 +13,10 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .compiler import _PackageSubmodule
 
+from .base_emitter import sanitize_name
 from .c_bindings.core.c_ir import CType
 from .ir import FuncIR, ModuleIR, RTuple
 
-from .base_emitter import C_RESERVED_WORDS, sanitize_name
 
 class ModuleEmitter:
     """Assembles complete C module code from parts."""

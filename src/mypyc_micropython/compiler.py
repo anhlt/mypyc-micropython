@@ -299,9 +299,9 @@ def _compile_module_parts(
     from .async_emitter import AsyncEmitter
     from .class_emitter import ClassEmitter
     from .function_emitter import BaseEmitter, FunctionEmitter
-    from .method_emitter import MethodEmitter
     from .generator_emitter import GeneratorEmitter
     from .ir_builder import IRBuilder, MypyTypeInfo
+    from .method_emitter import MethodEmitter
 
     mypy_types: MypyTypeInfo | None = None
     if mypy_type_result is not None:

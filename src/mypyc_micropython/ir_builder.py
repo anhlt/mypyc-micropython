@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
     from .type_checker import ClassTypeInfo, FunctionTypeInfo
 
+from .base_emitter import sanitize_name
 from .ir import (
     AnnAssignIR,
     ArgKind,
@@ -99,8 +100,6 @@ from .ir import (
     YieldFromIR,
     YieldIR,
 )
-
-from .base_emitter import C_RESERVED_WORDS, sanitize_name
 
 # Builtin functions recognized by the compiler
 BUILTIN_FUNCTIONS = {
