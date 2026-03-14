@@ -2,7 +2,7 @@
 
 > Fabulous-style Model-View-Update framework for LVGL widgets, compiled to native C via mypyc-micropython.
 
-**Status**: Milestone 5 Complete (P0 Widgets), Starting Milestone 6
+**Status**: Milestone 6 Complete (Event System), Starting Milestone 7
 **Created**: 2026-03-07  
 **Target**: LVGL 9.6 / MicroPython 1.28.0
 
@@ -263,15 +263,15 @@ incorrect C function names. This has been fixed in PR #45 with:
 
 | Task | Description | Status |
 |------|-------------|--------|
-| 6.1 | LvEvent enum with all event types | Pending |
-| 6.2 | Event handler registration in ViewNode | Pending |
-| 6.3 | Value extraction (slider value, etc.) | Pending |
-| 6.4 | Handler cleanup on widget removal | Pending |
-| 6.5 | Event tests | Pending |
+| 6.1 | LvEvent enum with all event types | Done |
+| 6.2 | Event handler registration in ViewNode | Done |
+| 6.3 | Value extraction (slider value, etc.) | Done |
+| 6.4 | Handler cleanup on widget removal | Done |
+| 6.5 | Event tests | Done |
 
 **Deliverables**:
-- `src/lvgl_mvu/events.py`
-- `tests/test_events.py`
+- `extmod/lvgl_mvu/events.py` - LvEvent, HandlerKind, EventHandler, EventBinder, setup_events
+- `tests/test_events.py` - 97 tests covering all event system components
 
 **Exit Criteria**:
 - All LVGL events mapped
