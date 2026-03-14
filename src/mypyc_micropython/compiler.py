@@ -340,6 +340,8 @@ def _compile_module_parts(
         sibling_constants=sibling_constants,
         func_class_returns=func_class_returns,
     )
+    ir_builder.prescan_module_constants(tree)
+
     function_irs: list[FuncIR] = []
     function_code: list[str] = []
     forward_decls: list[str] = []
@@ -478,14 +480,16 @@ def _compile_module_parts(
         class_code.append(class_emitter.emit_all_except_struct())
 
     # Emit all lambda functions generated during function/method building
-    # NOTE: Must be after class method processing since methods may contain lambdas
+    # Lambda code must be prepended so _obj symbols are defined before use
+    lambda_code_list: list[str] = []
     for lambda_func_ir in ir_builder.lambda_funcs:
-        # Add to module (but not to module globals - lambdas are internal)
         lambda_emitter = FunctionEmitter(lambda_func_ir)
         forward_decls.append(lambda_emitter.emit_forward_declaration())
         lambda_code, _ = lambda_emitter.emit()
-        function_code.append(lambda_code)
+        lambda_code_list.append(lambda_code)
         used_rtuples.update(lambda_func_ir.used_rtuples)
+
+    function_code = lambda_code_list + function_code
 
     used_libs = {
         key: value

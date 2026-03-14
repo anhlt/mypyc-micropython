@@ -101,6 +101,7 @@ def dump_ir_command(source_path: Path, format: str, function_name: str | None) -
                 classes[class_ir.name] = class_ir
 
     builder = IRBuilder(module_name, known_classes=classes)
+    builder.prescan_module_constants(tree)
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             builder.register_import(node)

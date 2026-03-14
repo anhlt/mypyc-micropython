@@ -45,7 +45,6 @@ class GeneratorEmitter(BaseEmitter):
         signature, _ = self._emit_wrapper_signature()
         return signature + ";"
 
-
     def _emit_generator_struct(self) -> list[str]:
         lines = [
             f"typedef struct _{self.func_ir.c_name}_gen_t {{",
@@ -142,27 +141,27 @@ class GeneratorEmitter(BaseEmitter):
         if num_args == 0:
             return (
                 f"static mp_obj_t {self.func_ir.c_name}(void)",
-                f"MP_DEFINE_CONST_FUN_OBJ_0({self.func_ir.c_name}_obj, {self.func_ir.c_name});",
+                f"static MP_DEFINE_CONST_FUN_OBJ_0({self.func_ir.c_name}_obj, {self.func_ir.c_name});",
             )
         if num_args == 1:
             return (
                 f"static mp_obj_t {self.func_ir.c_name}(mp_obj_t {arg_names[0]}_obj)",
-                f"MP_DEFINE_CONST_FUN_OBJ_1({self.func_ir.c_name}_obj, {self.func_ir.c_name});",
+                f"static MP_DEFINE_CONST_FUN_OBJ_1({self.func_ir.c_name}_obj, {self.func_ir.c_name});",
             )
         if num_args == 2:
             return (
                 f"static mp_obj_t {self.func_ir.c_name}(mp_obj_t {arg_names[0]}_obj, mp_obj_t {arg_names[1]}_obj)",
-                f"MP_DEFINE_CONST_FUN_OBJ_2({self.func_ir.c_name}_obj, {self.func_ir.c_name});",
+                f"static MP_DEFINE_CONST_FUN_OBJ_2({self.func_ir.c_name}_obj, {self.func_ir.c_name});",
             )
         if num_args == 3:
             return (
                 "static mp_obj_t "
                 f"{self.func_ir.c_name}(mp_obj_t {arg_names[0]}_obj, mp_obj_t {arg_names[1]}_obj, mp_obj_t {arg_names[2]}_obj)",
-                f"MP_DEFINE_CONST_FUN_OBJ_3({self.func_ir.c_name}_obj, {self.func_ir.c_name});",
+                f"static MP_DEFINE_CONST_FUN_OBJ_3({self.func_ir.c_name}_obj, {self.func_ir.c_name});",
             )
         return (
             f"static mp_obj_t {self.func_ir.c_name}(size_t n_args, const mp_obj_t *args)",
-            f"MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN({self.func_ir.c_name}_obj, {num_args}, {num_args}, {self.func_ir.c_name});",
+            f"static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN({self.func_ir.c_name}_obj, {num_args}, {num_args}, {self.func_ir.c_name});",
         )
 
     def _emit_statement(self, stmt: StmtNode, native: bool = False) -> list[str]:
@@ -279,7 +278,9 @@ class GeneratorEmitter(BaseEmitter):
         lines.append(f"    self->{iter_field} = mp_getiter({iter_expr}, NULL);")
 
         # Loop: get next item, check for stop iteration
-        lines.append(f"    while ((self->{loop_var} = mp_iternext(self->{iter_field})) != MP_OBJ_STOP_ITERATION) {{")
+        lines.append(
+            f"    while ((self->{loop_var} = mp_iternext(self->{iter_field})) != MP_OBJ_STOP_ITERATION) {{"
+        )
 
         self._loop_depth += 1
         for s in stmt.body:
@@ -351,6 +352,7 @@ class GeneratorEmitter(BaseEmitter):
 
     def _has_yield_from(self, body: list[StmtNode]) -> bool:
         """Check if the body contains any YieldFromIR."""
+
         def walk(stmts: list[StmtNode]) -> bool:
             for stmt in stmts:
                 if isinstance(stmt, YieldFromIR):

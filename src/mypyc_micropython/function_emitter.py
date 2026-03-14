@@ -48,17 +48,8 @@ class FunctionEmitter(BaseEmitter):
 
     def emit_forward_declaration(self) -> str:
         """Emit a forward declaration for this function."""
-        c_sig, obj_def = self._emit_signature()
-        lines = [c_sig + ";"]
-        if "_lambda_" in self.func_ir.c_name:
-            # Determine the correct obj type based on argument count
-            num_args = len(self.func_ir.params)
-            if num_args > 3 or self.func_ir.has_defaults or self.func_ir.has_star_args:
-                extern_decl = f"extern const mp_obj_fun_builtin_var_t {self.func_ir.c_name}_obj;"
-            else:
-                extern_decl = f"extern const mp_obj_fun_builtin_fixed_t {self.func_ir.c_name}_obj;"
-            lines.append(extern_decl)
-        return "\n".join(lines)
+        c_sig, _ = self._emit_signature()
+        return c_sig + ";"
 
     def _emit_signature(self) -> tuple[str, str]:
         num_args = len(self.func_ir.params)
@@ -68,47 +59,47 @@ class FunctionEmitter(BaseEmitter):
             min_args = self.func_ir.num_required_args
             return (
                 f"static mp_obj_t {self.func_ir.c_name}(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args)",
-                f"MP_DEFINE_CONST_FUN_OBJ_KW({self.func_ir.c_name}_obj, {min_args}, {self.func_ir.c_name});",
+                f"static MP_DEFINE_CONST_FUN_OBJ_KW({self.func_ir.c_name}_obj, {min_args}, {self.func_ir.c_name});",
             )
 
         if self.func_ir.has_star_args:
             min_args = self.func_ir.num_required_args
             return (
                 f"static mp_obj_t {self.func_ir.c_name}(size_t n_args, const mp_obj_t *args)",
-                f"MP_DEFINE_CONST_FUN_OBJ_VAR({self.func_ir.c_name}_obj, {min_args}, {self.func_ir.c_name});",
+                f"static MP_DEFINE_CONST_FUN_OBJ_VAR({self.func_ir.c_name}_obj, {min_args}, {self.func_ir.c_name});",
             )
 
         if self.func_ir.has_defaults:
             min_args = self.func_ir.num_required_args
             return (
                 f"static mp_obj_t {self.func_ir.c_name}(size_t n_args, const mp_obj_t *args)",
-                f"MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN({self.func_ir.c_name}_obj, {min_args}, {num_args}, {self.func_ir.c_name});",
+                f"static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN({self.func_ir.c_name}_obj, {min_args}, {num_args}, {self.func_ir.c_name});",
             )
 
         if num_args == 0:
             return (
                 f"static mp_obj_t {self.func_ir.c_name}(void)",
-                f"MP_DEFINE_CONST_FUN_OBJ_0({self.func_ir.c_name}_obj, {self.func_ir.c_name});",
+                f"static MP_DEFINE_CONST_FUN_OBJ_0({self.func_ir.c_name}_obj, {self.func_ir.c_name});",
             )
         elif num_args == 1:
             return (
                 f"static mp_obj_t {self.func_ir.c_name}(mp_obj_t {arg_names[0]}_obj)",
-                f"MP_DEFINE_CONST_FUN_OBJ_1({self.func_ir.c_name}_obj, {self.func_ir.c_name});",
+                f"static MP_DEFINE_CONST_FUN_OBJ_1({self.func_ir.c_name}_obj, {self.func_ir.c_name});",
             )
         elif num_args == 2:
             return (
                 f"static mp_obj_t {self.func_ir.c_name}(mp_obj_t {arg_names[0]}_obj, mp_obj_t {arg_names[1]}_obj)",
-                f"MP_DEFINE_CONST_FUN_OBJ_2({self.func_ir.c_name}_obj, {self.func_ir.c_name});",
+                f"static MP_DEFINE_CONST_FUN_OBJ_2({self.func_ir.c_name}_obj, {self.func_ir.c_name});",
             )
         elif num_args == 3:
             return (
                 f"static mp_obj_t {self.func_ir.c_name}(mp_obj_t {arg_names[0]}_obj, mp_obj_t {arg_names[1]}_obj, mp_obj_t {arg_names[2]}_obj)",
-                f"MP_DEFINE_CONST_FUN_OBJ_3({self.func_ir.c_name}_obj, {self.func_ir.c_name});",
+                f"static MP_DEFINE_CONST_FUN_OBJ_3({self.func_ir.c_name}_obj, {self.func_ir.c_name});",
             )
         else:
             return (
                 f"static mp_obj_t {self.func_ir.c_name}(size_t n_args, const mp_obj_t *args)",
-                f"MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN({self.func_ir.c_name}_obj, {num_args}, {num_args}, {self.func_ir.c_name});",
+                f"static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN({self.func_ir.c_name}_obj, {num_args}, {num_args}, {self.func_ir.c_name});",
             )
 
     def _emit_unbox_arguments(self) -> list[str]:
@@ -306,7 +297,9 @@ class FunctionEmitter(BaseEmitter):
                 lines.append(f"    {stmt.c_type} {stmt.c_target} = mp_const_none;")
         return lines
 
-    def _emit_rtuple_unbox(self, c_type: str, target: str, src_expr: str, rtuple: RTuple) -> list[str]:
+    def _emit_rtuple_unbox(
+        self, c_type: str, target: str, src_expr: str, rtuple: RTuple
+    ) -> list[str]:
         lines = []
         temp = self._fresh_temp()
         lines.append(f"    mp_obj_tuple_t *{temp} = MP_OBJ_TO_PTR({src_expr});")
