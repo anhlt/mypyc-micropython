@@ -1,14 +1,17 @@
-"""Counter MVU - Interactive counter with button events and progress bar.
+"""Counter MVU - Interactive counter with slider and progress bar.
 
 Demonstrates the Model-View-Update architecture with LVGL:
+- Slider for direct value input (0-100 range)
+- Progress bar that visually tracks the count
 - Increment / Decrement / Reset buttons with click events
-- Progress bar that visually tracks the count (0-100 range)
+- Type-safe message union with exhaustive pattern matching
 - Full MVU loop with native compiled code
 
 Usage on device::
 
     import lvgl as lv
     lv.init_display()
+    lv.init_touch()
 
     import counter_mvu
     app = counter_mvu.create_app()
@@ -24,10 +27,12 @@ Usage on device::
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from lvgl_mvu.app import App
 from lvgl_mvu.appliers import register_all_appliers
 from lvgl_mvu.attrs import AttrRegistry
-from lvgl_mvu.dsl import Bar, Button, Label, Screen
+from lvgl_mvu.dsl import Bar, Button, Label, Screen, Slider
 from lvgl_mvu.events import EventBinder, LvEvent
 from lvgl_mvu.factories import delete_lv_obj, register_all_factories
 from lvgl_mvu.layouts import HStack, VStack
@@ -35,114 +40,118 @@ from lvgl_mvu.program import Cmd, Program
 from lvgl_mvu.reconciler import Reconciler
 from lvgl_mvu.widget import Widget
 
-# ---------------------------------------------------------------------------
-# Messages
-# ---------------------------------------------------------------------------
 
-MSG_INCREMENT: int = 1
-MSG_DECREMENT: int = 2
-MSG_RESET: int = 3
+@dataclass(frozen=True)
+class Increment:
+    pass
 
 
-# ---------------------------------------------------------------------------
-# Model
-# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class Decrement:
+    pass
+
+
+@dataclass(frozen=True)
+class Reset:
+    pass
+
+
+@dataclass(frozen=True)
+class SetValue:
+    value: int
+
+
+Msg = Increment | Decrement | Reset | SetValue
 
 
 class Model:
-    """Application state."""
-
     count: int
 
     def __init__(self, count: int) -> None:
         self.count = count
 
 
-# ---------------------------------------------------------------------------
-# MVU Functions
-# ---------------------------------------------------------------------------
-
-
 def init() -> tuple[Model, Cmd]:
-    """Initialize with count = 0."""
     return (Model(0), Cmd.none())
 
 
-def update(msg: int, model: Model) -> tuple[Model, Cmd]:
-    """Handle messages."""
-    if msg == MSG_INCREMENT:
-        return (Model(model.count + 1), Cmd.none())
-    if msg == MSG_DECREMENT:
-        return (Model(model.count - 1), Cmd.none())
-    if msg == MSG_RESET:
+def update(msg: Msg, model: Model) -> tuple[Model, Cmd]:
+    new_count: int
+    if isinstance(msg, Increment):
+        new_count = model.count + 1
+        if new_count > 100:
+            new_count = 100
+        return (Model(new_count), Cmd.none())
+    if isinstance(msg, Decrement):
+        new_count = model.count - 1
+        if new_count < 0:
+            new_count = 0
+        return (Model(new_count), Cmd.none())
+    if isinstance(msg, Reset):
         return (Model(0), Cmd.none())
+    if isinstance(msg, SetValue):
+        value: int = msg.value
+        if value < 0:
+            value = 0
+        if value > 100:
+            value = 100
+        return (Model(value), Cmd.none())
     return (model, Cmd.none())
 
 
+def make_slider_msg(value: int) -> SetValue:
+    return SetValue(value)
+
+
 def view(model: Model) -> Widget:
-    """Render the counter UI with buttons and progress bar."""
     count_text: str = "Count: " + str(model.count)
 
-    # Title - white text
     title: Widget = Label("MVU Counter").text_color(0xFFFFFF).build()
 
-    # Counter value - cyan (positive) or red (negative)
     count_color: int = 0x00E5FF
-    if model.count < 0:
-        count_color = 0xFF6B6B
+    if model.count == 0:
+        count_color = 0xFFFFFF
+    elif model.count >= 100:
+        count_color = 0x4CAF50
     counter: Widget = Label(count_text).text_color(count_color).build()
 
-    # Progress bar showing count (clamped to 0-100 range)
-    bar_value: int = model.count
-    if bar_value < 0:
-        bar_value = 0
-    if bar_value > 100:
-        bar_value = 100
-    progress: Widget = Bar(0, 100, bar_value).size(250, 20).bg_color(0x3D3D5C).build()
+    slider: Widget = (
+        Slider(0, 100, model.count)
+        .size(250, 30)
+        .on_value(LvEvent.VALUE_CHANGED, make_slider_msg)
+        .build()
+    )
 
-    # Buttons row
+    progress: Widget = Bar(0, 100, model.count).size(250, 15).bg_color(0x3D3D5C).build()
+
     btn_dec: Widget = (
-        Button("-").size(70, 45).bg_color(0xFF6B6B).on(LvEvent.CLICKED, MSG_DECREMENT).build()
+        Button("-").size(70, 45).bg_color(0xFF6B6B).on(LvEvent.CLICKED, Decrement()).build()
     )
     btn_reset: Widget = (
-        Button("0").size(70, 45).bg_color(0x4ECDC4).on(LvEvent.CLICKED, MSG_RESET).build()
+        Button("0").size(70, 45).bg_color(0x4ECDC4).on(LvEvent.CLICKED, Reset()).build()
     )
     btn_inc: Widget = (
-        Button("+").size(70, 45).bg_color(0x45B7D1).on(LvEvent.CLICKED, MSG_INCREMENT).build()
+        Button("+").size(70, 45).bg_color(0x45B7D1).on(LvEvent.CLICKED, Increment()).build()
     )
 
     buttons: Widget = HStack(10).width(280).with_children([btn_dec, btn_reset, btn_inc])
 
-    # VStack container - sized, centered, styled
     stack: Widget = (
-        VStack(15)
+        VStack(12)
         .width(320)
-        .height(280)
-        .align(9, 0, -30)  # LV_ALIGN_CENTER = 9, offset up by 30px
-        .bg_color(0x2D2D44)  # Dark purple-gray
+        .height(320)
+        .align(9, 0, -20)
+        .bg_color(0x2D2D44)
         .bg_opa(255)
         .padding(15, 15, 15, 15)
         .radius(16)
-        .with_children([title, counter, progress, buttons])
+        .with_children([title, counter, slider, progress, buttons])
     )
 
-    # Screen with dark background
-    return (
-        Screen()
-        .bg_color(0x1A1A2E)  # Dark blue
-        .bg_opa(255)
-        .add_child(stack)
-        .build()
-    )
-
-
-# ---------------------------------------------------------------------------
-# App Setup
-# ---------------------------------------------------------------------------
+    return Screen().bg_color(0x1A1A2E).bg_opa(255).add_child(stack).build()
 
 
 def create_app() -> App:
-    """Create and configure the MVU application with event support."""
     registry: AttrRegistry = AttrRegistry()
     register_all_appliers(registry)
 
@@ -154,7 +163,6 @@ def create_app() -> App:
 
     app: App = App(program, reconciler)
 
-    # Wire up event system
     binder: EventBinder = EventBinder(app.dispatch)
     reconciler.set_event_binder(binder)
 

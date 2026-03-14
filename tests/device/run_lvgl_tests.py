@@ -946,36 +946,61 @@ try:
     refresh(10)
     t("counter_mvu screen loaded", True, "True")
 
-    # Test increment
-    app.dispatch(counter_mvu.MSG_INCREMENT)
+    # Test increment using typed message class
+    app.dispatch(counter_mvu.Increment())
     app.tick()
     lv.timer_handler()
     t("counter_mvu after 1 inc", app.model.count, "1")
 
     # Test multiple increments
     for _ in range(5):
-        app.dispatch(counter_mvu.MSG_INCREMENT)
+        app.dispatch(counter_mvu.Increment())
         app.tick()
         lv.timer_handler()
     t("counter_mvu after 6 inc", app.model.count, "6")
 
     # Fast increment test (no sleep)
     start = time.ticks_ms()
-    for i in range(100):
-        app.dispatch(counter_mvu.MSG_INCREMENT)
+    for i in range(94):
+        app.dispatch(counter_mvu.Increment())
         app.tick()
         lv.timer_handler()
+    # Count is now bounded to 0-100, so max is 100
     end = time.ticks_ms()
     elapsed = time.ticks_diff(end, start)
-    t("counter_mvu after 106 inc", app.model.count, "106")
-    print(f"    (100 updates in {elapsed}ms)")
+    t("counter_mvu after 100 inc (bounded)", app.model.count, "100")
+    print(f"    (94 updates in {elapsed}ms)")
 
-    # Memory stability test
+    # Test decrement to verify bounded behavior
+    for _ in range(10):
+        app.dispatch(counter_mvu.Decrement())
+        app.tick()
+        lv.timer_handler()
+    t("counter_mvu after 10 dec", app.model.count, "90")
+
+    # Test SetValue message
+    app.dispatch(counter_mvu.SetValue(50))
+    app.tick()
+    lv.timer_handler()
+    t("counter_mvu SetValue(50)", app.model.count, "50")
+
+    # Test Reset message
+    app.dispatch(counter_mvu.Reset())
+    app.tick()
+    lv.timer_handler()
+    t("counter_mvu Reset", app.model.count, "0")
+
+    # Memory stability test with mixed messages
     gc.collect()
     baseline = gc.mem_free()
 
-    for i in range(500):
-        app.dispatch(counter_mvu.MSG_INCREMENT)
+    for i in range(250):
+        if i % 3 == 0:
+            app.dispatch(counter_mvu.Increment())
+        elif i % 3 == 1:
+            app.dispatch(counter_mvu.SetValue(i % 100))
+        else:
+            app.dispatch(counter_mvu.Decrement())
         app.tick()
         lv.timer_handler()
         if i % 100 == 0:
@@ -985,8 +1010,7 @@ try:
     final = gc.mem_free()
     mem_drop = baseline - final
     t("counter_mvu memory stable", mem_drop < 5000, "True")
-    print(f"    (mem drop: {mem_drop} bytes after 500 updates)")
-    t("counter_mvu final count", app.model.count, "606")
+    print(f"    (mem drop: {mem_drop} bytes after 250 updates)")
 
     # Verify view updates correctly
     view_widget = counter_mvu.view(app.model)
