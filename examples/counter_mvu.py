@@ -1,8 +1,8 @@
-"""Counter MVU - Interactive counter with button events.
+"""Counter MVU - Interactive counter with button events and progress bar.
 
 Demonstrates the Model-View-Update architecture with LVGL:
 - Increment / Decrement / Reset buttons with click events
-- Auto-increment timer subscription
+- Progress bar that visually tracks the count (0-100 range)
 - Full MVU loop with native compiled code
 
 Usage on device::
@@ -25,11 +25,11 @@ Usage on device::
 from __future__ import annotations
 
 from lvgl_mvu.app import App
-from lvgl_mvu.appliers import register_p0_appliers
+from lvgl_mvu.appliers import register_all_appliers
 from lvgl_mvu.attrs import AttrRegistry
-from lvgl_mvu.dsl import Button, Label, Screen
+from lvgl_mvu.dsl import Bar, Button, Label, Screen
 from lvgl_mvu.events import EventBinder, LvEvent
-from lvgl_mvu.factories import delete_lv_obj, register_p0_factories
+from lvgl_mvu.factories import delete_lv_obj, register_all_factories
 from lvgl_mvu.layouts import HStack, VStack
 from lvgl_mvu.program import Cmd, Program
 from lvgl_mvu.reconciler import Reconciler
@@ -80,7 +80,7 @@ def update(msg: int, model: Model) -> tuple[Model, Cmd]:
 
 
 def view(model: Model) -> Widget:
-    """Render the counter UI with buttons."""
+    """Render the counter UI with buttons and progress bar."""
     count_text: str = "Count: " + str(model.count)
 
     # Title - white text
@@ -91,6 +91,14 @@ def view(model: Model) -> Widget:
     if model.count < 0:
         count_color = 0xFF6B6B
     counter: Widget = Label(count_text).text_color(count_color).build()
+
+    # Progress bar showing count (clamped to 0-100 range)
+    bar_value: int = model.count
+    if bar_value < 0:
+        bar_value = 0
+    if bar_value > 100:
+        bar_value = 100
+    progress: Widget = Bar(0, 100, bar_value).size(250, 20).bg_color(0x3D3D5C).build()
 
     # Buttons row
     btn_dec: Widget = (
@@ -109,13 +117,13 @@ def view(model: Model) -> Widget:
     stack: Widget = (
         VStack(15)
         .width(320)
-        .height(240)
+        .height(280)
         .align(9, 0, -30)  # LV_ALIGN_CENTER = 9, offset up by 30px
         .bg_color(0x2D2D44)  # Dark purple-gray
         .bg_opa(255)
         .padding(15, 15, 15, 15)
         .radius(16)
-        .with_children([title, counter, buttons])
+        .with_children([title, counter, progress, buttons])
     )
 
     # Screen with dark background
@@ -136,10 +144,10 @@ def view(model: Model) -> Widget:
 def create_app() -> App:
     """Create and configure the MVU application with event support."""
     registry: AttrRegistry = AttrRegistry()
-    register_p0_appliers(registry)
+    register_all_appliers(registry)
 
     reconciler: Reconciler = Reconciler(registry)
-    register_p0_factories(reconciler)
+    register_all_factories(reconciler)
     reconciler.set_delete_fn(delete_lv_obj)
 
     program: Program = Program(init, update, view)

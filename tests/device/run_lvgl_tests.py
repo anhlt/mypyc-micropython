@@ -1014,50 +1014,66 @@ suite("p1_widgets")
 
 try:
     import lvgl as lv
-    from lvgl_mvu.dsl import Slider, Bar, Arc, Switch, Checkbox
-    from lvgl_mvu.widget import WidgetKey
-    from lvgl_mvu.attrs import AttrKey
+    import lvgl_mvu
+
+    Slider = lvgl_mvu.dsl.Slider
+    Bar = lvgl_mvu.dsl.Bar
+    Arc = lvgl_mvu.dsl.Arc
+    Switch = lvgl_mvu.dsl.Switch
+    Checkbox = lvgl_mvu.dsl.Checkbox
+
+    # Use flat enum constants (compiled module exports EnumName_MEMBER)
+    WidgetKey_SLIDER = lvgl_mvu.widget.WidgetKey_SLIDER
+    WidgetKey_BAR = lvgl_mvu.widget.WidgetKey_BAR
+    WidgetKey_ARC = lvgl_mvu.widget.WidgetKey_ARC
+    WidgetKey_SWITCH = lvgl_mvu.widget.WidgetKey_SWITCH
+    WidgetKey_CHECKBOX = lvgl_mvu.widget.WidgetKey_CHECKBOX
+    AttrKey_MIN_VALUE = lvgl_mvu.attrs.AttrKey_MIN_VALUE
+    AttrKey_MAX_VALUE = lvgl_mvu.attrs.AttrKey_MAX_VALUE
+    AttrKey_VALUE = lvgl_mvu.attrs.AttrKey_VALUE
+    AttrKey_CHECKED = lvgl_mvu.attrs.AttrKey_CHECKED
+    AttrKey_TEXT = lvgl_mvu.attrs.AttrKey_TEXT
 
     # Test Slider DSL
     slider_w = Slider(0, 100, 50).build()
-    t("Slider widget key", slider_w.key, str(WidgetKey.SLIDER))
+    t("Slider widget key", slider_w.key, str(WidgetKey_SLIDER))
     attrs = {a.key: a.value for a in slider_w.scalar_attrs}
-    t("Slider min", attrs.get(AttrKey.MIN_VALUE), "0")
-    t("Slider max", attrs.get(AttrKey.MAX_VALUE), "100")
-    t("Slider value", attrs.get(AttrKey.VALUE), "50")
+    t("Slider min", attrs.get(AttrKey_MIN_VALUE), "0")
+    t("Slider max", attrs.get(AttrKey_MAX_VALUE), "100")
+    t("Slider value", attrs.get(AttrKey_VALUE), "50")
 
     # Test Bar DSL
     bar_w = Bar(0, 200, 75).build()
-    t("Bar widget key", bar_w.key, str(WidgetKey.BAR))
+    t("Bar widget key", bar_w.key, str(WidgetKey_BAR))
     attrs = {a.key: a.value for a in bar_w.scalar_attrs}
-    t("Bar min", attrs.get(AttrKey.MIN_VALUE), "0")
-    t("Bar max", attrs.get(AttrKey.MAX_VALUE), "200")
-    t("Bar value", attrs.get(AttrKey.VALUE), "75")
+    t("Bar min", attrs.get(AttrKey_MIN_VALUE), "0")
+    t("Bar max", attrs.get(AttrKey_MAX_VALUE), "200")
+    t("Bar value", attrs.get(AttrKey_VALUE), "75")
 
     # Test Arc DSL
     arc_w = Arc(0, 360, 90).build()
-    t("Arc widget key", arc_w.key, str(WidgetKey.ARC))
+    t("Arc widget key", arc_w.key, str(WidgetKey_ARC))
     attrs = {a.key: a.value for a in arc_w.scalar_attrs}
-    t("Arc min", attrs.get(AttrKey.MIN_VALUE), "0")
-    t("Arc max", attrs.get(AttrKey.MAX_VALUE), "360")
-    t("Arc value", attrs.get(AttrKey.VALUE), "90")
+    t("Arc min", attrs.get(AttrKey_MIN_VALUE), "0")
+    t("Arc max", attrs.get(AttrKey_MAX_VALUE), "360")
+    t("Arc value", attrs.get(AttrKey_VALUE), "90")
 
     # Test Switch DSL
     switch_w = Switch(True).build()
-    t("Switch widget key", switch_w.key, str(WidgetKey.SWITCH))
+    t("Switch widget key", switch_w.key, str(WidgetKey_SWITCH))
     attrs = {a.key: a.value for a in switch_w.scalar_attrs}
-    t("Switch checked", attrs.get(AttrKey.CHECKED), "True")
+    t("Switch checked", attrs.get(AttrKey_CHECKED), "True")
 
     switch_off = Switch(False).build()
     attrs = {a.key: a.value for a in switch_off.scalar_attrs}
-    t("Switch unchecked", attrs.get(AttrKey.CHECKED), "False")
+    t("Switch unchecked", attrs.get(AttrKey_CHECKED), "False")
 
     # Test Checkbox DSL
     cb_w = Checkbox("Remember me", True).build()
-    t("Checkbox widget key", cb_w.key, str(WidgetKey.CHECKBOX))
+    t("Checkbox widget key", cb_w.key, str(WidgetKey_CHECKBOX))
     attrs = {a.key: a.value for a in cb_w.scalar_attrs}
-    t("Checkbox checked", attrs.get(AttrKey.CHECKED), "True")
-    t("Checkbox text", attrs.get(AttrKey.TEXT), "Remember me")
+    t("Checkbox checked", attrs.get(AttrKey_CHECKED), "True")
+    t("Checkbox text", attrs.get(AttrKey_TEXT), "Remember me")
 
 except ImportError as e:
     print("SKIP: p1_widgets not available - " + str(e))
@@ -1075,17 +1091,17 @@ suite("p1_factories")
 
 try:
     import lvgl as lv
-    from lvgl_mvu.factories import (
-        create_slider,
-        create_bar,
-        create_arc,
-        create_switch,
-        create_checkbox,
-        register_p1_factories,
-        register_all_factories,
-    )
-    from lvgl_mvu.attrs import AttrRegistry
-    from lvgl_mvu.reconciler import Reconciler
+    import lvgl_mvu
+
+    create_slider = lvgl_mvu.factories.create_slider
+    create_bar = lvgl_mvu.factories.create_bar
+    create_arc = lvgl_mvu.factories.create_arc
+    create_switch = lvgl_mvu.factories.create_switch
+    create_checkbox = lvgl_mvu.factories.create_checkbox
+    register_p1_factories = lvgl_mvu.factories.register_p1_factories
+    register_all_factories = lvgl_mvu.factories.register_all_factories
+    AttrRegistry = lvgl_mvu.attrs.AttrRegistry
+    Reconciler = lvgl_mvu.reconciler.Reconciler
 
     scr = lv.lv_obj_create(None)
 
@@ -1134,16 +1150,19 @@ suite("p1_appliers")
 
 try:
     import lvgl as lv
-    from lvgl_mvu.appliers import (
-        apply_slider_value,
-        apply_bar_value,
-        apply_arc_value,
-        apply_checked,
-        register_p1_appliers,
-        register_all_appliers,
-        CHECKED_STATE,
-    )
-    from lvgl_mvu.attrs import AttrRegistry, AttrKey
+    import lvgl_mvu
+
+    apply_slider_value = lvgl_mvu.appliers.apply_slider_value
+    apply_bar_value = lvgl_mvu.appliers.apply_bar_value
+    apply_arc_value = lvgl_mvu.appliers.apply_arc_value
+    apply_checked = lvgl_mvu.appliers.apply_checked
+    register_p1_appliers = lvgl_mvu.appliers.register_p1_appliers
+    register_all_appliers = lvgl_mvu.appliers.register_all_appliers
+    CHECKED_STATE = lvgl_mvu.appliers.CHECKED_STATE
+    AttrRegistry = lvgl_mvu.attrs.AttrRegistry
+    AttrKey_VALUE = lvgl_mvu.attrs.AttrKey_VALUE
+    AttrKey_CHECKED = lvgl_mvu.attrs.AttrKey_CHECKED
+    AttrKey_TEXT = lvgl_mvu.attrs.AttrKey_TEXT
 
     scr = lv.lv_obj_create(None)
 
@@ -1175,14 +1194,14 @@ try:
     # Test register_p1_appliers
     reg = AttrRegistry()
     register_p1_appliers(reg)
-    t("register_p1_appliers VALUE", reg.get(AttrKey.VALUE) is not None, "True")
-    t("register_p1_appliers CHECKED", reg.get(AttrKey.CHECKED) is not None, "True")
+    t("register_p1_appliers VALUE", reg.get(AttrKey_VALUE) is not None, "True")
+    t("register_p1_appliers CHECKED", reg.get(AttrKey_CHECKED) is not None, "True")
 
     # Test register_all_appliers
     reg2 = AttrRegistry()
     register_all_appliers(reg2)
-    t("register_all_appliers P0", reg2.get(AttrKey.TEXT) is not None, "True")
-    t("register_all_appliers P1", reg2.get(AttrKey.VALUE) is not None, "True")
+    t("register_all_appliers P0", reg2.get(AttrKey_TEXT) is not None, "True")
+    t("register_all_appliers P1", reg2.get(AttrKey_VALUE) is not None, "True")
 
     lv.lv_obj_delete(scr)
 
@@ -1202,13 +1221,16 @@ suite("p1_handlers")
 
 try:
     import lvgl as lv
-    from lvgl_mvu.builders import WidgetBuilder
-    from lvgl_mvu.widget import WidgetKey
-    from lvgl_mvu.events import LvEvent
+    import lvgl_mvu
+
+    WidgetBuilder = lvgl_mvu.builders.WidgetBuilder
+    WidgetKey_SLIDER = lvgl_mvu.widget.WidgetKey_SLIDER
+    WidgetKey_SWITCH = lvgl_mvu.widget.WidgetKey_SWITCH
+    LvEvent = lvgl_mvu.events.LvEvent
 
     # Test on_value handler tuple format
     slider_w = (
-        WidgetBuilder(WidgetKey.SLIDER)
+        WidgetBuilder(WidgetKey_SLIDER)
         .on_value(LvEvent.VALUE_CHANGED, lambda v: ("set_val", v))
         .build()
     )
@@ -1220,7 +1242,7 @@ try:
 
     # Test on_checked handler tuple format
     switch_w = (
-        WidgetBuilder(WidgetKey.SWITCH)
+        WidgetBuilder(WidgetKey_SWITCH)
         .on_checked(LvEvent.VALUE_CHANGED, lambda c: ("set_check", c))
         .build()
     )
